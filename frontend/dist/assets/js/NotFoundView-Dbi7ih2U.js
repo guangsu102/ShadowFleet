@@ -1,1 +1,0 @@
-import{L as e}from"./vendor-naive-C1YrR7eG.js";import{k as t,_ as n,$ as o,N as s,V as a}from"./vendor-vue-Gd_NoOak.js";const r={style:{display:"flex","align-items":"center","justify-content":"center",height:"60vh"}},u=t({__name:"NotFoundView",setup(i){return(c,_)=>(a(),n("div",r,[o(s(e),{status:"404",title:"404",description:"Page not found"})]))}});export{u as default};

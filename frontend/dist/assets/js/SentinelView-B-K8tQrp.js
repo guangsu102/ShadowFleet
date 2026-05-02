@@ -1,1 +1,0 @@
-import{k as e,_ as n,a6 as t,V as o}from"./vendor-vue-Gd_NoOak.js";const a="Sentinel",l=e({__name:"SentinelView",setup(s){return(c,i)=>(o(),n("div",null,t(a)+" — coming soon"))}});export{l as default};
