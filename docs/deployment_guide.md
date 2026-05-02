@@ -165,9 +165,6 @@ app:
   phone_home_listen_port: 8787
   # 启用哨兵自愈（按需开启）
   sentinel_enabled: false
-  # 不直接暴露 UI，通过 Nginx 代理
-  dashboard_require_password: true
-  dashboard_password: "YOUR_STRONG_PASSWORD_HERE"
 
 logging:
   level: INFO   # 生产环境用 INFO，避免日志过大

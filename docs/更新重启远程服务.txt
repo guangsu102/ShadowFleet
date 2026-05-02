@@ -1,14 +1,62 @@
-unzip -o ./ShadowFleet.zip   -d ./
+# ShadowFleet 更新部署流程
 
+## 1. 拉取最新代码
+```bash
+cd /home/shadowfleet/ShadowFleet
+git pull
+```
 
-sudo chown -R shadowfleet:shadowfleet  ./
+## 2. 重新构建后端镜像
+```bash
+docker compose build --no-cache shadowfleet-api shadowfleet-daemon
+```
 
-source venv/bin/activate
+## 3. 重启后端容器
+```bash
+docker compose up -d shadowfleet-api shadowfleet-daemon
+```
 
-pip install -r requirements.txt --upgrade
+## 4. 重新构建前端
+```bash
+docker compose --profile frontend-build up -d --build shadowfleet-frontend-builder
+```
 
-deactivate
+## 5. 等待前端构建完成后重启 Nginx
+```bash
+sleep 30
+docker compose restart shadowfleet-nginx
+```
 
-sudo systemctl restart shadowfleet-daemon
+## 6. 验证服务状态
+```bash
+docker compose logs --tail=20 shadowfleet-api
+curl http://localhost:8000/api/v1/health
+docker compose ps
+```
 
-sudo systemctl restart shadowfleet-ui
+## 7. 常见问题
+
+### 前端构建失败
+如果缺少 node_modules，先安装依赖：
+```bash
+cd /home/shadowfleet/ShadowFleet/frontend
+npm install
+npm run build
+```
+然后手动复制到 volume：
+```bash
+docker cp frontend/dist/. shadowfleet-nginx:/usr/share/nginx/html/
+```
+
+### 数据库备份（更新前建议执行）
+```bash
+docker compose exec shadowfleet-api cp /data/shadowfleet.db /data/shadowfleet.db.bak
+```
+
+### 回滚
+```bash
+docker compose down
+git reset --hard HEAD~1
+git pull
+docker compose up -d
+```

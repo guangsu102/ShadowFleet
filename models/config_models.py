@@ -49,8 +49,6 @@ class AppRuntimeConfig(BaseModel):
     probe_heartbeat_timeout_seconds: float = 60.0
     xboard_sentinel_api_base_url: str | None = None
     xboard_sentinel_api_key: str | None = None
-    dashboard_require_password: bool = False
-    dashboard_password: str | None = None
     key_pair_local_dir: str = "key_pairs"
 
     @field_validator("request_timeout_seconds")
@@ -143,7 +141,6 @@ class AppRuntimeConfig(BaseModel):
         "sentinel_probe_api_token",
         "xboard_sentinel_api_base_url",
         "xboard_sentinel_api_key",
-        "dashboard_password",
     )
     @classmethod
     def validate_optional_monitoring_strings(cls, value: str | None) -> str | None:
@@ -179,9 +176,7 @@ class AppRuntimeConfig(BaseModel):
         return value.strip()
 
     @model_validator(mode="after")
-    def validate_dashboard_password(self) -> "AppRuntimeConfig":
-        if self.dashboard_require_password and self.dashboard_password is None:
-            raise ValueError("dashboard_password is required when dashboard_require_password is true")
+    def validate_sentinel_and_probe_server(self) -> "AppRuntimeConfig":
         if self.sentinel_probe_min_cn_probe_count < 2:
             raise ValueError("sentinel_probe_min_cn_probe_count must be at least 2")
         if self.probe_server_enabled and not self.probe_bootstrap_tokens:

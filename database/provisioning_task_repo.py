@@ -129,6 +129,24 @@ class ProvisioningTaskRepo:
             ).fetchall()
         return [self._map_task_record(row) for row in rows]
 
+    def get_task_stats(self) -> dict[str, int]:
+        with self._sqlite_manager.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT status, COUNT(*) as count
+                FROM fleet_provisioning_tasks
+                GROUP BY status
+                """,
+            ).fetchall()
+        result = {"total": 0, "queued": 0, "running": 0, "succeeded": 0, "failed": 0}
+        for row in rows:
+            status = row[0]
+            count = row[1]
+            if status in result:
+                result[status] = count
+            result["total"] += count
+        return result
+
     def list_stale_running_tasks(
         self,
         running_timeout_seconds: float,

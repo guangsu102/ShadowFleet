@@ -3,7 +3,6 @@ app:
   sqlite_path: ":memory:"
   sentinel_enabled: false
   sentinel_probe_mode: cn_probe_mesh
-  dashboard_require_password: false
 
 logging:
   level: DEBUG

@@ -175,11 +175,6 @@ const configStatusRows = computed(() => [
   { key: 'cloudflare_enabled', label: t('system.cloudflareEnabled'), value: cloudflareConfig.value.enabled },
   { key: 'aws_proxy_enabled', label: t('system.awsProxyEnabled'), value: awsProxyConfig.value.enabled },
   { key: 'xboard_available', label: t('system.xboardDb'), value: !!xboardConfig.value },
-  {
-    key: 'dashboard_require_password',
-    label: t('system.dashboardPassword'),
-    value: appConfig.value.dashboard_require_password,
-  },
 ])
 
 onMounted(async () => {

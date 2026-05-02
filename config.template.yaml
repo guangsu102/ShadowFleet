@@ -58,9 +58,6 @@ app:
   # 通过环境变量 SHADOWFLEET_XBOARD_SENTINEL_API_KEY 注入
   xboard_sentinel_api_key: null
 
-  # ------------------ Dashboard UI 配置 ------------------
-  dashboard_require_password: false
-  dashboard_password: null
   key_pair_local_dir: "key_pairs"
 
 # -----------------------------------------------------------------------------

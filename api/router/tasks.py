@@ -30,6 +30,13 @@ class ProvisionTaskCreateRequest(BaseModel):
     parent_id: int | None = None
     tags: list[str] | None = None
     show: bool = True
+    group_ids: list[int] | None = None
+    route_ids: list[int] | None = None
+    sort: int | None = None
+    rate_time_enable: bool = False
+    protocol_settings: dict | None = None
+    rate_time_ranges: list | None = None
+    status_reason: str | None = None
 
 
 class ManualTaskCreateRequest(BaseModel):
@@ -74,6 +81,14 @@ def _to_response(record) -> TaskResponse:
     )
 
 
+class TaskStatsResponse(BaseModel):
+    total: int = 0
+    queued: int = 0
+    running: int = 0
+    succeeded: int = 0
+    failed: int = 0
+
+
 @router.get("/tasks", response_model=list[TaskResponse])
 async def list_provisioning_tasks(
     ctx: RuntimeContext = Depends(get_runtime_context),
@@ -82,6 +97,21 @@ async def list_provisioning_tasks(
 ) -> list[TaskResponse]:
     tasks = ProvisioningTaskService(ctx).list_recent_tasks(limit=limit)
     return [_to_response(t) for t in tasks]
+
+
+@router.get("/tasks/stats", response_model=TaskStatsResponse)
+async def get_task_stats(
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(get_current_user),
+) -> TaskStatsResponse:
+    stats = ProvisioningTaskService(ctx).get_task_stats()
+    return TaskStatsResponse(
+        total=stats.get("total", 0),
+        queued=stats.get("queued", 0),
+        running=stats.get("running", 0),
+        succeeded=stats.get("succeeded", 0),
+        failed=stats.get("failed", 0),
+    )
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
@@ -112,7 +142,14 @@ async def submit_provisioning_task(
                 domain_name=request.domain_name, require_cdn_proxy=request.require_cdn_proxy,
                 cert_mode=request.cert_mode or "none", code=request.code,
                 parent_id=request.parent_id, tags=request.tags, show=request.show,
-            )
+            ),
+            group_ids=request.group_ids,
+            route_ids=request.route_ids,
+            sort=request.sort,
+            rate_time_enable=request.rate_time_enable,
+            protocol_settings=request.protocol_settings,
+            rate_time_ranges=request.rate_time_ranges,
+            status_reason=request.status_reason,
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

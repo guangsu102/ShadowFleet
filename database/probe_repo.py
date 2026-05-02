@@ -326,3 +326,21 @@ class ProbeRepo:
         if row is None:
             return None
         return map_probe_config_record(row)
+
+    def delete_probe(self, probe_id: str) -> None:
+        normalized_probe_id = probe_id.strip()
+        if not normalized_probe_id:
+            raise ValueError("probe_id must not be empty")
+        with self._sqlite_manager.connection() as connection:
+            row = connection.execute(
+                "SELECT id FROM fleet_probes WHERE probe_id = ?",
+                (normalized_probe_id,),
+            ).fetchone()
+            if row is None:
+                raise ProbeNotFoundError(f"Probe not found: probe_id={normalized_probe_id}")
+            connection.execute(
+                "DELETE FROM fleet_probes WHERE probe_id = ?",
+                (normalized_probe_id,),
+            )
+        set_event_type("sqlite_probe_deleted")
+        self._logger.info("Deleted probe probe_id=%s", normalized_probe_id)

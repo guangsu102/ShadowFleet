@@ -36,7 +36,6 @@ def create_mock_runtime_context(sqlite_conn) -> MagicMock:
     mock_config_app.retry_backoff_seconds = 1.0
     mock_config_app.request_timeout_seconds = 10
     mock_config_app.sentinel_enabled = False
-    mock_config_app.dashboard_require_password = False
     mock_config_app.sqlite_path = ":memory:"
     mock_context.config = MagicMock()
     mock_context.config.app = mock_config_app

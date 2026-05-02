@@ -1,36 +1,37 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import {
-  NCard,
   NGrid,
   NGi,
+  NStatistic,
+  NDataTable,
+  NCard,
+  NSelect,
+  NButton,
+  NTag,
+  NSpin,
+  NAlert,
+  NSpace,
+  NModal,
   NForm,
   NFormItem,
   NInput,
   NInputNumber,
-  NSelect,
   NCheckbox,
-  NButton,
-  NSpace,
-  NSpin,
-  NAlert,
-  NTag,
   NText,
   NDivider,
-  NDataTable,
-  NCollapse,
-  NCollapseItem,
+  NDynamicInput,
+  NPagination,
   NCode,
+  NDrawer,
+  NDrawerContent,
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import apiClient from '@/api/client'
-import type {
-  ProvisionTaskCreateRequest,
-  SubmitResult,
-  TaskResponse,
-  XboardGroupResponse,
-} from '@/types/api'
+import type { ProvisionTaskCreateRequest, TaskResponse, SubmitResult, XboardGroupResponse } from '@/types/api'
+
+const message = useMessage()
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PROTOCOLS = ['AnyTLS', 'Trojan', 'vless', 'vmess', 'Hysteria2']
@@ -44,8 +45,33 @@ const REGION_MAP: Record<string, string> = {
 }
 const REGIONS = Object.keys(REGION_MAP)
 
+const REGION_TAGS: Record<string, string> = {
+  'ap-northeast-1': 'jp-tokyo',
+  'ap-northeast-3': 'jp-osaka',
+  'ap-northeast-2': 'kr-seoul',
+  'ap-east-1': 'hk-hongkong',
+  'us-west-1': 'us-losangeles',
+  'ap-southeast-1': 'sg-singapore',
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
-const message = useMessage()
+const tasks = ref<TaskResponse[]>([])
+const loading = ref(true)
+const errorMsg = ref<string | null>(null)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+// Stats
+const stats = ref({ total: 0, queued: 0, running: 0, succeeded: 0, failed: 0 })
+
+// Filters
+const filterStatus = ref<string | null>(null)
+const filterTaskType = ref<string | null>(null)
+const filterLimit = ref<number>(50)
+const page = ref(1)
+const pageSize = ref(15)
+
+// ── New Task Modal ────────────────────────────────────────────────────────────
+const showNewTaskModal = ref(false)
 const submitting = ref(false)
 const submitError = ref<string | null>(null)
 const submitSuccess = ref<SubmitResult | null>(null)
@@ -53,17 +79,10 @@ const submitSuccess = ref<SubmitResult | null>(null)
 // Groups
 const groups = ref<XboardGroupResponse[]>([])
 const groupsLoading = ref(false)
-const groupsError = ref<string | null>(null)
 
-// Recent tasks
-const recentTasks = ref<TaskResponse[]>([])
-const tasksLoading = ref(true)
-const tasksError = ref<string | null>(null)
-let tasksTimer: ReturnType<typeof setInterval> | null = null
-
-// Selected task for detail
-const selectedTaskId = ref<number | null>(null)
-const fullTaskDetail = ref<TaskResponse | null>(null)
+// ── Detail Drawer ─────────────────────────────────────────────────────────────
+const showDetailDrawer = ref(false)
+const selectedTask = ref<TaskResponse | null>(null)
 const detailLoading = ref(false)
 const retryingTaskId = ref<number | null>(null)
 
@@ -77,8 +96,8 @@ const serverPort = ref(443)
 const rate = ref<number | null>(1.0)
 const requireCdnProxy = ref(false)
 const statusReason = ref('')
-const parentId = ref<number | null>(null)
-const routeIds = ref('')
+const groupIds = ref<number[]>([])
+const routeIds = ref<number[]>([])
 const sortVal = ref<number | null>(null)
 const showNode = ref(true)
 const rateTimeEnable = ref(false)
@@ -87,84 +106,94 @@ const protocolSettingsJson = ref('')
 const rateTimeRangesJson = ref('')
 
 // ── Computed ──────────────────────────────────────────────────────────────────
-const protocolOptions = computed<SelectOption[]>(() =>
-  PROTOCOLS.map((p) => ({ label: p, value: p }))
-)
+const totalCount = computed(() => stats.value.total)
+const queuedCount = computed(() => stats.value.queued)
+const runningCount = computed(() => stats.value.running)
+const succeededCount = computed(() => stats.value.succeeded)
+const failedCount = computed(() => stats.value.failed)
 
-const regionOptions = computed<SelectOption[]>(() =>
-  REGIONS.map((r) => ({ label: `${REGION_MAP[r]} (${r})`, value: r }))
-)
+const filteredTasks = computed(() => {
+  let result = tasks.value
+  if (filterStatus.value) {
+    result = result.filter(t => t.status === filterStatus.value)
+  }
+  if (filterTaskType.value) {
+    result = result.filter(t => t.task_type === filterTaskType.value)
+  }
+  return result
+})
 
+const paginatedTasks = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filteredTasks.value.slice(start, start + pageSize.value)
+})
+
+const totalFiltered = computed(() => filteredTasks.value.length)
+
+// ── Options ──────────────────────────────────────────────────────────────────
+const protocolOptions: SelectOption[] = PROTOCOLS.map(p => ({ label: p, value: p }))
+const regionOptions: SelectOption[] = REGIONS.map(r => ({ label: `${REGION_MAP[r]} (${r})`, value: r }))
 const assetTypeOptions: SelectOption[] = [
   { label: 'AWS', value: 'aws' },
   { label: 'Self-Hosted', value: 'self_hosted' },
 ]
-
 const groupOptions = computed<SelectOption[]>(() =>
-  groups.value.map((g) => ({ label: g.name, value: g.id }))
+  groups.value.map(g => ({ label: g.name, value: g.id }))
 )
-
-const runningCount = computed(() =>
-  recentTasks.value.filter((t) => t.status === 'running').length
-)
-
-const filteredTasks = computed(() => recentTasks.value.slice(0, 20))
-
-const taskSelectOptions = computed<SelectOption[]>(() =>
-  recentTasks.value.map((t) => ({
-    label: `#${t.id} — ${t.task_type}`,
-    value: t.id,
-  }))
-)
-
-// ── Auto-tags ─────────────────────────────────────────────────────────────────
-const REGION_TAGS: Record<string, string> = {
-  'ap-northeast-1': 'jp-tokyo',
-  'ap-northeast-3': 'jp-osaka',
-  'ap-northeast-2': 'kr-seoul',
-  'ap-east-1': 'hk-hongkong',
-  'us-west-1': 'us-losangeles',
-  'ap-southeast-1': 'sg-singapore',
-}
-
-function buildDefaultTags() {
-  const regionTag = REGION_TAGS[region.value] ?? region.value
-  return JSON.stringify(
-    { protocol: protocolType.value.toLowerCase(), region: regionTag, asset: 'aws' },
-    null,
-    2
-  )
-}
-
-function onRegionChange() {
-  tagsJson.value = buildDefaultTags()
-}
+const statusOptions: SelectOption[] = [
+  { label: '全部状态', value: undefined },
+  { label: 'Queued', value: 'queued' },
+  { label: 'Running', value: 'running' },
+  { label: 'Succeeded', value: 'succeeded' },
+  { label: 'Failed', value: 'failed' },
+]
+const taskTypeOptions: SelectOption[] = [
+  { label: '全部类型', value: undefined },
+  { label: 'Provision Node', value: 'provision_node' },
+  { label: 'Force Heal', value: 'force_heal' },
+  { label: 'Decommission Node', value: 'decommission_node' },
+  { label: 'Reprobe Node', value: 'reprobe_node' },
+  { label: 'Manual Review', value: 'mark_manual_review' },
+]
+const limitOptions: SelectOption[] = [
+  { label: '20', value: 20 },
+  { label: '50', value: 50 },
+  { label: '100', value: 100 },
+  { label: '200', value: 200 },
+]
 
 // ── Data Fetching ─────────────────────────────────────────────────────────────
-async function fetchGroups() {
-  groupsLoading.value = true
-  groupsError.value = null
+async function fetchStats() {
   try {
-    const { data } = await apiClient.get<XboardGroupResponse[]>('/xboard/groups')
-    groups.value = data
-  } catch (err: unknown) {
-    const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
-    groupsError.value = axiosErr.response?.data?.error || axiosErr.message || '加载分组失败'
-  } finally {
-    groupsLoading.value = false
+    const { data } = await apiClient.get<typeof stats.value>('/tasks/stats')
+    stats.value = data
+  } catch {
+    // stats is non-critical, silently fail
   }
 }
 
-async function fetchRecentTasks() {
+async function fetchTasks() {
   try {
-    const { data } = await apiClient.get<TaskResponse[]>('/tasks', { params: { limit: 20 } })
-    recentTasks.value = data
-    tasksError.value = null
+    const { data } = await apiClient.get<TaskResponse[]>('/tasks', { params: { limit: filterLimit.value } })
+    tasks.value = data
+    errorMsg.value = null
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
-    tasksError.value = axiosErr.response?.data?.error || axiosErr.message || '加载任务失败'
+    errorMsg.value = axiosErr.response?.data?.error || axiosErr.message || '加载任务失败'
   } finally {
-    tasksLoading.value = false
+    loading.value = false
+  }
+}
+
+async function fetchGroups() {
+  groupsLoading.value = true
+  try {
+    const { data } = await apiClient.get<XboardGroupResponse[]>('/xboard/groups')
+    groups.value = data
+  } catch {
+    // groups is non-critical
+  } finally {
+    groupsLoading.value = false
   }
 }
 
@@ -172,7 +201,7 @@ async function fetchTaskDetail(id: number) {
   detailLoading.value = true
   try {
     const { data } = await apiClient.get<TaskResponse>(`/tasks/${id}`)
-    fullTaskDetail.value = data
+    selectedTask.value = data
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
     message.error(axiosErr.response?.data?.error || axiosErr.message || '加载详情失败')
@@ -186,10 +215,10 @@ async function retryTask(id: number) {
   try {
     await apiClient.post<TaskResponse>(`/tasks/${id}/retry`)
     message.success(`任务 #${id} 已重置为 queued`)
-    await fetchRecentTasks()
-    if (selectedTaskId.value === id) {
-      fullTaskDetail.value = null
-      selectedTaskId.value = null
+    await fetchTasks()
+    await fetchStats()
+    if (selectedTask.value?.id === id) {
+      fetchTaskDetail(id)
     }
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
@@ -199,7 +228,39 @@ async function retryTask(id: number) {
   }
 }
 
-// ── Submit ────────────────────────────────────────────────────────────────────
+// ── Auto-tags ─────────────────────────────────────────────────────────────────
+function buildDefaultTags(): string {
+  const regionTag = REGION_TAGS[region.value] ?? region.value
+  return JSON.stringify(
+    { protocol: protocolType.value.toLowerCase(), region: regionTag, asset: 'aws' },
+    null,
+    2
+  )
+}
+
+// ── Form Actions ──────────────────────────────────────────────────────────────
+function openNewTaskModal() {
+  tagsJson.value = buildDefaultTags()
+  showNewTaskModal.value = true
+}
+
+function resetForm() {
+  nodeName.value = ''
+  port.value = '443'
+  serverPort.value = 443
+  rate.value = 1.0
+  requireCdnProxy.value = false
+  statusReason.value = ''
+  groupIds.value = []
+  routeIds.value = []
+  sortVal.value = null
+  showNode.value = true
+  rateTimeEnable.value = false
+  tagsJson.value = buildDefaultTags()
+  protocolSettingsJson.value = ''
+  rateTimeRangesJson.value = ''
+}
+
 async function handleSubmit() {
   if (!nodeName.value.trim()) {
     message.warning('节点名称不能为空')
@@ -219,31 +280,32 @@ async function handleSubmit() {
     asset_type: assetType.value,
     region: region.value,
     require_cdn_proxy: requireCdnProxy.value,
-    group_ids: [],
-    route_ids: routeIds.value
-      ? routeIds.value.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n))
+    show: showNode.value,
+    parent_id: undefined,
+    group_ids: groupIds.value.length > 0 ? groupIds.value : undefined,
+    route_ids: routeIds.value.length > 0 ? routeIds.value : undefined,
+    sort: sortVal.value ?? undefined,
+    rate_time_enable: rateTimeEnable.value,
+    tags: tagsJson.value
+      ? (() => { try { return JSON.parse(tagsJson.value) } catch { return undefined } })()
       : undefined,
-    tags: tagsJson.value ? (() => { try { return JSON.parse(tagsJson.value) } catch { return undefined } })() : undefined,
     protocol_settings: protocolSettingsJson.value
       ? (() => { try { return JSON.parse(protocolSettingsJson.value) } catch { return undefined } })()
       : undefined,
-    show: showNode.value,
-    sort: sortVal.value,
-    rate_time_enable: rateTimeEnable.value,
     rate_time_ranges: rateTimeRangesJson.value
       ? (() => { try { return JSON.parse(rateTimeRangesJson.value) } catch { return undefined } })()
       : undefined,
     status_reason: statusReason.value || undefined,
-    parent_id: parentId.value,
   }
 
   try {
-    const { data: resp } = await apiClient.post('/tasks', body)
-    const respData = resp as SubmitResult
-    submitSuccess.value = respData
-    message.success(`任务已提交 — #${respData.task_id}, Correlation: ${respData.correlation_id}`)
-    await fetchRecentTasks()
+    const { data } = await apiClient.post<SubmitResult>('/tasks', body)
+    submitSuccess.value = data
+    message.success(`任务已提交 — #${data.task_id}`)
+    showNewTaskModal.value = false
     resetForm()
+    await fetchTasks()
+    await fetchStats()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
     submitError.value = axiosErr.response?.data?.error || axiosErr.message || '提交失败'
@@ -252,31 +314,10 @@ async function handleSubmit() {
   }
 }
 
-function resetForm() {
-  nodeName.value = ''
-  port.value = '443'
-  serverPort.value = 443
-  rate.value = 1.0
-  requireCdnProxy.value = false
-  statusReason.value = ''
-  parentId.value = null
-  routeIds.value = ''
-  sortVal.value = null
-  showNode.value = true
-  rateTimeEnable.value = false
-  tagsJson.value = buildDefaultTags()
-  protocolSettingsJson.value = ''
-  rateTimeRangesJson.value = ''
-}
-
-// ── Watchers ──────────────────────────────────────────────────────────────────
-function onTaskSelect(id: number | null) {
-  selectedTaskId.value = id
-  if (id !== null) {
-    fetchTaskDetail(id)
-  } else {
-    fullTaskDetail.value = null
-  }
+// ── Detail Drawer ─────────────────────────────────────────────────────────────
+function openDetail(task: TaskResponse) {
+  selectedTask.value = task
+  showDetailDrawer.value = true
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -302,251 +343,393 @@ function statusTagType(status: string): 'default' | 'info' | 'success' | 'error'
   }
 }
 
+function taskTypeLabel(tt: string): string {
+  const map: Record<string, string> = {
+    provision_node: '初始化节点',
+    force_heal: '强制修复',
+    decommission_node: '下线节点',
+    reprobe_node: '重探节点',
+    mark_manual_review: '人工审核',
+  }
+  return map[tt] ?? tt
+}
+
 // ── Table Columns ─────────────────────────────────────────────────────────────
-const taskColumns = [
+const columns = [
   { title: 'ID', key: 'id', align: 'center' as const, width: 70 },
-  { title: 'Type', key: 'task_type', ellipsis: { tooltip: true } },
+  { title: '任务类型', key: 'task_type', render: (row: TaskResponse) => taskTypeLabel(row.task_type) },
   {
-    title: 'Status', key: 'status', align: 'center' as const, width: 100,
+    title: '状态', key: 'status', align: 'center' as const, width: 100,
     render: (row: TaskResponse) => h(NTag, { type: statusTagType(row.status), size: 'small' }, { default: () => row.status }),
   },
   {
-    title: 'Attempts', key: 'attempt_count', align: 'center' as const, width: 100,
+    title: '进度', key: 'attempt_count', align: 'center' as const, width: 90,
     render: (row: TaskResponse) => `${row.attempt_count} / ${row.max_attempts}`,
   },
-  { title: 'Created', key: 'created_at', render: (row: TaskResponse) => fmtTs(row.created_at) },
-  { title: 'Finished', key: 'finished_at', render: (row: TaskResponse) => fmtTs(row.finished_at) },
+  { title: '创建时间', key: 'created_at', render: (row: TaskResponse) => fmtTs(row.created_at) },
+  { title: '锁定者', key: 'locked_by', render: (row: TaskResponse) => row.locked_by ?? '—' },
+  {
+    title: '操作', key: 'actions', align: 'center' as const, width: 80,
+    render: (row: TaskResponse) =>
+      h(NButton, { size: 'small', onClick: () => openDetail(row) }, { default: () => '详情' }),
+  },
 ]
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
+// ── Watchers ──────────────────────────────────────────────────────────────────
+function onFiltersChanged() {
+  page.value = 1
+}
+
+function onPageChange(p: number) {
+  page.value = p
+}
+
+function onPageSizeChange(s: number) {
+  pageSize.value = s
+  page.value = 1
+}
+
+// ── Lifecycle ────────────────────────────────────────────────────────────────
 onMounted(() => {
-  tagsJson.value = buildDefaultTags()
+  fetchStats()
+  fetchTasks()
   fetchGroups()
-  fetchRecentTasks()
-  tasksTimer = setInterval(fetchRecentTasks, 15_000)
+  refreshTimer = setInterval(() => {
+    fetchStats()
+    fetchTasks()
+  }, 15_000)
 })
 
 onUnmounted(() => {
-  if (tasksTimer !== null) {
-    clearInterval(tasksTimer)
-    tasksTimer = null
+  if (refreshTimer !== null) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
   }
 })
 </script>
 
+<script lang="ts">
+import { h } from 'vue'
+export default { name: 'ProvisionerView' }
+</script>
+
 <template>
-  <div style="padding: 16px; max-width: 1200px; margin: 0 auto">
-    <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <div style="padding: 16px; max-width: 1400px; margin: 0 auto">
+    <NAlert v-if="errorMsg" type="error" :title="errorMsg" style="margin-bottom: 16px" closable @close="errorMsg = null" />
+
+    <!-- ── Statistics Row ─────────────────────────────────────────────────────── -->
     <NCard style="margin-bottom: 16px">
-      <NText depth="3" style="font-size: 14px">
-        当前页面只负责提交任务到 SQLite 请求队列，不直接执行 AWS / Cloudflare / Xboard 开机流水线。
-      </NText>
+      <NGrid :cols="6" :x-gap="16" :y-gap="12" responsive="screen" item-responsive>
+        <NGi span="1">
+          <NStatistic label="全部任务" :value="totalCount" />
+        </NGi>
+        <NGi span="1">
+          <NStatistic label="排队中">
+            <template #default>
+              <NText :style="{ color: queuedCount > 0 ? '#f0a020' : 'inherit' }">{{ queuedCount }}</NText>
+            </template>
+          </NStatistic>
+        </NGi>
+        <NGi span="1">
+          <NStatistic label="执行中">
+            <template #default>
+              <NText :style="{ color: runningCount > 0 ? '#2080f0' : 'inherit' }">{{ runningCount }}</NText>
+            </template>
+          </NStatistic>
+        </NGi>
+        <NGi span="1">
+          <NStatistic label="成功" :value="succeededCount" />
+        </NGi>
+        <NGi span="1">
+          <NStatistic label="失败">
+            <template #default>
+              <NText :style="{ color: failedCount > 0 ? '#d03050' : 'inherit' }">{{ failedCount }}</NText>
+            </template>
+          </NStatistic>
+        </NGi>
+        <NGi span="1" style="display: flex; align-items: center; justify-content: flex-end">
+          <NButton type="primary" size="large" @click="openNewTaskModal">
+            + 新建任务
+          </NButton>
+        </NGi>
+      </NGrid>
     </NCard>
 
-    <NGrid :cols="2" :x-gap="16" style="margin-bottom: 16px">
-      <!-- ── Left Column: Form ──────────────────────────────────────────────── -->
-      <NGi>
-        <NCard title="初始化任务请求表单">
-          <NSpin :show="submitting">
-            <NAlert v-if="submitError" type="error" :title="submitError" style="margin-bottom: 12px" closable
-              @close="submitError = null" />
-            <NAlert v-if="submitSuccess" type="success" :title="`任务已提交 #${submitSuccess.task_id}`"
-              style="margin-bottom: 12px" closable @close="submitSuccess = null">
-              <NText depth="3" style="font-size: 12px">Correlation: {{ submitSuccess.correlation_id }}</NText>
-            </NAlert>
+    <!-- ── Filter Bar ────────────────────────────────────────────────────────── -->
+    <NCard style="margin-bottom: 16px">
+      <NSpace>
+        <NSelect v-model:value="filterStatus" :options="statusOptions" placeholder="按状态筛选"
+          clearable style="width: 140px" @update:value="onFiltersChanged" />
+        <NSelect v-model:value="filterTaskType" :options="taskTypeOptions" placeholder="按类型筛选"
+          clearable style="width: 160px" @update:value="onFiltersChanged" />
+        <NSelect v-model:value="filterLimit" :options="limitOptions" placeholder="显示条数"
+          style="width: 100px" @update:value="onFiltersChanged" />
+      </NSpace>
+    </NCard>
 
-            <NForm label-placement="left" label-width="140" size="small">
+    <!-- ── Task Table ────────────────────────────────────────────────────────── -->
+    <NCard>
+      <NSpin :show="loading" description="加载中…">
+        <NDataTable
+          :columns="columns"
+          :data="paginatedTasks"
+          :bordered="false"
+          :single-line="false"
+          size="small"
+          :row-key="(row: TaskResponse) => row.id"
+          :pagination="false"
+          :loading="loading"
+          @click-row="(row: TaskResponse) => openDetail(row)"
+          style="cursor: pointer"
+        />
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px">
+          <NText depth="3" style="font-size: 13px">
+            共 {{ totalFiltered }} 条，第 {{ page }} / {{ Math.max(1, Math.ceil(totalFiltered / pageSize)) }} 页
+          </NText>
+          <NPagination
+            v-model:page="page"
+            :page-size="pageSize"
+            :page-sizes="[15, 30, 50, 100]"
+            :item-count="totalFiltered"
+            show-size-picker
+            @update:page="onPageChange"
+            @update:page-size="onPageSizeChange"
+          />
+        </div>
+      </NSpin>
+    </NCard>
+
+    <!-- ── New Task Modal ─────────────────────────────────────────────────────── -->
+    <NModal
+      v-model:show="showNewTaskModal"
+      preset="card"
+      title="新建初始化任务"
+      style="max-width: 700px; width: 95vw"
+      :mask-closable="!submitting"
+      :close-on-esc="!submitting"
+    >
+      <NSpin :show="submitting">
+        <NAlert v-if="submitError" type="error" :title="submitError" style="margin-bottom: 12px" closable
+          @close="submitError = null" />
+        <NAlert v-if="submitSuccess" type="success" style="margin-bottom: 12px" closable
+          @close="submitSuccess = null">
+          任务已提交 — #{{ submitSuccess.task_id }}, Correlation: {{ submitSuccess.correlation_id }}
+        </NAlert>
+
+        <NForm label-placement="left" label-width="130" size="small">
+          <NDivider title-placement="left">基础配置</NDivider>
+          <NGrid :cols="2" :x-gap="12">
+            <NGi>
               <NFormItem label="协议类型">
                 <NSelect v-model:value="protocolType" :options="protocolOptions" />
               </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem label="资产类型">
                 <NSelect v-model:value="assetType" :options="assetTypeOptions" />
               </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem label="节点名称" required>
                 <NInput v-model:value="nodeName" placeholder="sf-xxx" clearable />
               </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem label="目标区域">
-                <NSelect
-                  v-model:value="region"
-                  :options="regionOptions"
-                  @update:value="onRegionChange"
-                />
+                <NSelect v-model:value="region" :options="regionOptions" />
               </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem label="Xboard 节点端口">
                 <NInput v-model:value="port" placeholder="443" />
               </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem v-if="assetType === 'aws'" label="服务监听端口">
                 <NInputNumber v-model:value="serverPort" :min="1" :max="65535" style="width: 100%" />
               </NFormItem>
               <NFormItem v-else label="服务监听端口">
                 <NInput value="自动分配 (40000-60000)" disabled />
               </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem label="倍率">
                 <NInputNumber v-model:value="rate" :min="0" :step="0.1" style="width: 100%" />
               </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem label="Cloudflare CDN">
                 <NCheckbox v-model:checked="requireCdnProxy">
-                  启用 CDN 代理（灰色云，不走代理时保持关闭）
+                  启用 CDN 代理
                 </NCheckbox>
               </NFormItem>
+            </NGi>
+          </NGrid>
 
-              <NDivider />
-
-              <NFormItem label="状态备注">
-                <NInput v-model:value="statusReason" placeholder="可选" />
+          <NDivider title-placement="left">分组与路由</NDivider>
+          <NGrid :cols="2" :x-gap="12">
+            <NGi>
+              <NFormItem label="Xboard 分组">
+                <NSelect
+                  v-model:value="groupIds"
+                  :options="groupOptions"
+                  placeholder="选择分组"
+                  multiple
+                  clearable
+                />
               </NFormItem>
-              <NFormItem label="分组（多选）">
-                <NSpin :show="groupsLoading">
-                  <NSelect
-                    v-model:value="parentId"
-                    :options="groupOptions"
-                    placeholder="选择分组"
-                    multiple
-                    clearable
-                  />
-                  <NText v-if="groupsError" depth="3" style="font-size: 12px; display: block; margin-top: 4px">
-                    {{ groupsError }}
-                  </NText>
-                </NSpin>
+            </NGi>
+            <NGi>
+              <NFormItem label="路由 ID">
+                <NDynamicInput
+                  v-model:value="routeIds"
+                  placeholder="输入路由 ID，按回车添加"
+                  :min="1"
+                />
               </NFormItem>
-              <NFormItem label="父节点 ID">
-                <NInputNumber v-model:value="parentId" placeholder="可选" clearable style="width: 100%" />
-              </NFormItem>
-              <NFormItem label="路由 ID（逗号分隔）">
-                <NInput v-model:value="routeIds" placeholder="1,2,3" />
-              </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem label="排序">
                 <NInputNumber v-model:value="sortVal" placeholder="可选" clearable style="width: 100%" />
               </NFormItem>
+            </NGi>
+            <NGi>
+              <NFormItem label="状态备注">
+                <NInput v-model:value="statusReason" placeholder="可选" />
+              </NFormItem>
+            </NGi>
+          </NGrid>
+
+          <NDivider title-placement="left">高级选项</NDivider>
+          <NGrid :cols="2" :x-gap="12">
+            <NGi>
               <NFormItem label="Xboard show">
                 <NCheckbox v-model:checked="showNode">show=true</NCheckbox>
               </NFormItem>
+            </NGi>
+            <NGi>
               <NFormItem label="限速时段">
                 <NCheckbox v-model:checked="rateTimeEnable">启用限速时段</NCheckbox>
               </NFormItem>
+            </NGi>
+          </NGrid>
 
-              <NDivider />
+          <NDivider title-placement="left">JSON 配置</NDivider>
+          <NFormItem label="标签 JSON">
+            <NInput
+              v-model:value="tagsJson"
+              type="textarea"
+              placeholder="自动生成，可手动修改"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+            />
+          </NFormItem>
+          <NFormItem label="协议设置 JSON">
+            <NInput
+              v-model:value="protocolSettingsJson"
+              type="textarea"
+              placeholder="可选"
+              :autosize="{ minRows: 2, maxRows: 5 }"
+            />
+          </NFormItem>
+          <NFormItem label="限速时段 JSON">
+            <NInput
+              v-model:value="rateTimeRangesJson"
+              type="textarea"
+              placeholder="可选"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+            />
+          </NFormItem>
+        </NForm>
 
-              <NFormItem label="标签 JSON">
-                <NInput
-                  v-model:value="tagsJson"
-                  type="textarea"
-                  placeholder="自动生成，可手动修改"
-                  :autosize="{ minRows: 2, maxRows: 5 }"
-                />
-              </NFormItem>
-              <NFormItem label="协议设置 JSON">
-                <NInput
-                  v-model:value="protocolSettingsJson"
-                  type="textarea"
-                  placeholder="可选"
-                  :autosize="{ minRows: 2, maxRows: 6 }"
-                />
-              </NFormItem>
-              <NFormItem label="限速时段 JSON">
-                <NInput
-                  v-model:value="rateTimeRangesJson"
-                  type="textarea"
-                  placeholder="可选"
-                  :autosize="{ minRows: 2, maxRows: 5 }"
-                />
-              </NFormItem>
-            </NForm>
+        <NSpace style="margin-top: 16px">
+          <NButton type="primary" :loading="submitting" @click="handleSubmit">
+            提交任务
+          </NButton>
+          <NButton :disabled="submitting" @click="showNewTaskModal = false; resetForm()">取消</NButton>
+        </NSpace>
+      </NSpin>
+    </NModal>
 
-            <NSpace style="margin-top: 16px">
-              <NButton type="primary" :loading="submitting" @click="handleSubmit">
-                执行初始化流水线
-              </NButton>
-              <NButton @click="resetForm">重置表单</NButton>
-            </NSpace>
-          </NSpin>
-        </NCard>
-      </NGi>
-
-      <!-- ── Right Column: Recent Tasks ────────────────────────────────────── -->
-      <NGi>
-        <NCard title="最近初始化任务">
-          <NSpin :show="tasksLoading" description="加载中…">
-            <NAlert v-if="tasksError" type="error" :title="tasksError" style="margin-bottom: 12px" closable
-              @close="tasksError = null" />
-            <NAlert v-if="runningCount > 0" type="warning" style="margin-bottom: 12px">
-              有 {{ runningCount }} 个执行中的任务
+    <!-- ── Detail Drawer ─────────────────────────────────────────────────────── -->
+    <NDrawer v-model:show="showDetailDrawer" :width="520" placement="right">
+      <NDrawerContent title="任务详情" closable>
+        <NSpin :show="detailLoading">
+          <template v-if="selectedTask">
+            <!-- Status Banner -->
+            <NAlert
+              :type="statusTagType(selectedTask.status)"
+              style="margin-bottom: 16px"
+            >
+              <NText strong style="font-size: 16px">
+                #{{ selectedTask.id }} — {{ taskTypeLabel(selectedTask.task_type) }}
+              </NText>
+              <br />
+              <NText depth="3">状态: {{ selectedTask.status }} | 进度: {{ selectedTask.attempt_count }} / {{ selectedTask.max_attempts }}</NText>
             </NAlert>
 
-            <NDataTable
-              :columns="taskColumns"
-              :data="filteredTasks"
-              :bordered="false"
-              :single-line="false"
-              size="small"
-              :pagination="{ pageSize: 10 }"
-              :row-key="(row: TaskResponse) => row.id"
-              style="margin-bottom: 16px"
-            />
+            <!-- Basic Info -->
+            <NCard title="基本信息" size="small" style="margin-bottom: 12px">
+              <NGrid :cols="2" :x-gap="8" :y-gap="6">
+                <NGi><NText depth="3">ID:</NText> {{ selectedTask.id }}</NGi>
+                <NGi><NText depth="3">Locked By:</NText> {{ selectedTask.locked_by ?? '—' }}</NGi>
+                <NGi><NText depth="3">创建时间:</NText></NGi>
+                <NGi><NText depth="3">{{ fmtTs(selectedTask.created_at) }}</NText></NGi>
+                <NGi><NText depth="3">开始时间:</NText></NGi>
+                <NGi><NText depth="3">{{ fmtTs(selectedTask.started_at) }}</NText></NGi>
+                <NGi><NText depth="3">结束时间:</NText></NGi>
+                <NGi><NText depth="3">{{ fmtTs(selectedTask.finished_at) }}</NText></NGi>
+              </NGrid>
+            </NCard>
 
-            <NCollapse>
-              <NCollapseItem title="查看原始明细" name="detail">
-                <NSelect
-                  :value="selectedTaskId"
-                  :options="taskSelectOptions"
-                  placeholder="选择任务"
-                  clearable
-                  @update:value="onTaskSelect"
-                  style="margin-bottom: 12px; max-width: 400px"
-                />
+            <!-- Correlation ID -->
+            <NCard title="Correlation ID" size="small" style="margin-bottom: 12px">
+              <NCode :code="selectedTask.correlation_id" language="text" word-wrap />
+            </NCard>
 
-                <NSpin :show="detailLoading">
-                  <template v-if="fullTaskDetail">
-                    <NCard title="基本信息" size="small" style="margin-bottom: 8px">
-                      <NGrid :cols="2" :x-gap="8" :y-gap="4">
-                        <NGi><NText depth="3">ID:</NText> {{ fullTaskDetail.id }}</NGi>
-                        <NGi><NText depth="3">Type:</NText> {{ fullTaskDetail.task_type }}</NGi>
-                        <NGi>
-                          <NText depth="3">Status:</NText>
-                          <NTag :type="statusTagType(fullTaskDetail.status)" size="small" style="margin-left: 4px">
-                            {{ fullTaskDetail.status }}
-                          </NTag>
-                        </NGi>
-                        <NGi>
-                          <NText depth="3">Attempts:</NText>
-                          {{ fullTaskDetail.attempt_count }} / {{ fullTaskDetail.max_attempts }}
-                        </NGi>
-                      </NGrid>
-                    </NCard>
+            <!-- Error -->
+            <NCard v-if="selectedTask.last_error" title="错误信息" size="small" style="margin-bottom: 12px">
+              <NAlert type="error">{{ selectedTask.last_error }}</NAlert>
+            </NCard>
 
-                    <NCard title="Correlation ID" size="small" style="margin-bottom: 8px">
-                      <NCode :code="fullTaskDetail.correlation_id" language="text" word-wrap />
-                    </NCard>
+            <!-- Actions -->
+            <NSpace>
+              <NButton
+                v-if="selectedTask.status === 'failed'"
+                type="warning"
+                :loading="retryingTaskId === selectedTask.id"
+                :disabled="retryingTaskId !== null"
+                @click="retryTask(selectedTask.id)"
+              >
+                重试任务
+              </NButton>
+              <NButton
+                v-if="selectedTask.status === 'succeeded'"
+                type="success"
+                disabled
+              >
+                任务成功
+              </NButton>
+              <NButton
+                v-if="selectedTask.status === 'running'"
+                type="info"
+                disabled
+              >
+                执行中
+              </NButton>
+              <NButton
+                v-if="selectedTask.status === 'queued'"
+                type="default"
+                disabled
+              >
+                排队中
+              </NButton>
+            </NSpace>
+          </template>
 
-                    <NAlert v-if="fullTaskDetail.last_error" type="error" :title="fullTaskDetail.last_error"
-                      style="margin-bottom: 8px" />
-
-                    <NSpace>
-                      <NButton
-                        v-if="fullTaskDetail.status === 'failed'"
-                        type="warning"
-                        size="small"
-                        :loading="retryingTaskId === fullTaskDetail.id"
-                        :disabled="retryingTaskId !== null"
-                        @click="retryTask(fullTaskDetail.id)"
-                      >
-                        重试此任务
-                      </NButton>
-                      <NButton
-                        v-if="fullTaskDetail.status === 'succeeded'"
-                        type="success"
-                        size="small"
-                      >
-                        任务成功
-                      </NButton>
-                    </NSpace>
-                  </template>
-                </NSpin>
-              </NCollapseItem>
-            </NCollapse>
-          </NSpin>
-        </NCard>
-      </NGi>
-    </NGrid>
+          <NAlert v-else type="info" title="暂无选中任务" />
+        </NSpin>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>

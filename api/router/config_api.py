@@ -31,7 +31,43 @@ class SentinelUpdateRequest(BaseModel):
     sentinel_poll_interval_seconds: float | None = None
     sentinel_probe_timeout_seconds: int | None = None
     sentinel_heal_cooldown_seconds: float | None = None
+    sentinel_probe_retry_cooldown_seconds: float | None = None
+    sentinel_suspicious_lookback_minutes: int | None = None
+    sentinel_zero_uplink_window_minutes: int | None = None
+    sentinel_probe_mode: str | None = None
     sentinel_probe_confirm_cycles: int | None = None
+    sentinel_probe_min_cn_probe_count: int | None = None
+    sentinel_probe_required_success_ratio: float | None = None
+    sentinel_probe_allow_auto_heal_hy2: bool | None = None
+
+
+class AppUpdateRequest(BaseModel):
+    environment: str | None = None
+    request_timeout_seconds: int | None = None
+    max_retries: int | None = None
+    retry_backoff_seconds: float | None = None
+    daemon_idle_poll_interval_seconds: float | None = None
+    daemon_failure_backoff_seconds: float | None = None
+    daemon_stale_task_recovery_interval_seconds: float | None = None
+    daemon_running_task_timeout_seconds: float | None = None
+    daemon_recovered_task_retry_delay_seconds: float | None = None
+    phone_home_base_url: str | None = None
+    phone_home_listen_host: str | None = None
+    phone_home_listen_port: int | None = None
+    phone_home_ready_timeout_seconds: float | None = None
+    phone_home_poll_interval_seconds: float | None = None
+    artifact_cache_enabled: bool | None = None
+    artifact_cache_listen_port: int | None = None
+    artifact_cache_base_url_override: str | None = None
+    probe_server_enabled: bool | None = None
+    probe_poll_interval_seconds: float | None = None
+    probe_heartbeat_timeout_seconds: float | None = None
+    key_pair_local_dir: str | None = None
+
+
+class LoggingUpdateRequest(BaseModel):
+    level: str | None = None
+    log_retention_days: int | None = None
 
 
 class DashboardUpdateRequest(BaseModel):
@@ -80,18 +116,79 @@ async def update_sentinel(
 ) -> dict:
     raw = load_raw_config()
     app = raw.setdefault("app", {})
-    if request.sentinel_enabled is not None:
-        app["sentinel_enabled"] = request.sentinel_enabled
-    if request.sentinel_poll_interval_seconds is not None:
-        app["sentinel_poll_interval_seconds"] = request.sentinel_poll_interval_seconds
-    if request.sentinel_probe_timeout_seconds is not None:
-        app["sentinel_probe_timeout_seconds"] = request.sentinel_probe_timeout_seconds
-    if request.sentinel_heal_cooldown_seconds is not None:
-        app["sentinel_heal_cooldown_seconds"] = request.sentinel_heal_cooldown_seconds
-    if request.sentinel_probe_confirm_cycles is not None:
-        app["sentinel_probe_confirm_cycles"] = request.sentinel_probe_confirm_cycles
+    sentinel_fields = {
+        "sentinel_enabled": request.sentinel_enabled,
+        "sentinel_poll_interval_seconds": request.sentinel_poll_interval_seconds,
+        "sentinel_probe_timeout_seconds": request.sentinel_probe_timeout_seconds,
+        "sentinel_heal_cooldown_seconds": request.sentinel_heal_cooldown_seconds,
+        "sentinel_probe_retry_cooldown_seconds": request.sentinel_probe_retry_cooldown_seconds,
+        "sentinel_suspicious_lookback_minutes": request.sentinel_suspicious_lookback_minutes,
+        "sentinel_zero_uplink_window_minutes": request.sentinel_zero_uplink_window_minutes,
+        "sentinel_probe_mode": request.sentinel_probe_mode,
+        "sentinel_probe_confirm_cycles": request.sentinel_probe_confirm_cycles,
+        "sentinel_probe_min_cn_probe_count": request.sentinel_probe_min_cn_probe_count,
+        "sentinel_probe_required_success_ratio": request.sentinel_probe_required_success_ratio,
+        "sentinel_probe_allow_auto_heal_hy2": request.sentinel_probe_allow_auto_heal_hy2,
+    }
+    for key, value in sentinel_fields.items():
+        if value is not None:
+            app[key] = value
     save_raw_config(None, raw)
     return {"status": "ok", "message": "Sentinel settings updated. Restart the daemon to apply."}
+
+
+@router.put("/app")
+async def update_app(
+    request: AppUpdateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_admin),
+) -> dict:
+    raw = load_raw_config()
+    app = raw.setdefault("app", {})
+    fields = {
+        "environment": request.environment,
+        "request_timeout_seconds": request.request_timeout_seconds,
+        "max_retries": request.max_retries,
+        "retry_backoff_seconds": request.retry_backoff_seconds,
+        "daemon_idle_poll_interval_seconds": request.daemon_idle_poll_interval_seconds,
+        "daemon_failure_backoff_seconds": request.daemon_failure_backoff_seconds,
+        "daemon_stale_task_recovery_interval_seconds": request.daemon_stale_task_recovery_interval_seconds,
+        "daemon_running_task_timeout_seconds": request.daemon_running_task_timeout_seconds,
+        "daemon_recovered_task_retry_delay_seconds": request.daemon_recovered_task_retry_delay_seconds,
+        "phone_home_base_url": request.phone_home_base_url,
+        "phone_home_listen_host": request.phone_home_listen_host,
+        "phone_home_listen_port": request.phone_home_listen_port,
+        "phone_home_ready_timeout_seconds": request.phone_home_ready_timeout_seconds,
+        "phone_home_poll_interval_seconds": request.phone_home_poll_interval_seconds,
+        "artifact_cache_enabled": request.artifact_cache_enabled,
+        "artifact_cache_listen_port": request.artifact_cache_listen_port,
+        "artifact_cache_base_url_override": request.artifact_cache_base_url_override,
+        "probe_server_enabled": request.probe_server_enabled,
+        "probe_poll_interval_seconds": request.probe_poll_interval_seconds,
+        "probe_heartbeat_timeout_seconds": request.probe_heartbeat_timeout_seconds,
+        "key_pair_local_dir": request.key_pair_local_dir,
+    }
+    for key, value in fields.items():
+        if value is not None:
+            app[key] = value
+    save_raw_config(None, raw)
+    return {"status": "ok", "message": "Application settings updated. Restart the daemon to apply."}
+
+
+@router.put("/logging")
+async def update_logging(
+    request: LoggingUpdateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_admin),
+) -> dict:
+    raw = load_raw_config()
+    logging_cfg = raw.setdefault("logging", {})
+    if request.level is not None:
+        logging_cfg["level"] = request.level
+    if request.log_retention_days is not None:
+        logging_cfg["log_retention_days"] = request.log_retention_days
+    save_raw_config(None, raw)
+    return {"status": "ok", "message": "Logging settings updated."}
 
 
 @router.put("/dashboard")

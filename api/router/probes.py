@@ -102,6 +102,16 @@ async def update_probe_status(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Probe not found")
 
 
+@router.delete("/probes/{probe_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_probe(
+    probe_id: str,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _: None = Depends(require_operator),
+) -> None:
+    from database.probe_repo import ProbeRepo
+    ProbeRepo(ctx).delete_probe(probe_id)
+
+
 @router.get("/probe-tokens", response_model=list[dict])
 async def list_bootstrap_tokens(
     ctx: RuntimeContext = Depends(get_runtime_context),

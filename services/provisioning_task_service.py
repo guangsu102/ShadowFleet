@@ -14,6 +14,7 @@ from services.provisioner_service import ProvisionerService
 from services.provisioning_models import ProvisionRequest, ProvisionResult
 from services.runtime_service import RuntimeContext
 from utils.logger import generate_correlation_id, set_correlation_id, set_event_type
+from typing import Any
 
 
 class ProvisioningTaskServiceError(RuntimeError):
@@ -42,7 +43,27 @@ class ProvisioningTaskService:
         self._max_attempts = runtime_context.config.app.max_retries + 1
         self._retry_backoff_seconds = runtime_context.config.app.retry_backoff_seconds
 
-    def submit_provision_task(self, request: ProvisionRequest) -> ProvisioningTaskSubmitResult:
+    def submit_provision_task(
+        self,
+        request: ProvisionRequest,
+        group_ids: list[int] | None = None,
+        route_ids: list[int] | None = None,
+        sort: int | None = None,
+        rate_time_enable: bool = False,
+        protocol_settings: dict[str, Any] | None = None,
+        rate_time_ranges: list[Any] | None = None,
+        status_reason: str | None = None,
+    ) -> ProvisioningTaskSubmitResult:
+        enriched = replace(
+            request,
+            group_ids=group_ids,
+            route_ids=route_ids,
+            sort=sort,
+            rate_time_enable=rate_time_enable,
+            protocol_settings=protocol_settings,
+            rate_time_ranges=rate_time_ranges,
+            status_reason=status_reason,
+        )
         correlation_id = generate_correlation_id()
         original_correlation_id = self._runtime_context.correlation_id
         set_correlation_id(correlation_id)
@@ -50,7 +71,7 @@ class ProvisioningTaskService:
             task_id = self._task_repo.create_task(
                 ProvisioningTaskCreateRequest(
                     correlation_id=correlation_id,
-                    request_payload=self._serialize_provision_request(request),
+                    request_payload=self._serialize_provision_request(enriched),
                     max_attempts=self._max_attempts,
                 )
             )
@@ -58,8 +79,8 @@ class ProvisioningTaskService:
             self._logger.info(
                 "Submitted provisioning task id=%s protocol=%s node=%s",
                 task_id,
-                request.protocol_type,
-                request.node_name,
+                enriched.protocol_type,
+                enriched.node_name,
             )
         finally:
             set_correlation_id(original_correlation_id)
@@ -92,6 +113,9 @@ class ProvisioningTaskService:
 
     def list_recent_tasks(self, limit: int = 20) -> list[ProvisioningTaskRecord]:
         return self._task_repo.list_recent_tasks(limit=limit)
+
+    def get_task_stats(self) -> dict[str, int]:
+        return self._task_repo.get_task_stats()
 
     def recover_stale_running_tasks(
         self,

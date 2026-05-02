@@ -26,7 +26,6 @@ class TestAppRuntimeConfig:
         assert config.environment == "development"
         assert config.sqlite_path == "shadowfleet.db"
         assert config.sentinel_enabled is False
-        assert config.dashboard_require_password is False
 
     def test_custom_values(self) -> None:
         """Custom values should be accepted."""
@@ -34,8 +33,6 @@ class TestAppRuntimeConfig:
             environment="production",
             sqlite_path="/data/fleet.db",
             sentinel_enabled=True,
-            dashboard_require_password=True,
-            dashboard_password="secret",
             xboard_sentinel_api_base_url="https://xboard.example.com/sentinel/api",
             xboard_sentinel_api_key="sentinel_api_key",
         )
@@ -62,11 +59,6 @@ class TestAppRuntimeConfig:
         """Zero retry_backoff_seconds should raise."""
         with pytest.raises(ValidationError, match="retry_backoff_seconds"):
             AppRuntimeConfig(retry_backoff_seconds=0)
-
-    def test_password_required_when_required(self) -> None:
-        """dashboard_password is required when dashboard_require_password is True."""
-        with pytest.raises(ValidationError, match="dashboard_password"):
-            AppRuntimeConfig(dashboard_require_password=True)
 
     def test_sentinel_requires_xboard_api(self) -> None:
         """Sentinel enabled requires xboard sentinel API config."""

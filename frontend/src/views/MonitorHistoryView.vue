@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { h } from 'vue'
 import {
   NSpin,
   NAlert,
-  NGrid,
-  NGi,
   NStatistic,
   NDataTable,
   NTabs,
@@ -13,14 +11,9 @@ import {
   NSelect,
   NTag,
   NCard,
-  NCollapse,
-  NCollapseItem,
-  NDescriptions,
-  NDescriptionsItem,
   NSpace,
   NText,
   NEmpty,
-  NDivider,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import apiClient from '@/api/client'
@@ -226,7 +219,7 @@ const cycleColumns = [
 ]
 
 const detectionColumns = [
-  { title: 'Node ID', key: 'xboard_node_id', align: 'center' as const, width: 90 },
+  { title: t('monitor.nodeIdShort'), key: 'xboard_node_id', align: 'center' as const, width: 90 },
   { title: t('monitor.detectionType'), key: 'detection_type', width: 140 },
   {
     title: t('monitor.detectionStatus'),
@@ -257,11 +250,18 @@ const confirmedNodeColumns = [
 // ── Watchers ──────────────────────────────────────────────────────────────────
 function onCycleSelect(val: number | null) {
   if (val !== null) {
-    fetchDetections(val)
+    selectedCycleId.value = val
   } else {
     detections.value = []
   }
 }
+
+// Auto-fetch detections whenever a cycle is selected (works across all tabs)
+watch(selectedCycleId, (newId, oldId) => {
+  if (newId !== null && newId !== oldId) {
+    fetchDetections(newId)
+  }
+})
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 onMounted(() => {
@@ -290,29 +290,17 @@ onUnmounted(() => {
         <!-- ══ Tab 1: Scan Cycle List ═══════════════════════════════════════════════ -->
         <NTab name="cycles" :tab="t('monitor.scanCycleList')">
           <NCard style="margin-top: 12px">
-            <NGrid :cols="6" :x-gap="16" :y-gap="12" responsive="screen" item-responsive style="margin-bottom: 16px">
-              <NGi span="2 m:1">
-                <NStatistic :label="t('monitor.totalCycles')" :value="cycles.length" />
-              </NGi>
-              <NGi span="2 m:1">
-                <NStatistic :label="t('monitor.succeeded')" :value="succeededCycles" />
-              </NGi>
-              <NGi span="2 m:1">
-                <NStatistic :label="t('monitor.failed')" :value="failedCycles" />
-              </NGi>
-              <NGi span="2 m:1">
-                <NStatistic :label="t('monitor.running')" :value="runningCycles" />
-              </NGi>
-              <NGi span="2 m:1">
-                <NStatistic :label="t('monitor.totalCandidates')" :value="totalCandidates" />
-              </NGi>
-              <NGi span="2 m:1">
-                <NStatistic :label="t('monitor.totalHealed')" :value="totalHealed" />
-              </NGi>
-            </NGrid>
+            <!-- Stats row -->
+            <div class="stats-row" style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px">
+              <NStatistic :label="t('monitor.totalCycles')" :value="cycles.length" />
+              <NStatistic :label="t('monitor.succeeded')" :value="succeededCycles" />
+              <NStatistic :label="t('monitor.failed')" :value="failedCycles" />
+              <NStatistic :label="t('monitor.running')" :value="runningCycles" />
+              <NStatistic :label="t('monitor.totalCandidates')" :value="totalCandidates" />
+              <NStatistic :label="t('monitor.totalHealed')" :value="totalHealed" />
+            </div>
 
-            <NDivider />
-
+            <!-- Controls -->
             <NSpace :size="12" style="margin-bottom: 12px">
               <NSelect
                 v-model:value="statusFilter"
@@ -328,6 +316,7 @@ onUnmounted(() => {
               />
             </NSpace>
 
+            <!-- Cycle table with row-click to select -->
             <NDataTable
               :columns="cycleColumns"
               :data="filteredCycles"
@@ -336,39 +325,44 @@ onUnmounted(() => {
               size="small"
               :pagination="{ pageSize: 10 }"
               :row-key="(row: any) => row.cycle_id"
+              :row-props="(row: any) => ({
+                style: 'cursor: pointer',
+                onClick: () => onCycleSelect(row.cycle_id),
+              })"
+              :highlight-row="selectedCycleId !== null"
             />
 
-            <NDivider />
-
-            <NText depth="3" style="font-size: 13px; margin-bottom: 8px; display: block">
-              {{ t('monitor.selectCycleToView') }}
-            </NText>
-            <NSelect
-              v-model:value="selectedCycleId"
-              :options="cycleSelectOptions"
-              style="width: 300px; margin-bottom: 12px"
-              :placeholder="t('monitor.selectCycle')"
-              @update:value="onCycleSelect"
-            />
-
+            <!-- Cycle detail + detections (always shown when a cycle is selected) -->
             <template v-if="selectedCycle">
-              <NDescriptions label-placement="top" :column="3" size="small" style="margin-bottom: 16px">
-                <NDescriptionsItem :label="t('monitor.cycleId')">
-                  <NText>{{ selectedCycle.cycle_id }}</NText>
-                </NDescriptionsItem>
-                <NDescriptionsItem :label="t('monitor.status')">
-                  <NTag :type="statusTagType(selectedCycle.status)" size="small">{{ selectedCycle.status }}</NTag>
-                </NDescriptionsItem>
-                <NDescriptionsItem :label="t('monitor.candidates')">{{ selectedCycle.candidate_count }}</NDescriptionsItem>
-                <NDescriptionsItem :label="t('monitor.confirmed')">{{ selectedCycle.confirmed_count }}</NDescriptionsItem>
-                <NDescriptionsItem :label="t('monitor.healed')">{{ selectedCycle.healed_count }}</NDescriptionsItem>
-                <NDescriptionsItem :label="t('monitor.failed')">{{ selectedCycle.failed_count }}</NDescriptionsItem>
-                <NDescriptionsItem :label="t('monitor.startedAt')">{{ fmtTs(selectedCycle.started_at) }}</NDescriptionsItem>
-                <NDescriptionsItem :label="t('monitor.finishedAt')">{{ fmtTs(selectedCycle.finished_at) }}</NDescriptionsItem>
-                <NDescriptionsItem :label="t('monitor.error')" v-if="selectedCycle.error_message">
-                  <NText type="error">{{ selectedCycle.error_message }}</NText>
-                </NDescriptionsItem>
-              </NDescriptions>
+              <div style="margin: 20px 0 12px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px">
+                <div style="padding: 10px 12px; background: #f5f5f5; border-radius: 6px; text-align: center">
+                  <div style="font-size: 12px; color: #888">{{ t('monitor.status') }}</div>
+                  <NTag :type="statusTagType(selectedCycle.status)" size="small" style="margin-top: 4px">{{ selectedCycle.status }}</NTag>
+                </div>
+                <div style="padding: 10px 12px; background: #f5f5f5; border-radius: 6px; text-align: center">
+                  <div style="font-size: 12px; color: #888">{{ t('monitor.candidates') }}</div>
+                  <div style="font-size: 18px; font-weight: 600; margin-top: 4px">{{ selectedCycle.candidate_count }}</div>
+                </div>
+                <div style="padding: 10px 12px; background: #f5f5f5; border-radius: 6px; text-align: center">
+                  <div style="font-size: 12px; color: #888">{{ t('monitor.confirmed') }}</div>
+                  <div style="font-size: 18px; font-weight: 600; margin-top: 4px">{{ selectedCycle.confirmed_count }}</div>
+                </div>
+                <div style="padding: 10px 12px; background: #f5f5f5; border-radius: 6px; text-align: center">
+                  <div style="font-size: 12px; color: #888">{{ t('monitor.healed') }}</div>
+                  <div style="font-size: 18px; font-weight: 600; margin-top: 4px">{{ selectedCycle.healed_count }}</div>
+                </div>
+                <div style="padding: 10px 12px; background: #f5f5f5; border-radius: 6px; text-align: center; grid-column: span 2">
+                  <div style="font-size: 12px; color: #888">{{ t('monitor.startedAt') }}</div>
+                  <div style="font-size: 13px; font-weight: 500; margin-top: 4px">{{ fmtTs(selectedCycle.started_at) }}</div>
+                </div>
+                <div style="padding: 10px 12px; background: #f5f5f5; border-radius: 6px; text-align: center; grid-column: span 2">
+                  <div style="font-size: 12px; color: #888">{{ t('monitor.finishedAt') }}</div>
+                  <div style="font-size: 13px; font-weight: 500; margin-top: 4px">{{ fmtTs(selectedCycle.finished_at) }}</div>
+                </div>
+              </div>
+              <NAlert v-if="selectedCycle.error_message" type="error" style="margin-bottom: 12px">
+                {{ selectedCycle.error_message }}
+              </NAlert>
 
               <NSpin :show="loadingDetections" :description="t('monitor.loadingDetections')">
                 <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
@@ -398,9 +392,6 @@ onUnmounted(() => {
                 </template>
               </NSpin>
             </template>
-            <NText v-else depth="3" style="display: block; margin-top: 8px">
-              {{ t('monitor.noCycleSelected') }}
-            </NText>
           </NCard>
         </NTab>
 
@@ -423,25 +414,19 @@ onUnmounted(() => {
               />
             </NSpace>
 
-            <NGrid :cols="3" :x-gap="16" :y-gap="12" responsive="screen" item-responsive style="margin-bottom: 16px">
-              <NGi span="1">
-                <NStatistic :label="t('monitor.gfwBlocked')" :value="confirmedCount">
-                  <template #suffix>
-                    <NTag type="error" size="small" style="margin-left: 6px">GFW Blocked</NTag>
-                  </template>
-                </NStatistic>
-              </NGi>
-              <NGi span="1">
-                <NStatistic :label="t('monitor.candidate')" :value="candidateCount">
-                  <template #suffix>
-                    <NTag type="warning" size="small" style="margin-left: 6px">Candidate</NTag>
-                  </template>
-                </NStatistic>
-              </NGi>
-              <NGi span="1">
-                <NStatistic :label="t('monitor.other')" :value="otherCount" />
-              </NGi>
-            </NGrid>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px">
+              <NStatistic :label="t('monitor.gfwBlocked')" :value="confirmedCount">
+                <template #suffix>
+                  <NTag type="error" size="small" style="margin-left: 6px">GFW Blocked</NTag>
+                </template>
+              </NStatistic>
+              <NStatistic :label="t('monitor.candidate')" :value="candidateCount">
+                <template #suffix>
+                  <NTag type="warning" size="small" style="margin-left: 6px">Candidate</NTag>
+                </template>
+              </NStatistic>
+              <NStatistic :label="t('monitor.other')" :value="otherCount" />
+            </div>
 
             <NSpin :show="loadingDetections" :description="t('monitor.loadingDetections')">
               <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
@@ -466,45 +451,27 @@ onUnmounted(() => {
                     <NEmpty :description="t('monitor.noDetections')" />
                   </template>
                 </NDataTable>
-
-                <NCollapse v-if="detections.length > 0" style="margin-top: 16px">
-                  <NCollapseItem :title="t('monitor.viewRawJson')" name="detections-json">
-                    <NCard v-for="d in detections" :key="d.id" size="small" style="margin-bottom: 8px">
-                      <NText depth="2" style="font-size: 12px; font-family: monospace; white-space: pre-wrap">
-                        {{ JSON.stringify(d, null, 2) }}
-                      </NText>
-                    </NCard>
-                  </NCollapseItem>
-                </NCollapse>
               </template>
             </NSpin>
           </NCard>
         </NTab>
 
-        <!-- ══ Tab 3: Block Confirmation Progress ════════════════════════════════ -->
+        <!-- ══ Tab 3: Block Confirmation Summary ══════════════════════════════════ -->
         <NTab name="confirmation" :tab="t('monitor.blockConfirmationProgress')">
           <NCard style="margin-top: 12px">
             <NAlert type="info" :title="t('monitor.blockConfirmation')" style="margin-bottom: 16px">
               {{ t('monitor.blockConfirmationDesc') }}
             </NAlert>
 
-            <NSpace :size="12" style="margin-bottom: 16px" align="center">
-              <NSelect
-                v-model:value="selectedCycleId"
-                :options="cycleSelectOptions"
-                style="width: 280px"
-                :placeholder="t('monitor.selectCycle')"
-                @update:value="onCycleSelect"
-              />
-            </NSpace>
-
-            <NSpin :show="loadingDetections" :description="t('monitor.loadingDetections')">
+            <!-- Aggregate confirmed nodes across ALL cycles -->
+            <NSpin :show="loadingCycles || loadingDetections" :description="t('monitor.loadingDetections')">
               <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
 
-              <template v-if="selectedCycleId === null">
-                <NEmpty :description="t('monitor.selectCycleAbove')" style="margin: 24px 0" />
-              </template>
-              <template v-else-if="confirmedNodeRows.length === 0 && !loadingDetections && !detectionError">
+              <NText depth="3" style="font-size: 13px; display: block; margin-bottom: 8px">
+                {{ t('monitor.confirmedNodesAcrossAllCycles') || 'GFW 阻断确认节点汇总（所有周期）' }}
+              </NText>
+
+              <template v-if="confirmedNodeRows.length === 0 && !loadingCycles && !loadingDetections">
                 <NEmpty :description="t('monitor.noConfirmations')" style="margin: 24px 0" />
               </template>
               <template v-else>

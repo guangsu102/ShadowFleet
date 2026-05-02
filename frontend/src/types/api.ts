@@ -286,6 +286,14 @@ export interface NodeStatusUpdateRequest {
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 export type TaskType = 'provision_node' | 'force_heal' | 'decommission_node' | 'reprobe_node' | 'mark_manual_review'
 
+export interface TaskStatsResponse {
+  total: number
+  queued: number
+  running: number
+  succeeded: number
+  failed: number
+}
+
 export interface ProvisionTaskCreateRequest {
   protocol_type: string
   node_name: string
@@ -409,7 +417,43 @@ export interface SentinelUpdateRequest {
   sentinel_poll_interval_seconds?: number | null
   sentinel_probe_timeout_seconds?: number | null
   sentinel_heal_cooldown_seconds?: number | null
+  sentinel_probe_retry_cooldown_seconds?: number | null
+  sentinel_suspicious_lookback_minutes?: number | null
+  sentinel_zero_uplink_window_minutes?: number | null
+  sentinel_probe_mode?: string | null
   sentinel_probe_confirm_cycles?: number | null
+  sentinel_probe_min_cn_probe_count?: number | null
+  sentinel_probe_required_success_ratio?: number | null
+  sentinel_probe_allow_auto_heal_hy2?: boolean | null
+}
+
+export interface AppUpdateRequest {
+  environment?: string | null
+  request_timeout_seconds?: number | null
+  max_retries?: number | null
+  retry_backoff_seconds?: number | null
+  daemon_idle_poll_interval_seconds?: number | null
+  daemon_failure_backoff_seconds?: number | null
+  daemon_stale_task_recovery_interval_seconds?: number | null
+  daemon_running_task_timeout_seconds?: number | null
+  daemon_recovered_task_retry_delay_seconds?: number | null
+  phone_home_base_url?: string | null
+  phone_home_listen_host?: string | null
+  phone_home_listen_port?: number | null
+  phone_home_ready_timeout_seconds?: number | null
+  phone_home_poll_interval_seconds?: number | null
+  artifact_cache_enabled?: boolean | null
+  artifact_cache_listen_port?: number | null
+  artifact_cache_base_url_override?: string | null
+  probe_server_enabled?: boolean | null
+  probe_poll_interval_seconds?: number | null
+  probe_heartbeat_timeout_seconds?: number | null
+  key_pair_local_dir?: string | null
+}
+
+export interface LoggingUpdateRequest {
+  level?: string | null
+  log_retention_days?: number | null
 }
 
 export interface DashboardUpdateRequest {

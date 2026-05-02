@@ -498,7 +498,6 @@ def sample_config_dict() -> dict[str, Any]:
             "environment": "test",
             "sqlite_path": ":memory:",
             "sentinel_enabled": False,
-            "dashboard_require_password": False,
         },
         "logging": {
             "level": "DEBUG",

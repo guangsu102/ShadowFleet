@@ -25,7 +25,6 @@ ENVIRONMENT_OVERRIDE_MAP: dict[str, tuple[str, ...]] = {
     "SHADOWFLEET_XBOARD_SENTINEL_API_BASE_URL": ("app", "xboard_sentinel_api_base_url"),
     "SHADOWFLEET_XBOARD_SENTINEL_API_KEY": ("app", "xboard_sentinel_api_key"),
     "SHADOWFLEET_PROBE_BOOTSTRAP_TOKENS": ("app", "probe_bootstrap_tokens"),
-    "SHADOWFLEET_DASHBOARD_PASSWORD": ("app", "dashboard_password"),
 }
 
 
@@ -109,7 +108,6 @@ def sanitize_config_for_logging(config: AppConfig) -> dict[str, Any]:
             app_config["probe_bootstrap_tokens"] = [
                 _mask_secret(str(token)) for token in bootstrap_tokens
             ]
-        app_config["dashboard_password"] = _mask_secret(app_config.get("dashboard_password"))
 
     return sanitized_config
 

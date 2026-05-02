@@ -176,10 +176,6 @@ app:
   # Sentinel 暂不启用（生产稳定后再开）
   sentinel_enabled: false
 
-  # Dashboard 登录密码（生产必须设置）
-  dashboard_require_password: true
-  dashboard_password: "your-secure-password-here"
-
 xboard:
   host: 137.175.65.47               # Xboard 数据库地址
   port: 5432
