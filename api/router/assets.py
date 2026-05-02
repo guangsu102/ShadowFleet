@@ -7,6 +7,7 @@ from api.auth.dependencies import get_current_user, require_operator
 from api.deps import get_runtime_context
 from services.asset_application_models import AssetRegistrationRequest, SelfHostedAssetRegistrationRequest
 from services.asset_application_service import AssetApplicationService
+from services.dashboard_service import DashboardService
 from services.runtime_service import RuntimeContext
 
 
@@ -260,6 +261,43 @@ async def query_arm64_amis(
             for a in amis
         ],
     }
+
+
+class AwsAccountIdRequest(BaseModel):
+    aws_access_key: str = Field(..., min_length=1)
+    aws_secret_key: str = Field(..., min_length=1)
+    region: str = Field(default="us-east-1", min_length=1)
+
+
+class AwsAccountIdResponse(BaseModel):
+    aws_account_id: str
+    arn: str
+    user_id: str
+
+
+@router.post("/resolve-aws-account-id", response_model=AwsAccountIdResponse)
+async def resolve_aws_account_id(
+    request: AwsAccountIdRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(get_current_user),
+) -> AwsAccountIdResponse:
+    """Resolve AWS Account ID via STS GetCallerIdentity using explicit credentials."""
+    from infrastructure.aws.sts_client import resolve_aws_account_id as _resolve, StsClientError
+    try:
+        identity = _resolve(
+            aws_access_key=request.aws_access_key,
+            aws_secret_key=request.aws_secret_key,
+            aws_region=request.region,
+        )
+    except StsClientError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return AwsAccountIdResponse(
+        aws_account_id=identity.account_id,
+        arn=identity.arn,
+        user_id=identity.user_id,
+    )
 
 
 class AmiQueryRequest(BaseModel):

@@ -110,7 +110,7 @@ async function doDelete(asset: AssetResponse) {
 
 // ── Computed: filtered assets ─────────────────────────────────────────────────
 const awsAssets  = computed(() => assets.value.filter(a => a.asset_type === 'aws'))
-const selfAssets = computed(() => assets.value.filter(a => a.asset_type === 'self-hosted'))
+const selfAssets = computed(() => assets.value.filter(a => a.asset_type === 'self_hosted'))
 
 // ── Table columns ──────────────────────────────────────────────────────────────
 function buildColumns(onDelete: (asset: AssetResponse) => void): DataTableColumns<AssetResponse> {
@@ -288,6 +288,7 @@ async function submitAwsForm() {
 
 // ── AMI Query ──────────────────────────────────────────────────────────────────
 const queryingAmi = ref(false)
+const fetchingAccountId = ref(false)
 const amiResults = ref<AmiInfo[]>([])
 const amiError = ref<string | null>(null)
 
@@ -326,6 +327,35 @@ function selectAmi(ami: AmiInfo) {
   awsForm.value.ami_id = ami.ami_id
   amiResults.value = []
   message.success(`已选择: ${ami.name} (${ami.ami_id})`)
+}
+
+async function fetchAccountId() {
+  if (!awsForm.value.aws_access_key) {
+    message.warning('请先填写 AWS Access Key')
+    return
+  }
+  if (!awsForm.value.aws_secret_key) {
+    message.warning('请先填写 AWS Secret Key')
+    return
+  }
+  fetchingAccountId.value = true
+  try {
+    const { data } = await apiClient.post<{ aws_account_id: string; arn: string; user_id: string }>(
+      '/assets/resolve-aws-account-id',
+      {
+        aws_access_key: awsForm.value.aws_access_key,
+        aws_secret_key: awsForm.value.aws_secret_key,
+        region: awsForm.value.region,
+      }
+    )
+    awsForm.value.aws_account_id = data.aws_account_id
+    message.success(`Account ID 已获取: ${data.aws_account_id}`)
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string } } }
+    message.error(e.response?.data?.error || e.response?.data?.detail || '获取 Account ID 失败')
+  } finally {
+    fetchingAccountId.value = false
+  }
 }
 
 // ── Self-Hosted Registration Form ──────────────────────────────────────────────
@@ -550,7 +580,21 @@ onMounted(fetchAssets)
                 </NGi>
                 <NGi span="1">
                   <NFormItem label="AWS Account ID">
-                    <NInput v-model:value="awsForm.aws_account_id" placeholder="12 位数字或别名" />
+                    <NSpace vertical>
+                      <NSpace>
+                        <NInput v-model:value="awsForm.aws_account_id" placeholder="12 位数字或别名" style="width: 200px" />
+                        <NButton
+                          :loading="fetchingAccountId"
+                          :disabled="!awsForm.aws_access_key || !awsForm.aws_secret_key"
+                          @click="fetchAccountId"
+                        >
+                          自动获取
+                        </NButton>
+                      </NSpace>
+                      <NText depth="3" style="font-size: 12px">
+                        填写 Access Key 和 Secret Key 后点击自动获取
+                      </NText>
+                    </NSpace>
                   </NFormItem>
                 </NGi>
                 <NGi span="2">
