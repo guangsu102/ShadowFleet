@@ -18,7 +18,7 @@ services:
       PYTHONUNBUFFERED: "1"
       SHADOWFLEET_ENVIRONMENT: ${SHADOWFLEET_ENVIRONMENT:-production}
     volumes:
-      - shadowfleet-db:/data
+      - ./data/shadowfleet.db:/data/shadowfleet.db
       - ./data/logs:/app/logs
       - ./data/config:/data/config:ro
     ports:
@@ -53,7 +53,7 @@ services:
       PYTHONUNBUFFERED: "1"
       SHADOWFLEET_ENVIRONMENT: ${SHADOWFLEET_ENVIRONMENT:-production}
     volumes:
-      - shadowfleet-db:/data
+      - ./data/shadowfleet.db:/data/shadowfleet.db
       - ./data/logs:/app/logs
       - shadowfleet-artifacts:/var/www/shadowfleet-artifacts
       - ./data/config:/data/config:ro
@@ -107,7 +107,6 @@ services:
     restart: "no"
 
 volumes:
-  shadowfleet-db:
   shadowfleet-artifacts:
   shadowfleet-certbot:
   shadowfleet-frontend-dist:
