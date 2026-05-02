@@ -29,7 +29,7 @@ import {
 } from 'naive-ui'
 import type { SelectOption, DataTableColumns } from 'naive-ui'
 import apiClient from '@/api/client'
-import type { AssetResponse, AWSAssetCreateRequest, SelfHostedAssetCreateRequest } from '@/types/api'
+import type { AssetResponse, AWSAssetCreateRequest, SelfHostedAssetCreateRequest, AmiQueryResponse, AmiInfo } from '@/types/api'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function statusTagType(status: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
@@ -286,6 +286,48 @@ async function submitAwsForm() {
   }
 }
 
+// ── AMI Query ──────────────────────────────────────────────────────────────────
+const queryingAmi = ref(false)
+const amiResults = ref<AmiInfo[]>([])
+const amiError = ref<string | null>(null)
+
+async function queryAmi() {
+  if (!awsForm.value.aws_access_key) {
+    message.warning('请先填写 AWS Access Key')
+    return
+  }
+  if (!awsForm.value.aws_secret_key) {
+    message.warning('请先填写 AWS Secret Key')
+    return
+  }
+  queryingAmi.value = true
+  amiError.value = null
+  amiResults.value = []
+  try {
+    const { data } = await apiClient.post<AmiQueryResponse>('/assets/query-amis', {
+      aws_access_key: awsForm.value.aws_access_key,
+      aws_secret_key: awsForm.value.aws_secret_key,
+      region: awsForm.value.region,
+    })
+    amiResults.value = data.amis
+    if (data.amis.length === 0) {
+      message.info('该账号/区域未找到 Debian ARM64 AMI')
+    }
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string }; message?: string } }
+    amiError.value = e.response?.data?.error || e.response?.data?.detail || '查询失败'
+    message.error(amiError.value)
+  } finally {
+    queryingAmi.value = false
+  }
+}
+
+function selectAmi(ami: AmiInfo) {
+  awsForm.value.ami_id = ami.ami_id
+  amiResults.value = []
+  message.success(`已选择: ${ami.name} (${ami.ami_id})`)
+}
+
 // ── Self-Hosted Registration Form ──────────────────────────────────────────────
 const selfForm = ref({
   asset_name: '',
@@ -532,7 +574,25 @@ onMounted(fetchAssets)
               <NGrid :cols="1" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
                 <NGi span="1">
                   <NFormItem label="AMI ID">
-                    <NInput v-model:value="awsForm.ami_id" placeholder="ami-xxxxxxxx" />
+                    <NSpace vertical>
+                      <NSpace>
+                        <NInput v-model:value="awsForm.ami_id" placeholder="ami-xxxxxxxx 或留空" style="width: 300px" />
+                        <NButton :loading="queryingAmi" @click="queryAmi" :disabled="!awsForm.aws_access_key || !awsForm.aws_secret_key">
+                          自动获取 Debian ARM64 AMI
+                        </NButton>
+                      </NSpace>
+                      <NSpin v-if="queryingAmi" description="正在查询 AWS..." />
+                      <NAlert v-if="amiError" type="error" :title="amiError" style="margin-top: 4px" closable @close="amiError = null" />
+                      <NAlert v-if="amiResults.length > 0" type="info" title="查询到以下 AMI，点击选择" style="margin-top: 4px">
+                        <NSpace vertical>
+                          <div v-for="ami in amiResults" :key="ami.ami_id" style="cursor: pointer; padding: 4px 0; border-bottom: 1px solid #eee" @click="selectAmi(ami)">
+                            <NText strong style="font-size: 12px">{{ ami.name }}</NText>
+                            <NText depth="3" style="font-size: 11px; margin-left: 8px">{{ ami.ami_id }}</NText>
+                            <NText depth="3" style="font-size: 11px; display: block">{{ ami.description || '' }}</NText>
+                          </div>
+                        </NSpace>
+                      </NAlert>
+                    </NSpace>
                   </NFormItem>
                 </NGi>
               </NGrid>

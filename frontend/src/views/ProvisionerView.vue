@@ -29,7 +29,7 @@ import {
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import apiClient from '@/api/client'
-import type { ProvisionTaskCreateRequest, TaskResponse, SubmitResult, XboardGroupResponse } from '@/types/api'
+import type { ProvisionTaskCreateRequest, TaskResponse, SubmitResult, XboardGroupResponse, AmiQueryResponse, AmiInfo } from '@/types/api'
 
 const message = useMessage()
 
@@ -113,6 +113,12 @@ const certMode = ref('none')
 const certDomain = ref('')
 const certProvider = ref('')
 const certEmail = ref('')
+const queryingAmi = ref(false)
+const amiResults = ref<AmiInfo[]>([])
+const amiError = ref<string | null>(null)
+// Optional credentials for AMI auto-query in Provisioner
+const awsAccessKey = ref('')
+const awsSecretKey = ref('')
 
 // Self-hosted SSH
 const sshHost = ref('')
@@ -266,6 +272,40 @@ function buildDefaultTags(): string {
   )
 }
 
+// ── AMI Auto-Query ────────────────────────────────────────────────────────────
+async function queryAmi() {
+  if (!awsAccessKey.value || !awsSecretKey.value) {
+    message.warning('请先填写 AWS Access Key 和 Secret Key')
+    return
+  }
+  queryingAmi.value = true
+  amiError.value = null
+  amiResults.value = []
+  try {
+    const { data } = await apiClient.post<AmiQueryResponse>('/assets/query-amis', {
+      aws_access_key: awsAccessKey.value,
+      aws_secret_key: awsSecretKey.value,
+      region: region.value,
+    })
+    amiResults.value = data.amis
+    if (data.amis.length > 0) {
+      amiId.value = data.amis[0].ami_id
+      message.success(`已自动获取最新 AMI: ${data.amis[0].name}`)
+    }
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string }; message?: string } }
+    amiError.value = e.response?.data?.error || e.response?.data?.detail || 'AMI 查询失败'
+  } finally {
+    queryingAmi.value = false
+  }
+}
+
+function selectAmiFromResults(ami: AmiInfo) {
+  amiId.value = ami.ami_id
+  amiResults.value = []
+  message.success(`已选择: ${ami.name}`)
+}
+
 // ── Form Actions ──────────────────────────────────────────────────────────────
 function openNewTaskModal() {
   tagsJson.value = buildDefaultTags()
@@ -295,6 +335,10 @@ function resetForm() {
   certDomain.value = ''
   certProvider.value = ''
   certEmail.value = ''
+  awsAccessKey.value = ''
+  awsSecretKey.value = ''
+  amiResults.value = []
+  amiError.value = null
   // Self-hosted
   sshHost.value = ''
   sshPort.value = 22
@@ -628,6 +672,14 @@ export default { name: 'ProvisionerView' }
           <!-- AWS 专属字段 -->
           <NDivider v-if="assetType === 'aws'" title-placement="left">AWS 配置</NDivider>
           <NGrid v-if="assetType === 'aws'" :cols="2" :x-gap="12">
+            <NGi :span="2">
+              <NFormItem label="AWS 凭证（用于自动查询 AMI）">
+                <NSpace>
+                  <NInput v-model:value="awsAccessKey" placeholder="AWS Access Key" style="width: 200px" clearable show-password-on="click" />
+                  <NInput v-model:value="awsSecretKey" placeholder="AWS Secret Key" type="password" style="width: 280px" clearable show-password-on="mousedown" />
+                </NSpace>
+              </NFormItem>
+            </NGi>
             <NGi>
               <NFormItem label="实例类型">
                 <NInput v-model:value="instanceType" placeholder="如 t4g.micro (可选)" clearable />
@@ -635,7 +687,25 @@ export default { name: 'ProvisionerView' }
             </NGi>
             <NGi>
               <NFormItem label="AMI ID">
-                <NInput v-model:value="amiId" placeholder="ami-xxxxxxxx (可选)" clearable />
+                <NSpace vertical>
+                  <NSpace>
+                    <NInput v-model:value="amiId" placeholder="自动获取或手动填写" style="width: 280px" clearable />
+                    <NButton :loading="queryingAmi" @click="queryAmi" title="自动获取最新 Debian ARM64 AMI">
+                      自动获取 AMI
+                    </NButton>
+                  </NSpace>
+                  <NSpin v-if="queryingAmi" description="查询中..." />
+                  <NText v-if="amiError" depth="3" style="font-size: 12px; color: #d03050">{{ amiError }}</NText>
+                  <NSpace v-if="amiResults.length > 0" style="margin-top: 4px">
+                    <NTag v-for="ami in amiResults.slice(0, 5)" :key="ami.ami_id"
+                      :bordered="ami.ami_id === amiId"
+                      style="cursor: pointer; font-size: 11px"
+                      @click="selectAmiFromResults(ami)"
+                    >
+                      {{ ami.name.substring(0, 25) }}... ({{ ami.ami_id.substring(0, 12) }}...)
+                    </NTag>
+                  </NSpace>
+                </NSpace>
               </NFormItem>
             </NGi>
             <NGi>

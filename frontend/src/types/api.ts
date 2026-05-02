@@ -178,6 +178,8 @@ export interface AssetResponse {
   region: string | null
   status: string
   aws_account_id: string | null
+  aws_access_key: string | null
+  aws_secret_key: string | null
   account_total_vcpu: number | null
   allocated_count: number
   target_count: number
@@ -187,6 +189,18 @@ export interface AssetResponse {
   memory_gb: number | null
   remarks: string | null
   updated_at: string
+}
+
+export interface AmiInfo {
+  ami_id: string
+  name: string
+  owner: string
+  description?: string
+}
+
+export interface AmiQueryResponse {
+  region: string
+  amis: AmiInfo[]
 }
 
 export interface HardwareProbeRequest {

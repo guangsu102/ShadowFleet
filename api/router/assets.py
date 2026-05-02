@@ -7,8 +7,6 @@ from api.auth.dependencies import get_current_user, require_operator
 from api.deps import get_runtime_context
 from services.asset_application_models import AssetRegistrationRequest, SelfHostedAssetRegistrationRequest
 from services.asset_application_service import AssetApplicationService
-from services.dashboard_models import AssetHealthRow
-from services.dashboard_service import DashboardService
 from services.runtime_service import RuntimeContext
 
 
@@ -22,6 +20,8 @@ class AssetResponse(BaseModel):
     region: str | None = None
     status: str = ""
     aws_account_id: str | None = None
+    aws_access_key: str | None = None
+    aws_secret_key: str | None = None
     account_total_vcpu: int | None = None
     allocated_count: int = 0
     target_count: int = 0
@@ -87,6 +87,8 @@ def _to_response(row: AssetHealthRow) -> AssetResponse:
         region=row.region,
         status=row.status,
         aws_account_id=row.aws_account_id,
+        aws_access_key=None,
+        aws_secret_key=None,
         account_total_vcpu=row.account_total_vcpu,
         allocated_count=row.allocated_count,
         target_count=row.target_count,
@@ -170,11 +172,28 @@ async def get_asset(
     ctx: RuntimeContext = Depends(get_runtime_context),
     _current_user: None = Depends(get_current_user),
 ) -> AssetResponse:
-    service = DashboardService(ctx)
-    for row in service.build_snapshot().asset_rows:
-        if row.asset_id == asset_id:
-            return _to_response(row)
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    from database.asset_repo import AssetRepo
+
+    asset = AssetRepo(ctx).get_asset_by_id(asset_id)
+    return AssetResponse(
+        asset_id=asset.id,
+        asset_name=asset.asset_name,
+        asset_type=asset.asset_type,
+        region=asset.region,
+        status=asset.status,
+        aws_account_id=asset.aws_account_id,
+        aws_access_key=asset.aws_access_key,
+        aws_secret_key=asset.aws_secret_key,
+        account_total_vcpu=asset.account_total_vcpu,
+        allocated_count=0,
+        target_count=0,
+        max_count=0,
+        supported_protocols=[],
+        cpu_cores=asset.cpu_cores,
+        memory_gb=asset.memory_gb,
+        remarks=asset.remarks,
+        updated_at=asset.updated_at or "",
+    )
 
 
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -194,16 +213,95 @@ async def delete_asset(
 async def query_arm64_amis(
     asset_id: int,
     region: str,
+    name_filter: str | None = None,
+    limit: int = 30,
     ctx: RuntimeContext = Depends(get_runtime_context),
     _current_user: None = Depends(require_operator),
 ) -> dict[str, object]:
+    from database.asset_repo import AssetRepo
+
+    asset = AssetRepo(ctx).get_asset_by_id(asset_id)
+    if asset.aws_access_key is None or asset.aws_secret_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="AWS credentials not found for this asset. Cannot query AMIs.",
+        )
+    if asset.asset_type != "aws":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="AMI query is only supported for AWS assets.",
+        )
+
+    service = AssetApplicationService(ctx)
+    try:
+        amis = service.query_arm64_amis(
+            aws_access_key=asset.aws_access_key,
+            aws_secret_key=asset.aws_secret_key,
+            aws_region=region,
+            name_filter=name_filter,
+            limit=limit,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"AMI query failed: {e}",
+        ) from e
+
     return {
-        "asset_id": asset_id, "region": region,
+        "asset_id": asset_id,
+        "region": region,
         "amis": [
-            {"ami_id": "ami-0c55b159cbfafe1f0", "name": "ubuntu-22.04-arm64", "owner": "099720109477"},
-            {"ami_id": "ami-0a6dc09c0b5d7f20f", "name": "ubuntu-24.04-arm64", "owner": "099720109477"},
+            {
+                "ami_id": a.get("ImageId", ""),
+                "name": a.get("Name", ""),
+                "owner": a.get("OwnerId", ""),
+                "description": a.get("Description", ""),
+            }
+            for a in amis
         ],
-        "note": "Placeholder — real implementation uses boto3 ec2.describe_images",
+    }
+
+
+class AmiQueryRequest(BaseModel):
+    aws_access_key: str = Field(..., min_length=1)
+    aws_secret_key: str = Field(..., min_length=1)
+    region: str = Field(..., min_length=1)
+    name_filter: str | None = None
+    limit: int = 30
+
+
+@router.post("/query-amis")
+async def query_amis(
+    request: AmiQueryRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> dict[str, object]:
+    service = AssetApplicationService(ctx)
+    try:
+        amis = service.query_arm64_amis(
+            aws_access_key=request.aws_access_key,
+            aws_secret_key=request.aws_secret_key,
+            aws_region=request.region,
+            name_filter=request.name_filter,
+            limit=request.limit,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"AMI query failed: {e}",
+        ) from e
+
+    return {
+        "region": request.region,
+        "amis": [
+            {
+                "ami_id": a.get("ImageId", ""),
+                "name": a.get("Name", ""),
+                "owner": a.get("OwnerId", ""),
+                "description": a.get("Description", ""),
+            }
+            for a in amis
+        ],
     }
 
 
