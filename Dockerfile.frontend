@@ -1,0 +1,31 @@
+# =============================================================================
+# ShadowFleet Frontend (Vue 3) Dockerfile
+# Multi-stage: build → output static files
+# =============================================================================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN chmod -R +x node_modules/.bin/ && npm run build
+
+FROM alpine:3.19 AS runner
+
+RUN apk add --no-cache nginx \
+    && rm -f /etc/nginx/http.d/default.conf \
+    && mkdir -p /run/nginx
+
+COPY --from=builder /app/dist /dist
+COPY frontend/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget -qO- http://localhost/ || exit 1
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["nginx", "-g", "daemon off;"]

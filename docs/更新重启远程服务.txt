@@ -1,0 +1,14 @@
+unzip -o ./ShadowFleet.zip   -d ./
+
+
+sudo chown -R shadowfleet:shadowfleet  ./
+
+source venv/bin/activate
+
+pip install -r requirements.txt --upgrade
+
+deactivate
+
+sudo systemctl restart shadowfleet-daemon
+
+sudo systemctl restart shadowfleet-ui

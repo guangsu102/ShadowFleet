@@ -1,0 +1,42 @@
+app:
+  environment: test
+  sqlite_path: ":memory:"
+  sentinel_enabled: false
+  sentinel_probe_mode: cn_probe_mesh
+  dashboard_require_password: false
+
+logging:
+  level: DEBUG
+
+telegram:
+  enabled: false
+
+cloudflare:
+  enabled: true
+  api_token: "test_cf_token_12345"
+  zone_id: "test_zone_id_67890"
+  root_domain: "example.com"
+  auto_subdomain_prefix: "sf"
+
+aws_proxy:
+  enabled: false
+
+xboard:
+  host: "localhost"
+  port: 5432
+  database: "xboard_test"
+  user: "test_user"
+  password: "test_password"
+
+fleet_matrix:
+  ap-northeast-1:
+    AnyTLS:
+      desired_count: 5
+      min_alert_threshold: 2
+    Trojan:
+      desired_count: 3
+      min_alert_threshold: 1
+  us-east-1:
+    VLESS:
+      desired_count: 4
+      min_alert_threshold: 2

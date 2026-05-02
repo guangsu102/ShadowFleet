@@ -1,0 +1,9 @@
+key_pairs/
+*.db
+config.yaml
+config.dev.yaml
+__pycache__/
+*.pyc
+.pytest_cache/
+htmlcov/
+*.egg-info/

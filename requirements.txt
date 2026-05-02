@@ -1,0 +1,61 @@
+# ==========================================
+# ShadowFleet 核心依赖清单 (Python 3.10+)
+# ==========================================
+
+# 1. 可视化驾驶舱 (ui/ 模块)
+streamlit>=1.32.0
+
+# 2. 云资源调度引擎 (infrastructure/aws/ 模块)
+boto3>=1.34.0
+
+# 3. PostgreSQL 数据库交互 (database/ 模块)
+# 必须使用二进制版本以避免在精简版 Linux 上编译 C 扩展报错
+psycopg2-binary>=2.9.9
+# 数据库连接池，防止高频自愈检测压垮 Xboard 数据库
+DBUtils>=3.1.0
+
+# 4. 数据建模与严谨校验 (database/models.py 模块)
+# 替代脆弱的 Python 字典，用于严谨定义节点和 AWS 账号的数据结构
+pydantic>=2.6.0
+
+# 5. 外部 API 交互 (infrastructure/cloudflare/ & third_party/)
+# 强制设定 timeout 的同步 HTTP 请求库
+requests>=2.31.0
+paramiko
+# RSA 密钥对生成，用于 ImportKeyPair 自动化
+cryptography>=42.0.0
+
+# 5.1 系统监控
+# 用于 System Status 页面的资源监控
+psutil>=5.9.0
+
+# 6. 告警中枢 (utils/telegram_bot.py 模块)
+python-telegram-bot>=20.8
+
+# 7. 全局配置解析 (utils/config_parser.py 模块)
+PyYAML>=6.0.1
+
+# 8. 后台守护进程调度 (daemon.py 入口)
+# 轻量级任务调度器，用于执行“每 3 分钟巡检”、“每小时同步账号配额”等死循环任务
+schedule>=1.2.1
+
+# ==========================================
+# ShadowFleet 测试依赖清单
+# ==========================================
+
+# 测试框架
+pytest>=8.0.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+
+# ==========================================
+# ShadowFleet FastAPI 依赖清单 (Vue 3 前端后端)
+# ==========================================
+
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+bcrypt>=4.1.0

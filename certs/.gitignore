@@ -1,0 +1,4 @@
+# 存放 Let's Encrypt SSL 证书
+# 手动运行 certbot 申请后，证书会存放在 live/your-domain.com/
+live/
+archive/

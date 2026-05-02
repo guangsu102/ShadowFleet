@@ -1,0 +1,45 @@
+# =============================================================================
+# ShadowFleet Daemon Dockerfile
+# =============================================================================
+ARG PYTHON_VERSION=3.12-slim
+
+FROM python:${PYTHON_VERSION} AS base
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+FROM base AS builder
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+FROM base
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY --from=builder /opt/venv /opt/venv
+
+COPY daemon.py .
+COPY services ./services
+COPY database ./database
+COPY models ./models
+COPY utils ./utils
+COPY infrastructure ./infrastructure
+COPY templates ./templates
+COPY config.template.yaml ./config.yaml
+
+RUN mkdir -p /data/config /data /app/logs /var/www/shadowfleet-artifacts
+
+EXPOSE 8787 8080
+
+CMD ["python", "daemon.py"]

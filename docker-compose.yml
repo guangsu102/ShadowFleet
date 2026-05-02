@@ -1,0 +1,117 @@
+version: "3.9"
+
+services:
+  # ---------------------------------------------------------------------------
+  # ShadowFleet API + Frontend (FastAPI serves Vue SPA static files)
+  # ---------------------------------------------------------------------------
+  shadowfleet-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12-slim}
+    image: shadowfleet/api:latest
+    container_name: shadowfleet-api
+    environment:
+      TZ: Asia/Shanghai
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      SHADOWFLEET_ENVIRONMENT: ${SHADOWFLEET_ENVIRONMENT:-production}
+    volumes:
+      - shadowfleet-db:/data
+      - ./data/logs:/app/logs
+      - ./data/config:/data/config:ro
+    ports:
+      - "${API_PORT:-8000}:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      shadowfleet-daemon:
+        condition: service_started
+    networks:
+      - shadowfleet-net
+
+  # ---------------------------------------------------------------------------
+  # ShadowFleet Daemon (后台任务调度 + phone-home + artifact cache)
+  # ---------------------------------------------------------------------------
+  shadowfleet-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile.daemon
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12-slim}
+    image: shadowfleet/daemon:latest
+    container_name: shadowfleet-daemon
+    environment:
+      TZ: Asia/Shanghai
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      SHADOWFLEET_ENVIRONMENT: ${SHADOWFLEET_ENVIRONMENT:-production}
+    volumes:
+      - shadowfleet-db:/data
+      - ./data/logs:/app/logs
+      - shadowfleet-artifacts:/var/www/shadowfleet-artifacts
+      - ./data/config:/data/config:ro
+    ports:
+      - "${PHONE_HOME_PORT:-8787}:8787"
+      - "${ARTIFACT_CACHE_PORT:-8080}:8080"
+    restart: unless-stopped
+    networks:
+      - shadowfleet-net
+
+  # ---------------------------------------------------------------------------
+  # Nginx (反向代理 + TLS 终止 + 前端静态文件)
+  # ---------------------------------------------------------------------------
+  shadowfleet-nginx:
+    image: nginx:alpine
+    container_name: shadowfleet-nginx
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - shadowfleet-frontend-dist:/usr/share/nginx/html:ro
+      - ./certs:/etc/letsencrypt:ro
+      - ./data/logs/nginx:/var/log/nginx
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    restart: unless-stopped
+    depends_on:
+      shadowfleet-api:
+        condition: service_healthy
+    networks:
+      - shadowfleet-net
+
+  # ---------------------------------------------------------------------------
+  # 前端构建 + 导出到 named volume (只在需要重新构建前端时启用)
+  # ---------------------------------------------------------------------------
+  shadowfleet-frontend-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: shadowfleet/frontend:latest
+    container_name: shadowfleet-frontend-builder
+    environment:
+      TZ: Asia/Shanghai
+    profiles:
+      - frontend-build
+    volumes:
+      - shadowfleet-frontend-dist:/usr/share/nginx/html
+    networks:
+      - shadowfleet-net
+    restart: "no"
+
+volumes:
+  shadowfleet-db:
+  shadowfleet-artifacts:
+  shadowfleet-certbot:
+  shadowfleet-frontend-dist:
+
+networks:
+  shadowfleet-net:
+    driver: bridge

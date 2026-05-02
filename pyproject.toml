@@ -1,0 +1,31 @@
+[project]
+name = "shadowfleet"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "docs", "sql", "templates", "htmlcov"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "-ra",
+]
+markers = [
+    "unit: Unit tests for utilities and models",
+    "integration: Integration tests for database and external systems",
+    "service: Service layer tests with mocked dependencies",
+    "infrastructure: Infrastructure layer tests with mocked APIs",
+    "slow: Slow running tests that should be skipped in CI",
+    "requires_db: Tests that require a real database connection",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]

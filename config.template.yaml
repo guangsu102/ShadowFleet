@@ -1,0 +1,138 @@
+# =============================================================================
+# ShadowFleet 全局配置模板文件
+# 复制此文件为 config.yaml 并填写实际值
+# 敏感信息（令牌、密码、密钥）建议通过环境变量注入，详见 config_parser.py
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 应用程序核心配置
+# -----------------------------------------------------------------------------
+app:
+  environment: development
+  sqlite_path: shadowfleet.db
+  request_timeout_seconds: 10
+  max_retries: 3
+  retry_backoff_seconds: 1.0
+
+  # ------------------ Daemon 守护进程配置 ------------------
+  daemon_idle_poll_interval_seconds: 5.0
+  daemon_failure_backoff_seconds: 5.0
+  daemon_stale_task_recovery_interval_seconds: 30.0
+  daemon_running_task_timeout_seconds: 900.0
+  daemon_recovered_task_retry_delay_seconds: 10.0
+
+  # ------------------ Phone-Home 内网穿透服务配置 ------------------
+  phone_home_base_url: null
+  phone_home_listen_host: "0.0.0.0"
+  phone_home_listen_port: 8787
+  phone_home_ready_timeout_seconds: 300.0
+  phone_home_poll_interval_seconds: 5.0
+
+  # ------------------ Sentinel 节点健康检查与自愈配置 ------------------
+  sentinel_enabled: false
+  sentinel_poll_interval_seconds: 180.0
+  sentinel_probe_timeout_seconds: 10
+  sentinel_heal_cooldown_seconds: 900.0
+  sentinel_probe_retry_cooldown_seconds: 300.0
+  sentinel_suspicious_lookback_minutes: 60
+  sentinel_zero_uplink_window_minutes: 3
+  sentinel_probe_provider: "local_active_probe"
+  sentinel_probe_api_base_url: null
+  sentinel_probe_api_token: null
+  sentinel_probe_mode: "cn_probe_mesh"
+  sentinel_probe_confirm_cycles: 2
+  sentinel_probe_result_wait_timeout_seconds: 30.0
+  sentinel_probe_min_cn_probe_count: 2
+  sentinel_probe_required_success_ratio: 0.5
+  sentinel_probe_allow_auto_heal_hy2: false
+
+  # ------------------ Probe Server 探测服务器配置 ------------------
+  probe_server_enabled: false
+  probe_bootstrap_tokens: []
+  probe_poll_interval_seconds: 5.0
+  probe_heartbeat_timeout_seconds: 60.0
+
+  # ------------------ Xboard Sentinel 接口配置 ------------------
+  # 通过环境变量 SHADOWFLEET_XBOARD_SENTINEL_API_BASE_URL 注入
+  xboard_sentinel_api_base_url: null
+  # 通过环境变量 SHADOWFLEET_XBOARD_SENTINEL_API_KEY 注入
+  xboard_sentinel_api_key: null
+
+  # ------------------ Dashboard UI 配置 ------------------
+  dashboard_require_password: false
+  dashboard_password: null
+  key_pair_local_dir: "key_pairs"
+
+# -----------------------------------------------------------------------------
+# 日志配置
+# -----------------------------------------------------------------------------
+logging:
+  level: INFO
+  format: "%(asctime)s | %(levelname)s | %(name)s | correlation_id=%(correlation_id)s | event_type=%(event_type)s | %(message)s"
+
+# -----------------------------------------------------------------------------
+# Telegram 通知机器人配置
+# 通过环境变量 SHADOWFLEET_TELEGRAM_BOT_TOKEN 和 SHADOWFLEET_TELEGRAM_CHAT_ID 注入
+# -----------------------------------------------------------------------------
+telegram:
+  enabled: false
+  bot_token: null
+  chat_id: null
+  message_prefix: "[ShadowFleet]"
+
+# -----------------------------------------------------------------------------
+# Cloudflare DNS 管理配置
+# 通过环境变量 SHADOWFLEET_CLOUDFLARE_API_TOKEN 和 SHADOWFLEET_CLOUDFLARE_ZONE_ID 注入
+# -----------------------------------------------------------------------------
+cloudflare:
+  enabled: false
+  api_token: null
+  zone_id: null
+  root_domain: null
+  auto_subdomain_prefix: "sf"
+  acme_email: null
+  base_url: "https://api.cloudflare.com/client/v4"
+
+# -----------------------------------------------------------------------------
+# AWS 代理服务配置（备用，如需通过代理访问 AWS API）
+# -----------------------------------------------------------------------------
+aws_proxy:
+  enabled: false
+  provider: "decodo"
+  base_url: "https://api.decodo.com/v2"
+  authorization: null
+  username: null
+  password: null
+  proxy_type: "residential_proxies"
+  auth_type: "basic"
+  session_type: "sticky"
+  session_duration: 10
+  location: "random"
+  output_format: "protocol:auth@endpoint"
+  response_type: "json"
+  domain: "decodo.com"
+  count: 1
+  page: 1
+
+# =============================================================================
+# Xboard PostgreSQL 数据库连接配置 & V2bX 节点上报配置
+# 通过环境变量 SHADOWFLEET_XBOARD_PASSWORD 注入数据库密码
+# =============================================================================
+xboard:
+  host: 127.0.0.1
+  port: 5432
+  database: xboard
+  user: tanxuan
+  password: null
+  sslmode: prefer
+  v2bx_api_host: null
+  v2bx_api_key: null
+
+# -----------------------------------------------------------------------------
+# Fleet Matrix 节点规格矩阵配置
+# -----------------------------------------------------------------------------
+fleet_matrix:
+  ap-northeast-1:
+    AnyTLS:
+      desired_count: 2
+      min_alert_threshold: 1

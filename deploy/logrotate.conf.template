@@ -1,0 +1,24 @@
+{{LOGS_DIR}}/nginx/*.log {
+    daily
+    missingok
+    rotate 30
+    compress
+    delaycompress
+    notifempty
+    create 0644 root root
+    sharedscripts
+    postrotate
+        docker exec shadowfleet-nginx nginx -s reload 2>/dev/null || true
+    endscript
+}
+
+{{LOGS_DIR}}/*.log {
+    daily
+    missingok
+    rotate 30
+    compress
+    delaycompress
+    notifempty
+    create 0644 shadowfleet shadowfleet
+    sharedscripts
+}
