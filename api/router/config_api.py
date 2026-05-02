@@ -69,11 +69,6 @@ class LoggingUpdateRequest(BaseModel):
     log_retention_days: int | None = None
 
 
-class DashboardUpdateRequest(BaseModel):
-    dashboard_require_password: bool | None = None
-    dashboard_password: str | None = None
-
-
 class ConfigValidateRequest(BaseModel):
     config: dict
 
@@ -187,22 +182,6 @@ async def update_logging(
         logging_cfg["log_retention_days"] = request.log_retention_days
     save_raw_config(None, raw)
     return {"status": "ok", "message": "Logging settings updated."}
-
-
-@router.put("/dashboard")
-async def update_dashboard(
-    request: DashboardUpdateRequest,
-    ctx: RuntimeContext = Depends(get_runtime_context),
-    _current_user: None = Depends(require_admin),
-) -> dict:
-    raw = load_raw_config()
-    app = raw.setdefault("app", {})
-    if request.dashboard_require_password is not None:
-        app["dashboard_require_password"] = request.dashboard_require_password
-    if request.dashboard_password is not None:
-        app["dashboard_password"] = request.dashboard_password
-    save_raw_config(None, raw)
-    return {"status": "ok", "message": "Dashboard settings updated."}
 
 
 @router.post("/validate")

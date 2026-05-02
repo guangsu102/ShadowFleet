@@ -474,11 +474,6 @@ export interface LoggingUpdateRequest {
   log_retention_days?: number | null
 }
 
-export interface DashboardUpdateRequest {
-  dashboard_require_password?: boolean | null
-  dashboard_password?: string | null
-}
-
 export interface ConfigValidateRequest {
   config: Record<string, unknown>
 }

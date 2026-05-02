@@ -25,7 +25,6 @@ import type {
   SentinelUpdateRequest,
   AppUpdateRequest,
   LoggingUpdateRequest,
-  DashboardUpdateRequest,
 } from '@/types/api'
 
 const { t } = useI18n()
@@ -71,7 +70,7 @@ const savingFleetMatrix = ref(false)
 const savingApp = ref(false)
 const savingSentinel = ref(false)
 const savingLogging = ref(false)
-const savingDashboard = ref(false)
+const resettingFleetMatrix = ref(false)
 const resettingFleetMatrix = ref(false)
 
 // ---------------------------------------------------------------------------
@@ -261,19 +260,6 @@ function buildLoggingForm() {
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard Form
-// ---------------------------------------------------------------------------
-const dashboardRequirePassword = ref(true)
-const dashboardPassword = ref('')
-
-function buildDashboardForm() {
-  if (!config.value) return
-  const app = config.value.app ?? {}
-  dashboardRequirePassword.value = (app.dashboard_require_password as boolean) ?? true
-  dashboardPassword.value = ''
-}
-
-// ---------------------------------------------------------------------------
 // API Actions
 // ---------------------------------------------------------------------------
 async function fetchConfig() {
@@ -289,7 +275,6 @@ async function fetchConfig() {
     buildProbeServerForm()
     buildSentinelForm()
     buildLoggingForm()
-    buildDashboardForm()
   } catch (e: unknown) {
     const axiosErr = e as { response?: { data?: { error?: string } }; message?: string }
     error.value = axiosErr.response?.data?.error || axiosErr.message || t('settings.loadFailed')
@@ -418,25 +403,6 @@ async function saveLogging() {
     message.error(axiosErr.response?.data?.error || axiosErr.message || t('settings.saveFailed'))
   } finally {
     savingLogging.value = false
-  }
-}
-
-async function saveDashboard() {
-  savingDashboard.value = true
-  try {
-    const body: DashboardUpdateRequest = { dashboard_require_password: dashboardRequirePassword.value }
-    if (dashboardPassword.value.trim()) {
-      body.dashboard_password = dashboardPassword.value.trim()
-    }
-    await apiClient.put<DashboardUpdateRequest, never>('/config/dashboard', body)
-    message.success(t('settings.dashboardSaved'))
-    dashboardPassword.value = ''
-    await fetchConfig()
-  } catch (e: unknown) {
-    const axiosErr = e as { response?: { data?: { error?: string } }; message?: string }
-    message.error(axiosErr.response?.data?.error || axiosErr.message || t('settings.saveFailed'))
-  } finally {
-    savingDashboard.value = false
   }
 }
 
@@ -674,21 +640,6 @@ onMounted(() => { fetchConfig() })
           </div>
         </div>
         <NButton type="primary" :loading="savingLogging" style="margin-top: 16px" @click="saveLogging">{{ t('settings.loggingSaved') }}</NButton>
-      </NCard>
-
-      <!-- ══ 8. Dashboard Security ════════════════════════════════════════════ -->
-      <NCard :title="t('settings.dashboardSettings')" style="margin-bottom: 16px">
-        <div style="display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: end">
-          <div>
-            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.requirePassword') }}</NText>
-            <NSwitch v-model:value="dashboardRequirePassword" />
-          </div>
-          <div>
-            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.accessPassword') }}</NText>
-            <NInput v-model:value="dashboardPassword" type="password" :placeholder="t('settings.passwordHint')" show-password-on="mousedown" />
-          </div>
-        </div>
-        <NButton type="primary" :loading="savingDashboard" style="margin-top: 16px" @click="saveDashboard">{{ t('settings.saveDashboardConfig') }}</NButton>
       </NCard>
 
       <!-- ══ 9. Danger Zone ═══════════════════════════════════════════════════ -->
