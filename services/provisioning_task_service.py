@@ -249,6 +249,11 @@ class ProvisioningTaskService:
             "region": request.region,
             "domain_name": request.domain_name,
             "require_cdn_proxy": request.require_cdn_proxy,
+            "cert_mode": request.cert_mode,
+            "cert_domain": request.cert_domain,
+            "cert_provider": request.cert_provider,
+            "cert_email": request.cert_email,
+            "cert_dns_env": request.cert_dns_env,
             "code": request.code,
             "parent_id": request.parent_id,
             "group_ids": request.group_ids,
@@ -260,10 +265,38 @@ class ProvisioningTaskService:
             "rate_time_enable": request.rate_time_enable,
             "rate_time_ranges": request.rate_time_ranges,
             "status_reason": request.status_reason,
+            "instance_type": request.instance_type,
+            "ami_id": request.ami_id,
+            "subnet_id": request.subnet_id,
+            "ssh_host": request.ssh_host,
+            "ssh_port": request.ssh_port,
+            "ssh_username": request.ssh_username,
+            "ssh_password": request.ssh_password,
+            "ssh_private_key": request.ssh_private_key,
         }
 
     @staticmethod
     def _deserialize_provision_request(payload: dict[str, JsonValue]) -> ProvisionRequest:
+        def _str(val: JsonValue | None) -> str | None:
+            if val is None:
+                return None
+            return str(val)
+
+        def _int_or_none(val: JsonValue | None) -> int | None:
+            if val is None:
+                return None
+            return int(val)
+
+        def _dict_or_none(val: JsonValue | None) -> dict[str, str] | None:
+            if val is None:
+                return None
+            return dict(val)  # type: ignore[arg-type]
+
+        def _list_or_none(val: JsonValue | None) -> list[JsonValue] | None:
+            if val is None:
+                return None
+            return list(val)  # type: ignore[return-value]
+
         try:
             return ProvisionRequest(
                 protocol_type=str(payload["protocol_type"]),
@@ -277,29 +310,34 @@ class ProvisioningTaskService:
                     None if payload.get("domain_name") is None else str(payload["domain_name"])
                 ),
                 require_cdn_proxy=bool(payload.get("require_cdn_proxy", False)),
-                code=None if payload.get("code") is None else str(payload["code"]),
-                parent_id=None if payload.get("parent_id") is None else int(payload["parent_id"]),
-                group_ids=(
-                    None if payload.get("group_ids") is None else list(payload["group_ids"])
-                ),
-                route_ids=(
-                    None if payload.get("route_ids") is None else list(payload["route_ids"])
-                ),
-                tags=None if payload.get("tags") is None else payload["tags"],
+                cert_mode=str(payload.get("cert_mode", "none")),
+                cert_domain=_str(payload.get("cert_domain")),
+                cert_provider=_str(payload.get("cert_provider")),
+                cert_email=_str(payload.get("cert_email")),
+                cert_dns_env=_dict_or_none(payload.get("cert_dns_env")),
+                code=_str(payload.get("code")),
+                parent_id=_int_or_none(payload.get("parent_id")),
+                group_ids=_list_or_none(payload.get("group_ids")),
+                route_ids=_list_or_none(payload.get("route_ids")),
+                tags=payload.get("tags"),
                 protocol_settings=(
                     None
                     if payload.get("protocol_settings") is None
                     else dict(payload["protocol_settings"])
                 ),
                 show=bool(payload.get("show", True)),
-                sort=None if payload.get("sort") is None else int(payload["sort"]),
+                sort=_int_or_none(payload.get("sort")),
                 rate_time_enable=bool(payload.get("rate_time_enable", False)),
-                rate_time_ranges=(
-                    None if payload.get("rate_time_ranges") is None else payload["rate_time_ranges"]
-                ),
-                status_reason=(
-                    None if payload.get("status_reason") is None else str(payload["status_reason"])
-                ),
+                rate_time_ranges=_list_or_none(payload.get("rate_time_ranges")),
+                status_reason=_str(payload.get("status_reason")),
+                instance_type=_str(payload.get("instance_type")),
+                ami_id=_str(payload.get("ami_id")),
+                subnet_id=_str(payload.get("subnet_id")),
+                ssh_host=_str(payload.get("ssh_host")),
+                ssh_port=_int_or_none(payload.get("ssh_port")),
+                ssh_username=_str(payload.get("ssh_username")),
+                ssh_password=_str(payload.get("ssh_password")),
+                ssh_private_key=_str(payload.get("ssh_private_key")),
             )
         except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
             raise ProvisioningTaskServiceError(

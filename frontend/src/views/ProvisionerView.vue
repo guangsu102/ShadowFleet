@@ -105,6 +105,22 @@ const tagsJson = ref('')
 const protocolSettingsJson = ref('')
 const rateTimeRangesJson = ref('')
 
+// AWS-specific
+const instanceType = ref('')
+const amiId = ref('')
+const subnetId = ref('')
+const certMode = ref('none')
+const certDomain = ref('')
+const certProvider = ref('')
+const certEmail = ref('')
+
+// Self-hosted SSH
+const sshHost = ref('')
+const sshPort = ref(22)
+const sshUsername = ref('root')
+const sshPassword = ref('')
+const sshPrivateKey = ref('')
+
 // ── Computed ──────────────────────────────────────────────────────────────────
 const totalCount = computed(() => stats.value.total)
 const queuedCount = computed(() => stats.value.queued)
@@ -135,7 +151,19 @@ const protocolOptions: SelectOption[] = PROTOCOLS.map(p => ({ label: p, value: p
 const regionOptions: SelectOption[] = REGIONS.map(r => ({ label: `${REGION_MAP[r]} (${r})`, value: r }))
 const assetTypeOptions: SelectOption[] = [
   { label: 'AWS', value: 'aws' },
-  { label: 'Self-Hosted', value: 'self_hosted' },
+  { label: '自建服务器', value: 'self_hosted' },
+]
+const certModeOptions: SelectOption[] = [
+  { label: '无证书 (none)', value: 'none' },
+  { label: 'HTTP (http)', value: 'http' },
+  { label: 'DNS (dns)', value: 'dns' },
+  { label: '自签证书 (self)', value: 'self' },
+]
+const certProviderOptions: SelectOption[] = [
+  { label: 'Cloudflare', value: 'cloudflare' },
+  { label: '阿里云', value: 'aliyun' },
+  { label: '腾讯云', value: 'tencent' },
+  { label: 'AWS Route53', value: 'route53' },
 ]
 const groupOptions = computed<SelectOption[]>(() =>
   groups.value.map(g => ({ label: g.name, value: g.id }))
@@ -232,7 +260,7 @@ async function retryTask(id: number) {
 function buildDefaultTags(): string {
   const regionTag = REGION_TAGS[region.value] ?? region.value
   return JSON.stringify(
-    { protocol: protocolType.value.toLowerCase(), region: regionTag, asset: 'aws' },
+    { protocol: protocolType.value.toLowerCase(), region: regionTag, asset: assetType.value },
     null,
     2
   )
@@ -259,6 +287,20 @@ function resetForm() {
   tagsJson.value = buildDefaultTags()
   protocolSettingsJson.value = ''
   rateTimeRangesJson.value = ''
+  // AWS
+  instanceType.value = ''
+  amiId.value = ''
+  subnetId.value = ''
+  certMode.value = 'none'
+  certDomain.value = ''
+  certProvider.value = ''
+  certEmail.value = ''
+  // Self-hosted
+  sshHost.value = ''
+  sshPort.value = 22
+  sshUsername.value = 'root'
+  sshPassword.value = ''
+  sshPrivateKey.value = ''
 }
 
 async function handleSubmit() {
@@ -275,10 +317,10 @@ async function handleSubmit() {
     protocol_type: protocolType.value,
     node_name: nodeName.value.trim(),
     port: port.value,
-    server_port: assetType.value === 'aws' ? serverPort.value : 0,
+    server_port: serverPort.value,
     rate: rate.value ?? 1.0,
     asset_type: assetType.value,
-    region: region.value,
+    region: assetType.value === 'aws' ? region.value : undefined,
     require_cdn_proxy: requireCdnProxy.value,
     show: showNode.value,
     parent_id: undefined,
@@ -296,6 +338,20 @@ async function handleSubmit() {
       ? (() => { try { return JSON.parse(rateTimeRangesJson.value) } catch { return undefined } })()
       : undefined,
     status_reason: statusReason.value || undefined,
+    // AWS-specific
+    instance_type: assetType.value === 'aws' ? (instanceType.value || undefined) : undefined,
+    ami_id: assetType.value === 'aws' ? (amiId.value || undefined) : undefined,
+    subnet_id: assetType.value === 'aws' ? (subnetId.value || undefined) : undefined,
+    cert_mode: certMode.value,
+    cert_domain: certDomain.value || undefined,
+    cert_provider: certProvider.value || undefined,
+    cert_email: certEmail.value || undefined,
+    // Self-hosted SSH
+    ssh_host: assetType.value === 'self_hosted' ? (sshHost.value || undefined) : undefined,
+    ssh_port: assetType.value === 'self_hosted' ? (sshPort.value || undefined) : undefined,
+    ssh_username: assetType.value === 'self_hosted' ? (sshUsername.value || undefined) : undefined,
+    ssh_password: assetType.value === 'self_hosted' ? (sshPassword.value || undefined) : undefined,
+    ssh_private_key: assetType.value === 'self_hosted' ? (sshPrivateKey.value || undefined) : undefined,
   }
 
   try {
@@ -535,22 +591,24 @@ export default { name: 'ProvisionerView' }
                 <NInput v-model:value="nodeName" placeholder="sf-xxx" clearable />
               </NFormItem>
             </NGi>
-            <NGi>
+            <NGi v-if="assetType === 'aws'">
               <NFormItem label="目标区域">
                 <NSelect v-model:value="region" :options="regionOptions" />
+              </NFormItem>
+            </NGi>
+            <NGi v-if="assetType === 'aws'">
+              <NFormItem label="服务监听端口">
+                <NInputNumber v-model:value="serverPort" :min="1" :max="65535" style="width: 100%" />
+              </NFormItem>
+            </NGi>
+            <NGi v-if="assetType === 'self_hosted'">
+              <NFormItem label="服务监听端口">
+                <NInput value="自动分配 (40000-60000)" disabled />
               </NFormItem>
             </NGi>
             <NGi>
               <NFormItem label="Xboard 节点端口">
                 <NInput v-model:value="port" placeholder="443" />
-              </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem v-if="assetType === 'aws'" label="服务监听端口">
-                <NInputNumber v-model:value="serverPort" :min="1" :max="65535" style="width: 100%" />
-              </NFormItem>
-              <NFormItem v-else label="服务监听端口">
-                <NInput value="自动分配 (40000-60000)" disabled />
               </NFormItem>
             </NGi>
             <NGi>
@@ -563,6 +621,82 @@ export default { name: 'ProvisionerView' }
                 <NCheckbox v-model:checked="requireCdnProxy">
                   启用 CDN 代理
                 </NCheckbox>
+              </NFormItem>
+            </NGi>
+          </NGrid>
+
+          <!-- AWS 专属字段 -->
+          <NDivider v-if="assetType === 'aws'" title-placement="left">AWS 配置</NDivider>
+          <NGrid v-if="assetType === 'aws'" :cols="2" :x-gap="12">
+            <NGi>
+              <NFormItem label="实例类型">
+                <NInput v-model:value="instanceType" placeholder="如 t4g.micro (可选)" clearable />
+              </NFormItem>
+            </NGi>
+            <NGi>
+              <NFormItem label="AMI ID">
+                <NInput v-model:value="amiId" placeholder="ami-xxxxxxxx (可选)" clearable />
+              </NFormItem>
+            </NGi>
+            <NGi>
+              <NFormItem label="子网 ID">
+                <NInput v-model:value="subnetId" placeholder="subnet-xxxxxxxx (可选)" clearable />
+              </NFormItem>
+            </NGi>
+            <NGi>
+              <NFormItem label="证书模式">
+                <NSelect v-model:value="certMode" :options="certModeOptions" />
+              </NFormItem>
+            </NGi>
+            <NGi v-if="certMode !== 'none' && certMode !== 'http'">
+              <NFormItem label="证书域名">
+                <NInput v-model:value="certDomain" placeholder="example.com (可选)" clearable />
+              </NFormItem>
+            </NGi>
+            <NGi v-if="certMode === 'dns'">
+              <NFormItem label="DNS Provider">
+                <NSelect v-model:value="certProvider" :options="certProviderOptions" placeholder="选择供应商" clearable />
+              </NFormItem>
+            </NGi>
+            <NGi v-if="certMode === 'dns' || certMode === 'http'">
+              <NFormItem label="证书邮箱">
+                <NInput v-model:value="certEmail" placeholder="admin@example.com (可选)" clearable />
+              </NFormItem>
+            </NGi>
+          </NGrid>
+
+          <!-- Self-Hosted SSH 字段 -->
+          <NDivider v-if="assetType === 'self_hosted'" title-placement="left">自建服务器 SSH 配置</NDivider>
+          <NGrid v-if="assetType === 'self_hosted'" :cols="2" :x-gap="12">
+            <NGi>
+              <NFormItem label="服务器地址" required>
+                <NInput v-model:value="sshHost" placeholder="1.2.3.4 或域名" clearable />
+              </NFormItem>
+            </NGi>
+            <NGi>
+              <NFormItem label="SSH 端口">
+                <NInputNumber v-model:value="sshPort" :min="1" :max="65535" style="width: 100%" />
+              </NFormItem>
+            </NGi>
+            <NGi>
+              <NFormItem label="SSH 用户名">
+                <NInput v-model:value="sshUsername" placeholder="root" clearable />
+              </NFormItem>
+            </NGi>
+            <NGi>
+              <NFormItem label="SSH 密码">
+                <NInput v-model:value="sshPassword" type="password" placeholder="密码或私钥二选一" show-password-on="mousedown" clearable />
+              </NFormItem>
+            </NGi>
+            <NGi :span="2">
+              <NFormItem label="SSH 私钥">
+                <NInput
+                  v-model:value="sshPrivateKey"
+                  type="textarea"
+                  placeholder="-----BEGIN RSA PRIVATE KEY----- ... (可选)"
+                  :autosize="{ minRows: 2, maxRows: 5 }"
+                  clearable
+                />
               </NFormItem>
             </NGi>
           </NGrid>

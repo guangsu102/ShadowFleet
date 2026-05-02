@@ -305,6 +305,9 @@ export interface ProvisionTaskCreateRequest {
   domain_name?: string | null
   require_cdn_proxy?: boolean
   cert_mode?: string
+  cert_domain?: string | null
+  cert_provider?: string | null
+  cert_email?: string | null
   code?: string | null
   parent_id?: number | null
   group_ids?: number[]
@@ -316,6 +319,16 @@ export interface ProvisionTaskCreateRequest {
   rate_time_enable?: boolean
   rate_time_ranges?: unknown[]
   status_reason?: string | null
+  // AWS-specific
+  instance_type?: string | null
+  ami_id?: string | null
+  subnet_id?: string | null
+  // Self-hosted SSH
+  ssh_host?: string | null
+  ssh_port?: number | null
+  ssh_username?: string | null
+  ssh_password?: string | null
+  ssh_private_key?: string | null
 }
 
 export interface ManualTaskCreateRequest {

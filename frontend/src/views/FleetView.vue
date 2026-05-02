@@ -473,7 +473,7 @@ onUnmounted(() => {
         <!-- ── Node Detail + Manual Operation ────────────────────────────────────── -->
         <div class="fleet-detail-grid">
           <!-- Node Detail Panel -->
-          <div class="fleet-section">
+          <div class="fleet-section fleet-section--detail">
             <div class="fleet-section-header">
               <div class="fleet-section-icon" style="background:#fef3c7;color:#d97706">
                 <IconDetail />
@@ -598,34 +598,44 @@ onUnmounted(() => {
             </div>
 
             <template v-if="selectedNode">
+              <!-- Node Badge -->
               <div class="fleet-op-node-badge">
-                <span class="fleet-op-node-name">{{ selectedNode.node_name }}</span>
+                <div class="fleet-op-node-info">
+                  <span class="fleet-op-node-name">{{ selectedNode.node_name }}</span>
+                  <span class="fleet-op-node-meta">
+                    {{ selectedNode.region ?? '—' }} / {{ selectedNode.protocol_type }}
+                  </span>
+                </div>
                 <NTag :type="statusTagType(selectedNode.status)" size="small">{{ selectedNode.status }}</NTag>
               </div>
 
-              <NForm label-placement="left" label-width="120" size="small" class="fleet-op-form">
-                <NFormItem :label="t('fleet.operatorName')">
-                  <NInput v-model:value="formOperatorName" :placeholder="t('fleet.yourName')" />
-                </NFormItem>
-                <NFormItem :label="t('fleet.operation')" :required="!formTaskType">
-                  <NSelect
-                    v-model:value="formTaskType"
-                    :options="manualOpOptions"
-                    :placeholder="t('fleet.selectOperation')"
-                  />
-                </NFormItem>
-                <NFormItem :label="t('fleet.reason')">
-                  <NInput v-model:value="formReason" type="textarea" :placeholder="t('fleet.reason')" :rows="3" />
-                </NFormItem>
-                <NFormItem v-if="formTaskType === 'force_heal'" :label="t('fleet.forceStrategy')">
-                  <NSelect
-                    v-model:value="formForceStrategy"
-                    :options="forceStrategyOptions"
-                    :placeholder="t('fleet.forceStrategy')"
-                  />
-                </NFormItem>
-              </NForm>
+              <!-- Form -->
+              <div class="fleet-op-form-wrap">
+                <NForm label-placement="left" label-width="100" size="small" class="fleet-op-form">
+                  <NFormItem :label="t('fleet.operatorName')">
+                    <NInput v-model:value="formOperatorName" :placeholder="t('fleet.yourName')" />
+                  </NFormItem>
+                  <NFormItem :label="t('fleet.operation')" :required="!formTaskType">
+                    <NSelect
+                      v-model:value="formTaskType"
+                      :options="manualOpOptions"
+                      :placeholder="t('fleet.selectOperation')"
+                    />
+                  </NFormItem>
+                  <NFormItem :label="t('fleet.reason')">
+                    <NInput v-model:value="formReason" type="textarea" :placeholder="t('fleet.reason')" :rows="3" />
+                  </NFormItem>
+                  <NFormItem v-if="formTaskType === 'force_heal'" :label="t('fleet.forceStrategy')">
+                    <NSelect
+                      v-model:value="formForceStrategy"
+                      :options="forceStrategyOptions"
+                      :placeholder="t('fleet.forceStrategy')"
+                    />
+                  </NFormItem>
+                </NForm>
+              </div>
 
+              <!-- Submit Button -->
               <div class="fleet-op-actions">
                 <NButton
                   type="primary"
@@ -1089,6 +1099,11 @@ onUnmounted(() => {
   align-items: start;
 }
 
+.fleet-section--detail {
+  border: 1px solid #f0fdf4;
+  background: linear-gradient(180deg, #fafafa 0%, #ffffff 100%);
+}
+
 @media (max-width: 1100px) {
   .fleet-detail-grid {
     grid-template-columns: 1fr;
@@ -1119,30 +1134,78 @@ onUnmounted(() => {
 .fleet-op-node-badge {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: #f8fafc;
-  border-radius: 8px;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, #fdf2f8, #fce7f3);
+  border: 1px solid #f9a8d4;
+  border-radius: 10px;
   margin-bottom: 14px;
 }
 
-.fleet-op-node-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1a1a2e;
+.fleet-op-node-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   flex: 1;
+  min-width: 0;
+}
+
+.fleet-op-node-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #831843;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.fleet-op-node-meta {
+  font-size: 11px;
+  color: #be185d;
+  opacity: 0.7;
+}
+
+.fleet-op-node-badge .n-tag {
+  flex-shrink: 0;
+}
+
+.fleet-op-form-wrap {
+  background: #fafafa;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
 .fleet-op-form {
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+
+.fleet-op-form :deep(.n-form-item) {
+  margin-bottom: 10px;
+}
+
+.fleet-op-form :deep(.n-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.fleet-op-form :deep(.n-form-item-label) {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.fleet-op-form :deep(.n-input),
+.fleet-op-form :deep(.n-select) {
+  width: 100%;
 }
 
 .fleet-op-actions {
   display: flex;
-  gap: 8px;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, #fdf2f8, #fce7f3);
+  border: 1px solid #f9a8d4;
+  border-radius: 10px;
 }
 
 /* ── NDataTable overrides ─────────────────────────────────────────────────── */

@@ -55,6 +55,16 @@ class ProvisionRequest:
     rate_time_enable: bool = False
     rate_time_ranges: list[object] | dict[str, object] | None = None
     status_reason: str | None = None
+    # AWS-specific overrides
+    instance_type: str | None = None
+    ami_id: str | None = None
+    subnet_id: str | None = None
+    # Self-hosted SSH fields
+    ssh_host: str | None = None
+    ssh_port: int | None = None
+    ssh_username: str | None = None
+    ssh_password: str | None = None
+    ssh_private_key: str | None = None
 
 
 @dataclass(frozen=True)
