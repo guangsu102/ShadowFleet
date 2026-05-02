@@ -49,3 +49,9 @@
 * **全局常量：** 强制使用 `UPPER_SNAKE_CASE`，统一放置在文件顶部或 `config.py`。
 * **文件命名：** 所有 `.py` 文件使用小写加下划线。
 * **数据库字段映射：** Python 变量名尽量与数据库字段名保持一致。
+
+# 7. Git 提交规范（★ 重要 ★）
+* **每完成一个任务必须提交到远程仓库：** 每次对话完成一个需求/修复/重构后，必须立即执行 `git add` + `git commit` + `git push`，不得遗留未推送的 commit。
+* **Commit Message 规范：** 使用语义化提交，格式为 `<type>(<scope>): <description>`。常用 type：`feat`、`fix`、`refactor`、`docs`、`chore`。
+* **禁止空提交：** 没有实际代码变更时不要执行 commit。
+* **提交前自检：** commit 前确保代码能正常运行、无明显语法错误。推送前确认本地分支领先远程不超过合理范围。
