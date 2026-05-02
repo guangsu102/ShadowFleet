@@ -592,26 +592,25 @@ onUnmounted(() => {
 
 /* ── Stats Row ────────────────────────────────────────────────────────────── */
 .stats-row {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
 }
 
 .stats-row-3 {
-  gap: 12px;
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 
 .stat-item {
-  flex: 1;
-  min-width: 130px;
   background: #fff;
   border: 1px solid #e8ecf0;
   border-radius: 12px;
-  padding: 14px 14px 12px;
+  padding: 12px 16px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   transition: box-shadow 0.2s ease, transform 0.2s ease;
   position: relative;
   overflow: hidden;
@@ -641,9 +640,9 @@ onUnmounted(() => {
 }
 
 .stat-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -664,7 +663,7 @@ onUnmounted(() => {
 }
 
 .stat-value {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 800;
   color: #1a1a2e;
   line-height: 1.2;
@@ -821,19 +820,8 @@ onUnmounted(() => {
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .stats-row {
-    gap: 8px;
-  }
-  .stat-item {
-    min-width: calc(50% - 8px);
-    padding: 12px;
-  }
-  .stat-icon {
-    width: 34px;
-    height: 34px;
-  }
   .stat-value {
-    font-size: 18px;
+    font-size: 16px;
   }
   .cycle-detail-grid {
     gap: 8px;

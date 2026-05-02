@@ -245,8 +245,8 @@ def _build_install_command(v2bx_version: str | None) -> str:
 
 
 # Daemon artifact base URL injected into the template at download-time.
-# When artifact_cache_enabled=true, install.sh itself is fetched from the daemon,
-# so the GitHub origin is no longer reachable from the node.
+# If daemon has a public IPv6, install.sh is fetched from the daemon (faster).
+# If daemon has no IPv6, the node downloads install.sh directly from GitHub.
 # install.sh contains the versioned binary download:
 #   https://github.com/wyx2685/V2bX/releases/download/${version}/V2bX-linux-${arch}.zip
 # and V2BX.sh / initconfig.sh from raw.githubusercontent.com.

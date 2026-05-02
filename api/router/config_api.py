@@ -56,7 +56,6 @@ class AppUpdateRequest(BaseModel):
     phone_home_listen_port: int | None = None
     phone_home_ready_timeout_seconds: float | None = None
     phone_home_poll_interval_seconds: float | None = None
-    artifact_cache_enabled: bool | None = None
     artifact_cache_listen_port: int | None = None
     artifact_cache_base_url_override: str | None = None
     probe_server_enabled: bool | None = None
@@ -160,7 +159,6 @@ async def update_app(
         "phone_home_listen_port": request.phone_home_listen_port,
         "phone_home_ready_timeout_seconds": request.phone_home_ready_timeout_seconds,
         "phone_home_poll_interval_seconds": request.phone_home_poll_interval_seconds,
-        "artifact_cache_enabled": request.artifact_cache_enabled,
         "artifact_cache_listen_port": request.artifact_cache_listen_port,
         "artifact_cache_base_url_override": request.artifact_cache_base_url_override,
         "probe_server_enabled": request.probe_server_enabled,

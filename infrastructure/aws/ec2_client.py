@@ -158,7 +158,7 @@ class EC2Client:
                     "DeviceIndex": 0,
                     "SubnetId": launch_request.subnet_id,
                     "Groups": [launch_request.security_group_id],
-                    "AssociatePublicIpAddress": False,
+                    "AssociatePublicIpAddress": launch_request.associate_public_ip,
                     "DeleteOnTermination": True,
                     "Ipv6AddressCount": launch_request.ipv6_address_count,
                 }
@@ -191,9 +191,10 @@ class EC2Client:
         )
         set_event_type("aws_instance_launched")
         self._logger.info(
-            "Launched IPv6-only instance %s in subnet %s",
+            "Launched instance %s in subnet %s associate_public_ip=%s",
             launch_result.instance_id,
             launch_request.subnet_id,
+            launch_request.associate_public_ip,
         )
         return launch_result
 

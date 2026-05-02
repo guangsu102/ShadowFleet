@@ -39,7 +39,6 @@ class AppRuntimeConfig(BaseModel):
     sentinel_probe_min_cn_probe_count: int = 2
     sentinel_probe_required_success_ratio: float = 0.5
     sentinel_probe_allow_auto_heal_hy2: bool = False
-    artifact_cache_enabled: bool = False
     artifact_cache_dir: str = "/var/www/shadowfleet-artifacts"
     artifact_cache_listen_port: int = 8080
     artifact_cache_base_url_override: str | None = None  # manual override, e.g. "http://[::1]:8080"

@@ -461,7 +461,6 @@ export interface AppUpdateRequest {
   phone_home_listen_port?: number | null
   phone_home_ready_timeout_seconds?: number | null
   phone_home_poll_interval_seconds?: number | null
-  artifact_cache_enabled?: boolean | null
   artifact_cache_listen_port?: number | null
   artifact_cache_base_url_override?: string | null
   probe_server_enabled?: boolean | null

@@ -46,6 +46,7 @@ class Ec2LaunchRequest:
     security_group_id: str
     user_data: str
     ipv6_address_count: int = 1
+    associate_public_ip: bool = False
     key_name: str | None = None
     iam_instance_profile_name: str | None = None
     instance_name: str | None = None

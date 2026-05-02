@@ -178,14 +178,12 @@ function buildPhoneHomeForm() {
 // ---------------------------------------------------------------------------
 // Artifact Cache Form
 // ---------------------------------------------------------------------------
-const artifactCacheEnabled = ref(false)
 const artifactCacheListenPort = ref(8080)
 const artifactCacheBaseUrl = ref('')
 
 function buildArtifactCacheForm() {
   if (!config.value) return
   const app = config.value.app ?? {}
-  artifactCacheEnabled.value = (app.artifact_cache_enabled as boolean) ?? false
   artifactCacheListenPort.value = (app.artifact_cache_listen_port as number) ?? 8080
   artifactCacheBaseUrl.value = (app.artifact_cache_base_url_override as string) ?? ''
 }
@@ -364,7 +362,6 @@ async function saveApp() {
       phone_home_listen_port: phoneHomeListenPort.value,
       phone_home_ready_timeout_seconds: phoneHomeReadyTimeout.value,
       phone_home_poll_interval_seconds: phoneHomePollInterval.value,
-      artifact_cache_enabled: artifactCacheEnabled.value,
       artifact_cache_listen_port: artifactCacheListenPort.value,
       artifact_cache_base_url_override: artifactCacheBaseUrl.value || null,
       probe_server_enabled: probeServerEnabled.value,
@@ -579,11 +576,7 @@ onMounted(() => { fetchConfig() })
 
       <!-- ══ 4. Artifact Cache ══════════════════════════════════════════════════ -->
       <NCard :title="t('settings.artifactCacheSettings')" style="margin-bottom: 16px">
-        <div style="display: grid; grid-template-columns: auto 1fr 1fr; gap: 16px; align-items: end">
-          <div>
-            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.artifactCacheEnabled') }}</NText>
-            <NSwitch v-model:value="artifactCacheEnabled" />
-          </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: end">
           <div>
             <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.artifactCacheListenPort') }}</NText>
             <NInputNumber v-model:value="artifactCacheListenPort" :min="1" :max="65535" style="width: 100%" />

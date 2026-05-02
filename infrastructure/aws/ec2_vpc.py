@@ -256,3 +256,221 @@ class EC2VpcClient:
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") != "InvalidPermission.Duplicate":
                 raise
+
+    # ----------------------------------------------------------- Internet Gateway
+    def ensure_internet_gateway(self, vpc_id: str) -> str:
+        """Find or create an Internet Gateway attached to the VPC."""
+        response = self._execute_ec2_call(
+            operation_name="describe_igw",
+            func=lambda: self._ec2_client.describe_internet_gateways(
+                Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
+            ),
+        )
+        igws = response.get("InternetGateways", [])
+        if igws:
+            return igws[0]["InternetGatewayId"]
+        response = self._execute_ec2_call(
+            operation_name="create_igw",
+            func=lambda: self._ec2_client.create_internet_gateway(),
+            is_write=True,
+        )
+        igw_id = response.get("InternetGateway", {}).get("InternetGatewayId")
+        if not igw_id:
+            raise RuntimeError("AWS create_internet_gateway returned no InternetGatewayId")
+        self._execute_ec2_call(
+            operation_name="attach_igw",
+            func=lambda: self._ec2_client.attach_internet_gateway(
+                InternetGatewayId=igw_id, VpcId=vpc_id
+            ),
+            is_write=True,
+        )
+        return igw_id
+
+    # ------------------------------------------------------------- Route Tables
+    def find_or_create_public_route_table(self, vpc_id: str, subnet_id: str) -> str:
+        """Find a route table associated with the subnet; if none, associate with main route table and add IGW route."""
+        rt_response = self._execute_ec2_call(
+            operation_name="describe_rt_for_subnet",
+            func=lambda: self._ec2_client.describe_route_tables(
+                Filters=[
+                    {"Name": "association.subnet-id", "Values": [subnet_id]},
+                    {"Name": "vpc-id", "Values": [vpc_id]},
+                ]
+            ),
+        )
+        route_tables = rt_response.get("RouteTables", [])
+        if route_tables:
+            return route_tables[0]["RouteTableId"]
+
+        main_rt_response = self._execute_ec2_call(
+            operation_name="describe_main_rt",
+            func=lambda: self._ec2_client.describe_route_tables(
+                Filters=[
+                    {"Name": "association.main", "Values": ["true"]},
+                    {"Name": "vpc-id", "Values": [vpc_id]},
+                ]
+            ),
+        )
+        main_tables = main_rt_response.get("RouteTables", [])
+        if not main_tables:
+            raise RuntimeError(f"No main route table found for VPC {vpc_id}")
+        rt_id = main_tables[0]["RouteTableId"]
+        self._execute_ec2_call(
+            operation_name="associate_subnet_rt",
+            func=lambda: self._ec2_client.associate_route_table(
+                RouteTableId=rt_id, SubnetId=subnet_id
+            ),
+            is_write=True,
+        )
+        return rt_id
+
+    def ensure_igw_route(self, route_table_id: str) -> None:
+        """Add 0.0.0.0/0 -> IGW route if not already present."""
+        response = self._execute_ec2_call(
+            operation_name="describe_routes",
+            func=lambda: self._ec2_client.describe_route_tables(
+                RouteTableIds=[route_table_id]
+            ),
+        )
+        routes = response["RouteTables"][0]["Routes"]
+        for route in routes:
+            if route.get("DestinationCidrBlock") == "0.0.0.0/0" and route.get("GatewayId"):
+                return
+        igw_id = self._get_igw_for_vpc(route_table_id)
+        self._execute_ec2_call(
+            operation_name="create_igw_route",
+            func=lambda: self._ec2_client.create_route(
+                RouteTableId=route_table_id,
+                DestinationCidrBlock="0.0.0.0/0",
+                GatewayId=igw_id,
+            ),
+            is_write=True,
+        )
+
+    def _get_igw_for_vpc(self, route_table_id: str) -> str:
+        """Look up the IGW attached to the VPC owning this route table."""
+        response = self._execute_ec2_call(
+            operation_name="get_rt_vpc",
+            func=lambda: self._ec2_client.describe_route_tables(RouteTableIds=[route_table_id]),
+        )
+        vpc_id = response["RouteTables"][0]["VpcId"]
+        igw_response = self._execute_ec2_call(
+            operation_name="find_igw",
+            func=lambda: self._ec2_client.describe_internet_gateways(
+                Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
+            ),
+        )
+        igws = igw_response.get("InternetGateways", [])
+        if not igws:
+            raise RuntimeError(f"No Internet Gateway found for VPC {vpc_id}")
+        return igws[0]["InternetGatewayId"]
+
+    # ------------------------------------------------------------ NAT Gateway
+    def find_or_create_nat_gateway(
+        self,
+        subnet_id: str,
+        eip_allocation_id: str,
+    ) -> str:
+        """Create a NAT Gateway in the public subnet; reuses if already exists."""
+        response = self._execute_ec2_call(
+            operation_name="describe_nat",
+            func=lambda: self._ec2_client.describe_nat_gateways(
+                Filters=[{"Name": "subnet-id", "Values": [subnet_id]}]
+            ),
+        )
+        nats = response.get("NatGateways", [])
+        for nat in nats:
+            if nat.get("State") not in ("deleted", "deleting"):
+                return nat["NatGatewayId"]
+        response = self._execute_ec2_call(
+            operation_name="create_nat",
+            func=lambda: self._ec2_client.create_nat_gateway(
+                SubnetId=subnet_id,
+                ConnectivityType="public",
+                AllocationId=eip_allocation_id,
+            ),
+            is_write=True,
+        )
+        nat_id = response.get("NatGateway", {}).get("NatGatewayId")
+        if not nat_id:
+            raise RuntimeError("AWS create_nat_gateway returned no NatGatewayId")
+        self._wait_for_nat_available(nat_id)
+        return nat_id
+
+    def _wait_for_nat_available(self, nat_id: str) -> None:
+        import time
+
+        for _ in range(30):
+            response = self._execute_ec2_call(
+                operation_name="wait_nat",
+                func=lambda: self._ec2_client.describe_nat_gateways(NatGatewayIds=[nat_id]),
+            )
+            state = response["NatGateways"][0]["State"]
+            if state == "available":
+                return
+            if state in ("failed", "deleting"):
+                raise RuntimeError(f"NAT Gateway {nat_id} entered state: {state}")
+            time.sleep(5)
+        raise RuntimeError(f"NAT Gateway {nat_id} did not become available in time")
+
+    def allocate_elastic_ip(self) -> str:
+        """Allocate a new Elastic IP; returns AllocationId."""
+        response = self._execute_ec2_call(
+            operation_name="allocate_eip",
+            func=lambda: self._ec2_client.allocate_address(Domain="vpc"),
+            is_write=True,
+        )
+        alloc_id = response.get("AllocationId")
+        if not alloc_id:
+            raise RuntimeError("AWS allocate_address returned no AllocationId")
+        return alloc_id
+
+    def release_elastic_ip(self, allocation_id: str) -> None:
+        try:
+            self._execute_ec2_call(
+                operation_name="release_eip",
+                func=lambda: self._ec2_client.release_address(AllocationId=allocation_id),
+                is_write=True,
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") not in (
+                "InvalidAllocationID.NotFound",
+                "AuthFailure",
+            ):
+                raise
+
+    def associate_eip_with_nat(self, nat_gateway_id: str, allocation_id: str) -> None:
+        """Wait for NAT to be available, then associate EIP with it."""
+        self._wait_for_nat_available(nat_gateway_id)
+        try:
+            self._execute_ec2_call(
+                operation_name="assoc_eip_nat",
+                func=lambda: self._ec2_client.associate_address(
+                    AllocationId=allocation_id,
+                    NatGatewayId=nat_gateway_id,
+                ),
+                is_write=True,
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "InvalidAssociationID.NotFound":
+                raise
+
+    def ensure_nat_route(self, route_table_id: str, nat_gateway_id: str) -> None:
+        """Add 0.0.0.0/0 -> NAT Gateway route if not already present."""
+        response = self._execute_ec2_call(
+            operation_name="describe_nat_routes",
+            func=lambda: self._ec2_client.describe_route_tables(RouteTableIds=[route_table_id]),
+        )
+        routes = response["RouteTables"][0]["Routes"]
+        for route in routes:
+            if route.get("DestinationCidrBlock") == "0.0.0.0/0" and route.get("NatGatewayId"):
+                return
+        self._execute_ec2_call(
+            operation_name="create_nat_route",
+            func=lambda: self._ec2_client.create_route(
+                RouteTableId=route_table_id,
+                DestinationCidrBlock="0.0.0.0/0",
+                NatGatewayId=nat_gateway_id,
+            ),
+            is_write=True,
+        )

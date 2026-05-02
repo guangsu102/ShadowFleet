@@ -23,6 +23,7 @@ def handle_provision_failure(
     ec2_client: EC2Client | None,
     dns_sync_result: DnsSyncResult | None,
     cloudflare_record_id: str | None,
+    public_net_resources: object | None,
     error: BaseException,
 ) -> None:
     logger = runtime_context.logger.getChild(logger_name)
@@ -71,6 +72,14 @@ def handle_provision_failure(
                     "Failed to delete registered node during provisioning rollback xboard_node_id=%s",
                     xboard_node_id,
                 )
+
+    if public_net_resources is not None and ec2_client is not None:
+        eip_allocation = getattr(public_net_resources, "eip_allocation_id", None)
+        if eip_allocation:
+            try:
+                ec2_client.vpc.release_elastic_ip(eip_allocation)
+            except Exception:
+                logger.exception("Failed to release Elastic IP during rollback allocation_id=%s", eip_allocation)
 
     notify_failure(
         runtime_context=runtime_context,

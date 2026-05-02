@@ -171,8 +171,6 @@ def _artifact_cache_needs_sync(cache_dir: Path) -> bool:
 
 
 def _build_artifact_base_url(runtime_context: RuntimeContext) -> str | None:
-    if not runtime_context.config.app.artifact_cache_enabled:
-        return None
     ipv6 = get_daemon_public_ipv6()
     if not ipv6:
         return None
@@ -556,7 +554,8 @@ def _run_artifact_cache_sync_worker(
     stop_event: threading.Event,
 ) -> None:
     app_config = runtime_context.config.app
-    if not app_config.artifact_cache_enabled:
+    ipv6 = get_daemon_public_ipv6()
+    if not ipv6:
         return
     logger = runtime_context.logger.getChild("daemon.artifact_sync")
     set_event_type("daemon_artifact_sync_worker_started")
@@ -684,7 +683,8 @@ def _start_artifact_cache_server(
     runtime_context: RuntimeContext,
 ) -> ThreadingHTTPServer | None:
     app_config = runtime_context.config.app
-    if not app_config.artifact_cache_enabled:
+    ipv6 = get_daemon_public_ipv6()
+    if not ipv6:
         return None
     cache_dir = _ensure_artifact_cache_dir()
     logger = runtime_context.logger.getChild("daemon.artifact_http")
@@ -893,7 +893,7 @@ def main() -> None:
     logger = runtime_context.logger.getChild("daemon")
     ready_callback_server = _start_ready_callback_server(runtime_context)
     artifact_cache_server: ThreadingHTTPServer | None = None
-    if runtime_context.config.app.artifact_cache_enabled:
+    if runtime_context.daemon_ipv6:
         artifact_cache_server = _start_artifact_cache_server(runtime_context)
         artifact_sync_thread = threading.Thread(
             target=_run_artifact_cache_sync_worker,

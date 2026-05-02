@@ -63,7 +63,7 @@
 |--------|------|
 | `shadowfleet-db` | SQLite 数据库 `shadowfleet.db` |
 | `shadowfleet-logs` | 日志文件 `logs/` |
-| `shadowfleet-artifacts` | V2bX 安装包缓存（`artifact_cache_enabled=true` 时） |
+| `shadowfleet-artifacts` | V2bX 安装包缓存（Daemon 有公网 IPv6 时自动启用） |
 | `shadowfleet-frontend` | Vue 构建产物（共享给 API 和 Nginx） |
 | `shadowfleet-certbot` | Let's Encrypt SSL 证书 |
 

@@ -38,8 +38,6 @@ def get_daemon_public_ipv6() -> str | None:
 
 
 def _build_artifact_base_url(config: AppConfig, known_ipv6: str | None = None) -> str | None:
-    if not config.app.artifact_cache_enabled:
-        return None
     override = config.app.artifact_cache_base_url_override
     if override:
         return override.strip()
@@ -108,7 +106,7 @@ def build_runtime_context(config_path: str | Path | None = None) -> RuntimeConte
         runtime_context = replace(runtime_context, daemon_artifact_base_url=artifact_base_url)
         logger.info("Artifact cache base URL: %s", artifact_base_url)
     else:
-        logger.info("Artifact cache disabled, nodes will download install.sh from GitHub.")
+        logger.info("No public IPv6 detected, nodes will download install.sh from GitHub.")
 
     set_event_type("runtime_initialized")
     logger.info("Runtime context initialized successfully.")
