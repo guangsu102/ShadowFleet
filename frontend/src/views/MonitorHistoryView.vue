@@ -486,40 +486,11 @@ onUnmounted(() => {
               />
             </div>
 
-            <div class="stats-row stats-row-3">
-              <div class="stat-item stat-error">
-                <div class="stat-icon"><NIcon :component="IconBlock" /></div>
-                <div class="stat-body">
-                  <div class="stat-value">{{ confirmedCount }}</div>
-                  <div class="stat-label">{{ t('monitor.gfwBlocked') }}</div>
-                </div>
-                <NTag type="error" size="small" round>GFW Blocked</NTag>
-              </div>
-              <div class="stat-item stat-warn">
-                <div class="stat-icon"><NIcon :component="IconCand2" /></div>
-                <div class="stat-body">
-                  <div class="stat-value">{{ candidateCount }}</div>
-                  <div class="stat-label">{{ t('monitor.candidate') }}</div>
-                </div>
-                <NTag type="warning" size="small" round>Candidate</NTag>
-              </div>
-              <div class="stat-item stat-neutral">
-                <div class="stat-icon"><NIcon :component="IconOther" /></div>
-                <div class="stat-body">
-                  <div class="stat-value">{{ otherCount }}</div>
-                  <div class="stat-label">{{ t('monitor.other') }}</div>
-                </div>
-              </div>
-            </div>
-
             <NSpin :show="loadingDetections" :description="t('monitor.loadingDetections')">
               <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
 
               <template v-if="selectedCycleId === null">
                 <NEmpty :description="t('monitor.selectCycleAbove')" style="margin: 24px 0" />
-              </template>
-              <template v-else-if="filteredDetections.length === 0 && !loadingDetections && !detectionError">
-                <NEmpty :description="t('monitor.noDetectionsMatch')" style="margin: 24px 0" />
               </template>
               <template v-else>
                 <div class="table-wrapper">
@@ -539,6 +510,34 @@ onUnmounted(() => {
                 </div>
               </template>
             </NSpin>
+
+            <template v-if="selectedCycleId !== null">
+              <div class="stats-row stats-row-3" style="margin-top: 16px">
+                <div class="stat-item stat-error">
+                  <div class="stat-icon"><NIcon :component="IconBlock" /></div>
+                  <div class="stat-body">
+                    <div class="stat-value">{{ confirmedCount }}</div>
+                    <div class="stat-label">{{ t('monitor.gfwBlocked') }}</div>
+                  </div>
+                  <NTag type="error" size="small" round>GFW Blocked</NTag>
+                </div>
+                <div class="stat-item stat-warn">
+                  <div class="stat-icon"><NIcon :component="IconCand2" /></div>
+                  <div class="stat-body">
+                    <div class="stat-value">{{ candidateCount }}</div>
+                    <div class="stat-label">{{ t('monitor.candidate') }}</div>
+                  </div>
+                  <NTag type="warning" size="small" round>Candidate</NTag>
+                </div>
+                <div class="stat-item stat-neutral">
+                  <div class="stat-icon"><NIcon :component="IconOther" /></div>
+                  <div class="stat-body">
+                    <div class="stat-value">{{ otherCount }}</div>
+                    <div class="stat-label">{{ t('monitor.other') }}</div>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
         </NTab>
 
@@ -551,6 +550,32 @@ onUnmounted(() => {
 
             <NSpin :show="loadingCycles || loadingDetections" :description="t('monitor.loadingDetections')">
               <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
+
+              <template v-if="confirmedNodeRows.length > 0">
+                <div class="stats-row stats-row-3">
+                  <div class="stat-item stat-error">
+                    <div class="stat-icon"><NIcon :component="IconBlock" /></div>
+                    <div class="stat-body">
+                      <div class="stat-value">{{ confirmedNodeRows.length }}</div>
+                      <div class="stat-label">{{ t('monitor.confirmedNodesTotal') || '确认阻断节点' }}</div>
+                    </div>
+                  </div>
+                  <div class="stat-item stat-success">
+                    <div class="stat-icon"><NIcon :component="IconHeal" /></div>
+                    <div class="stat-body">
+                      <div class="stat-value">{{ confirmedNodeRows.filter(r => r.triggered_healing === 'Yes').length }}</div>
+                      <div class="stat-label">{{ t('monitor.triggeredHealing') || '已触发自愈' }}</div>
+                    </div>
+                  </div>
+                  <div class="stat-item stat-warn">
+                    <div class="stat-icon"><NIcon :component="IconRun" /></div>
+                    <div class="stat-body">
+                      <div class="stat-value">{{ confirmedNodeRows.filter(r => r.triggered_healing === 'No').length }}</div>
+                      <div class="stat-label">{{ t('monitor.pendingHealing') || '等待自愈' }}</div>
+                    </div>
+                  </div>
+                </div>
+              </template>
 
               <NText depth="3" style="font-size: 13px; display: block; margin-bottom: 8px">
                 {{ t('monitor.confirmedNodesAcrossAllCycles') || 'GFW 阻断确认节点汇总（所有周期）' }}
@@ -593,24 +618,29 @@ onUnmounted(() => {
 /* ── Stats Row ────────────────────────────────────────────────────────────── */
 .stats-row {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(6, 1fr);
   gap: 8px;
   margin-bottom: 16px;
 }
 
 .stats-row-3 {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stats-row-3 .stat-item {
+  padding: 8px 10px;
   gap: 8px;
 }
 
 .stat-item {
   background: #fff;
   border: 1px solid #e8ecf0;
-  border-radius: 12px;
-  padding: 12px 16px;
+  border-radius: 10px;
+  padding: 8px 10px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   transition: box-shadow 0.2s ease, transform 0.2s ease;
   position: relative;
   overflow: hidden;
@@ -623,7 +653,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   height: 3px;
-  border-radius: 12px 12px 0 0;
+  border-radius: 10px 10px 0 0;
 }
 
 .stat-all::before   { background: linear-gradient(90deg, #6366f1, #818cf8); }
@@ -640,9 +670,9 @@ onUnmounted(() => {
 }
 
 .stat-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -663,7 +693,7 @@ onUnmounted(() => {
 }
 
 .stat-value {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 800;
   color: #1a1a2e;
   line-height: 1.2;
@@ -671,12 +701,12 @@ onUnmounted(() => {
 }
 
 .stat-label {
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 600;
   color: #94a3b8;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-top: 2px;
+  margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -819,7 +849,25 @@ onUnmounted(() => {
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 1200px) {
+  .stats-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-row-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 768px) {
+  .stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .stats-row-3 {
+    grid-template-columns: 1fr;
+  }
   .stat-value {
     font-size: 16px;
   }
