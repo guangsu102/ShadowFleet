@@ -39,7 +39,7 @@ class ProvisionRequest:
     region: str | None = None
     domain_name: str | None = None
     require_cdn_proxy: bool = False
-    cert_mode: CertMode = "none"
+    cert_mode: CertMode = "dns"
     cert_domain: str | None = None
     cert_provider: str | None = None
     cert_dns_env: dict[str, str] | None = None
@@ -55,10 +55,6 @@ class ProvisionRequest:
     rate_time_enable: bool = False
     rate_time_ranges: list[object] | dict[str, object] | None = None
     status_reason: str | None = None
-    # AWS-specific overrides
-    instance_type: str | None = None
-    ami_id: str | None = None
-    subnet_id: str | None = None
     # Self-hosted SSH fields
     ssh_host: str | None = None
     ssh_port: int | None = None

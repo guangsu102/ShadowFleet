@@ -29,7 +29,7 @@ import {
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import apiClient from '@/api/client'
-import type { ProvisionTaskCreateRequest, TaskResponse, SubmitResult, XboardGroupResponse, AmiQueryResponse, AmiInfo } from '@/types/api'
+import type { ProvisionTaskCreateRequest, TaskResponse, SubmitResult, XboardGroupResponse } from '@/types/api'
 
 const message = useMessage()
 
@@ -105,20 +105,6 @@ const tagsJson = ref('')
 const protocolSettingsJson = ref('')
 const rateTimeRangesJson = ref('')
 
-// AWS-specific
-const instanceType = ref('')
-const amiId = ref('')
-const subnetId = ref('')
-const certMode = ref('none')
-const certDomain = ref('')
-const certProvider = ref('')
-const certEmail = ref('')
-const queryingAmi = ref(false)
-const amiResults = ref<AmiInfo[]>([])
-const amiError = ref<string | null>(null)
-// Optional credentials for AMI auto-query in Provisioner
-const awsAccessKey = ref('')
-const awsSecretKey = ref('')
 
 // Self-hosted SSH
 const sshHost = ref('')
@@ -158,18 +144,6 @@ const regionOptions: SelectOption[] = REGIONS.map(r => ({ label: `${REGION_MAP[r
 const assetTypeOptions: SelectOption[] = [
   { label: 'AWS', value: 'aws' },
   { label: '自建服务器', value: 'self_hosted' },
-]
-const certModeOptions: SelectOption[] = [
-  { label: '无证书 (none)', value: 'none' },
-  { label: 'HTTP (http)', value: 'http' },
-  { label: 'DNS (dns)', value: 'dns' },
-  { label: '自签证书 (self)', value: 'self' },
-]
-const certProviderOptions: SelectOption[] = [
-  { label: 'Cloudflare', value: 'cloudflare' },
-  { label: '阿里云', value: 'aliyun' },
-  { label: '腾讯云', value: 'tencent' },
-  { label: 'AWS Route53', value: 'route53' },
 ]
 const groupOptions = computed<SelectOption[]>(() =>
   groups.value.map(g => ({ label: g.name, value: g.id }))
@@ -272,40 +246,6 @@ function buildDefaultTags(): string {
   )
 }
 
-// ── AMI Auto-Query ────────────────────────────────────────────────────────────
-async function queryAmi() {
-  if (!awsAccessKey.value || !awsSecretKey.value) {
-    message.warning('请先填写 AWS Access Key 和 Secret Key')
-    return
-  }
-  queryingAmi.value = true
-  amiError.value = null
-  amiResults.value = []
-  try {
-    const { data } = await apiClient.post<AmiQueryResponse>('/assets/query-amis', {
-      aws_access_key: awsAccessKey.value,
-      aws_secret_key: awsSecretKey.value,
-      region: region.value,
-    })
-    amiResults.value = data.amis
-    if (data.amis.length > 0) {
-      amiId.value = data.amis[0].ami_id
-      message.success(`已自动获取最新 AMI: ${data.amis[0].name}`)
-    }
-  } catch (err: unknown) {
-    const e = err as { response?: { data?: { error?: string; detail?: string }; message?: string } }
-    amiError.value = e.response?.data?.error || e.response?.data?.detail || 'AMI 查询失败'
-  } finally {
-    queryingAmi.value = false
-  }
-}
-
-function selectAmiFromResults(ami: AmiInfo) {
-  amiId.value = ami.ami_id
-  amiResults.value = []
-  message.success(`已选择: ${ami.name}`)
-}
-
 // ── Form Actions ──────────────────────────────────────────────────────────────
 function openNewTaskModal() {
   tagsJson.value = buildDefaultTags()
@@ -327,18 +267,6 @@ function resetForm() {
   tagsJson.value = buildDefaultTags()
   protocolSettingsJson.value = ''
   rateTimeRangesJson.value = ''
-  // AWS
-  instanceType.value = ''
-  amiId.value = ''
-  subnetId.value = ''
-  certMode.value = 'none'
-  certDomain.value = ''
-  certProvider.value = ''
-  certEmail.value = ''
-  awsAccessKey.value = ''
-  awsSecretKey.value = ''
-  amiResults.value = []
-  amiError.value = null
   // Self-hosted
   sshHost.value = ''
   sshPort.value = 22
@@ -382,14 +310,6 @@ async function handleSubmit() {
       ? (() => { try { return JSON.parse(rateTimeRangesJson.value) } catch { return undefined } })()
       : undefined,
     status_reason: statusReason.value || undefined,
-    // AWS-specific
-    instance_type: assetType.value === 'aws' ? (instanceType.value || undefined) : undefined,
-    ami_id: assetType.value === 'aws' ? (amiId.value || undefined) : undefined,
-    subnet_id: assetType.value === 'aws' ? (subnetId.value || undefined) : undefined,
-    cert_mode: certMode.value,
-    cert_domain: certDomain.value || undefined,
-    cert_provider: certProvider.value || undefined,
-    cert_email: certEmail.value || undefined,
     // Self-hosted SSH
     ssh_host: assetType.value === 'self_hosted' ? (sshHost.value || undefined) : undefined,
     ssh_port: assetType.value === 'self_hosted' ? (sshPort.value || undefined) : undefined,
@@ -665,72 +585,6 @@ export default { name: 'ProvisionerView' }
                 <NCheckbox v-model:checked="requireCdnProxy">
                   启用 CDN 代理
                 </NCheckbox>
-              </NFormItem>
-            </NGi>
-          </NGrid>
-
-          <!-- AWS 专属字段 -->
-          <NDivider v-if="assetType === 'aws'" title-placement="left">AWS 配置</NDivider>
-          <NGrid v-if="assetType === 'aws'" :cols="2" :x-gap="12">
-            <NGi :span="2">
-              <NFormItem label="AWS 凭证（用于自动查询 AMI）">
-                <NSpace>
-                  <NInput v-model:value="awsAccessKey" placeholder="AWS Access Key" style="width: 200px" clearable show-password-on="click" />
-                  <NInput v-model:value="awsSecretKey" placeholder="AWS Secret Key" type="password" style="width: 280px" clearable show-password-on="mousedown" />
-                </NSpace>
-              </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem label="实例类型">
-                <NInput v-model:value="instanceType" placeholder="如 t4g.micro (可选)" clearable />
-              </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem label="AMI ID">
-                <NSpace vertical>
-                  <NSpace>
-                    <NInput v-model:value="amiId" placeholder="自动获取或手动填写" style="width: 280px" clearable />
-                    <NButton :loading="queryingAmi" @click="queryAmi" title="自动获取最新 Debian ARM64 AMI">
-                      自动获取 AMI
-                    </NButton>
-                  </NSpace>
-                  <NSpin v-if="queryingAmi" description="查询中..." />
-                  <NText v-if="amiError" depth="3" style="font-size: 12px; color: #d03050">{{ amiError }}</NText>
-                  <NSpace v-if="amiResults.length > 0" style="margin-top: 4px">
-                    <NTag v-for="ami in amiResults.slice(0, 5)" :key="ami.ami_id"
-                      :bordered="ami.ami_id === amiId"
-                      style="cursor: pointer; font-size: 11px"
-                      @click="selectAmiFromResults(ami)"
-                    >
-                      {{ ami.name.substring(0, 25) }}... ({{ ami.ami_id.substring(0, 12) }}...)
-                    </NTag>
-                  </NSpace>
-                </NSpace>
-              </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem label="子网 ID">
-                <NInput v-model:value="subnetId" placeholder="subnet-xxxxxxxx (可选)" clearable />
-              </NFormItem>
-            </NGi>
-            <NGi>
-              <NFormItem label="证书模式">
-                <NSelect v-model:value="certMode" :options="certModeOptions" />
-              </NFormItem>
-            </NGi>
-            <NGi v-if="certMode !== 'none' && certMode !== 'http'">
-              <NFormItem label="证书域名">
-                <NInput v-model:value="certDomain" placeholder="example.com (可选)" clearable />
-              </NFormItem>
-            </NGi>
-            <NGi v-if="certMode === 'dns'">
-              <NFormItem label="DNS Provider">
-                <NSelect v-model:value="certProvider" :options="certProviderOptions" placeholder="选择供应商" clearable />
-              </NFormItem>
-            </NGi>
-            <NGi v-if="certMode === 'dns' || certMode === 'http'">
-              <NFormItem label="证书邮箱">
-                <NInput v-model:value="certEmail" placeholder="admin@example.com (可选)" clearable />
               </NFormItem>
             </NGi>
           </NGrid>

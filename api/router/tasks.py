@@ -25,10 +25,7 @@ class ProvisionTaskCreateRequest(BaseModel):
     region: str | None = None
     domain_name: str | None = None
     require_cdn_proxy: bool = False
-    cert_mode: str = "none"
-    cert_domain: str | None = None
-    cert_provider: str | None = None
-    cert_email: str | None = None
+    cert_mode: str = "dns"
     code: str | None = None
     parent_id: int | None = None
     tags: list[str] | None = None
@@ -41,17 +38,6 @@ class ProvisionTaskCreateRequest(BaseModel):
     rate_time_ranges: list | None = None
     status_reason: str | None = None
 
-    # AWS-specific fields
-    instance_type: str | None = None
-    ami_id: str | None = None
-    subnet_id: str | None = None
-
-    # Self-hosted SSH fields
-    ssh_host: str | None = None
-    ssh_port: int | None = None
-    ssh_username: str | None = None
-    ssh_password: str | None = None
-    ssh_private_key: str | None = None
 
 
 class ManualTaskCreateRequest(BaseModel):
@@ -155,9 +141,8 @@ async def submit_provisioning_task(
                 port=request.port, server_port=request.server_port, rate=request.rate,
                 asset_type=request.asset_type or "aws", region=request.region,
                 domain_name=request.domain_name, require_cdn_proxy=request.require_cdn_proxy,
-                cert_mode=request.cert_mode or "none", cert_domain=request.cert_domain,
-                cert_provider=request.cert_provider, cert_email=request.cert_email,
-                code=request.code, parent_id=request.parent_id, tags=request.tags, show=request.show,
+                cert_mode=request.cert_mode, code=request.code, parent_id=request.parent_id,
+                tags=request.tags, show=request.show,
             ),
             group_ids=request.group_ids,
             route_ids=request.route_ids,
@@ -166,14 +151,6 @@ async def submit_provisioning_task(
             protocol_settings=request.protocol_settings,
             rate_time_ranges=request.rate_time_ranges,
             status_reason=request.status_reason,
-            instance_type=request.instance_type,
-            ami_id=request.ami_id,
-            subnet_id=request.subnet_id,
-            ssh_host=request.ssh_host,
-            ssh_port=request.ssh_port,
-            ssh_username=request.ssh_username,
-            ssh_password=request.ssh_password,
-            ssh_private_key=request.ssh_private_key,
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

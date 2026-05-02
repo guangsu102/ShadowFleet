@@ -295,6 +295,11 @@ body,
 }
 
 /* ── Data Tables ─────────────────────────────────────────────────────────── */
+.dashboard-table {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .dashboard-table .n-data-table {
   border-radius: var(--sf-radius-sm);
   overflow: hidden;

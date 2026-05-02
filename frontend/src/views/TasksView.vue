@@ -185,7 +185,12 @@ function taskTypeLabel(tt: string): string {
 // ── Columns ───────────────────────────────────────────────────────────────────
 const allTaskColumns = [
   { title: t('tasks.id'), key: 'id', align: 'center' as const, width: 70 },
-  { title: t('tasks.taskType'), key: 'task_type', render: (row: TaskResponse) => taskTypeLabel(row.task_type) },
+  {
+    title: t('tasks.taskType'),
+    key: 'task_type',
+    width: 150,
+    render: (row: TaskResponse) => taskTypeLabel(row.task_type),
+  },
   {
     title: t('tasks.status'),
     key: 'status',
@@ -200,12 +205,13 @@ const allTaskColumns = [
     width: 100,
     render: (row: TaskResponse) => `${row.attempt_count} / ${row.max_attempts}`,
   },
-  { title: t('tasks.created'), key: 'created_at', render: (row: TaskResponse) => fmtTs(row.created_at) },
-  { title: t('tasks.started'), key: 'started_at', render: (row: TaskResponse) => fmtTs(row.started_at) },
-  { title: t('tasks.finished'), key: 'finished_at', render: (row: TaskResponse) => fmtTs(row.finished_at) },
+  { title: t('tasks.created'), key: 'created_at', width: 170, render: (row: TaskResponse) => fmtTs(row.created_at) },
+  { title: t('tasks.started'), key: 'started_at', width: 170, render: (row: TaskResponse) => fmtTs(row.started_at) },
+  { title: t('tasks.finished'), key: 'finished_at', width: 170, render: (row: TaskResponse) => fmtTs(row.finished_at) },
   {
     title: t('tasks.lockedBy'),
     key: 'locked_by',
+    width: 120,
     ellipsis: { tooltip: true },
     render: (row: TaskResponse) => row.locked_by ?? '—',
   },
@@ -220,11 +226,12 @@ const runningTaskColumns = [
     width: 100,
     render: (row: TaskResponse) => `${row.attempt_count} / ${row.max_attempts}`,
   },
-  { title: t('tasks.started'), key: 'started_at', render: (row: TaskResponse) => fmtTs(row.started_at) },
-  { title: t('tasks.lockedBy'), key: 'locked_by', ellipsis: { tooltip: true } },
+  { title: t('tasks.started'), key: 'started_at', width: 170, render: (row: TaskResponse) => fmtTs(row.started_at) },
+  { title: t('tasks.lockedBy'), key: 'locked_by', width: 120, ellipsis: { tooltip: true } },
   {
     title: t('tasks.nextRun'),
     key: 'next_run_at',
+    width: 170,
     render: (row: TaskResponse) => fmtTs(row.next_run_at),
   },
 ]
@@ -241,10 +248,11 @@ const failedTaskColumns = [
   {
     title: t('tasks.error'),
     key: 'last_error',
+    width: 200,
     ellipsis: { tooltip: true },
     render: (row: TaskResponse) => truncateError(row.last_error),
   },
-  { title: t('tasks.finished'), key: 'finished_at', render: (row: TaskResponse) => fmtTs(row.finished_at) },
+  { title: t('tasks.finished'), key: 'finished_at', width: 170, render: (row: TaskResponse) => fmtTs(row.finished_at) },
   {
     title: t('tasks.actions'),
     key: 'actions',
@@ -388,7 +396,7 @@ onUnmounted(() => {
       </div>
 
       <!-- ── Tabs ───────────────────────────────────────────────────────────── -->
-      <div class="dashboard-card" style="padding: 0; overflow: hidden;">
+      <div class="dashboard-card" style="padding: 0;">
         <NTabs type="line" animated style="padding: 0 20px">
           <!-- Tab 1: Task List -->
           <NTab name="list" :title="t('tasks.taskList')">
@@ -637,7 +645,7 @@ onUnmounted(() => {
   color: var(--sf-text);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .detail-info-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -648,4 +656,24 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Metrics Grid ──────────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .metrics-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 </style>
