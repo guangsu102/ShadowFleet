@@ -71,7 +71,6 @@ const savingApp = ref(false)
 const savingSentinel = ref(false)
 const savingLogging = ref(false)
 const resettingFleetMatrix = ref(false)
-const resettingFleetMatrix = ref(false)
 
 // ---------------------------------------------------------------------------
 // Fleet Matrix
