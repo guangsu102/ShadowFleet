@@ -503,7 +503,7 @@ def _check_host_bindable(host: str, port: int) -> bool:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((host, port))
             return True
-    except OSError:
+    except (OSError, socket.gaierror):
         pass
     return False
 
