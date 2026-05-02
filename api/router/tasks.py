@@ -37,7 +37,11 @@ class ProvisionTaskCreateRequest(BaseModel):
     protocol_settings: dict | None = None
     rate_time_ranges: list | None = None
     status_reason: str | None = None
-
+    ssh_host: str | None = None
+    ssh_port: int | None = None
+    ssh_username: str | None = None
+    ssh_password: str | None = None
+    ssh_private_key: str | None = None
 
 
 class ManualTaskCreateRequest(BaseModel):
@@ -143,6 +147,9 @@ async def submit_provisioning_task(
                 domain_name=request.domain_name, require_cdn_proxy=request.require_cdn_proxy,
                 cert_mode=request.cert_mode, code=request.code, parent_id=request.parent_id,
                 tags=request.tags, show=request.show,
+                ssh_host=request.ssh_host, ssh_port=request.ssh_port,
+                ssh_username=request.ssh_username, ssh_password=request.ssh_password,
+                ssh_private_key=request.ssh_private_key,
             ),
             group_ids=request.group_ids,
             route_ids=request.route_ids,

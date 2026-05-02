@@ -330,6 +330,11 @@ export interface ProvisionTaskCreateRequest {
   rate_time_enable?: boolean
   rate_time_ranges?: unknown[]
   status_reason?: string | null
+  ssh_host?: string
+  ssh_port?: number
+  ssh_username?: string
+  ssh_password?: string
+  ssh_private_key?: string
 }
 
 export interface ManualTaskCreateRequest {
