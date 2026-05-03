@@ -7,7 +7,7 @@ from api.auth.dependencies import get_current_user, require_operator
 from api.deps import get_runtime_context
 from services.manual_operation_models import ManualOperationRequest, ManualTaskType
 from services.manual_operation_service import ManualOperationService
-from services.provisioning_models import ProvisionRequest, ProtocolType
+from services.provisioning_models import ProvisionRequest
 from services.provisioning_task_service import ProvisioningTaskService
 from services.runtime_service import RuntimeContext
 
@@ -141,7 +141,7 @@ async def submit_provisioning_task(
     try:
         result = ProvisioningTaskService(ctx).submit_provision_task(
             ProvisionRequest(
-                protocol_type=ProtocolType(request.protocol_type), node_name=request.node_name,
+                protocol_type=request.protocol_type, node_name=request.node_name,
                 port=request.port, server_port=request.server_port, rate=request.rate,
                 asset_type=request.asset_type or "aws", region=request.region,
                 domain_name=request.domain_name, require_cdn_proxy=request.require_cdn_proxy,
