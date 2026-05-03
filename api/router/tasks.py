@@ -28,7 +28,7 @@ class ProvisionTaskCreateRequest(BaseModel):
     cert_mode: str = "dns"
     code: str | None = None
     parent_id: int | None = None
-    tags: list[str] | None = None
+    tags: list[str] | dict[str, str] | None = None
     show: bool = True
     group_ids: list[int] | None = None
     route_ids: list[int] | None = None

@@ -64,14 +64,38 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
-        logger.info(
-            " <-- %s %s %d [%s] (%.2fms)",
-            request.method,
-            request.url.path,
-            response.status_code,
-            correlation_id,
-            elapsed_ms,
-        )
+
+        if response.status_code == 422:
+            try:
+                body = await request.body()
+                body_str = body.decode("utf-8", errors="replace")[:2000]
+                logger.warning(
+                    " <-- %s %s %d [%s] (%.2fms) body=%s",
+                    request.method,
+                    request.url.path,
+                    response.status_code,
+                    correlation_id,
+                    elapsed_ms,
+                    body_str,
+                )
+            except Exception:
+                logger.info(
+                    " <-- %s %s %d [%s] (%.2fms)",
+                    request.method,
+                    request.url.path,
+                    response.status_code,
+                    correlation_id,
+                    elapsed_ms,
+                )
+        else:
+            logger.info(
+                " <-- %s %s %d [%s] (%.2fms)",
+                request.method,
+                request.url.path,
+                response.status_code,
+                correlation_id,
+                elapsed_ms,
+            )
 
         response.headers["X-Correlation-ID"] = correlation_id
         return response

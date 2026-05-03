@@ -327,8 +327,20 @@ async function handleSubmit() {
     await fetchTasks()
     await fetchStats()
   } catch (err: unknown) {
-    const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
-    submitError.value = axiosErr.response?.data?.error || axiosErr.message || '提交失败'
+    const axiosErr = err as { response?: { status?: number; data?: { error?: string; message?: string; detail?: unknown } }; message?: string }
+    const data = axiosErr.response?.data
+    if (axiosErr.response?.status === 422 && data?.detail) {
+      const detail = data.detail
+      if (Array.isArray(detail)) {
+        submitError.value = (detail as Array<{ msg: string; loc: string[] }>).map(d => `${d.loc.join('.')}: ${d.msg}`).join('; ')
+      } else if (typeof detail === 'string') {
+        submitError.value = detail
+      } else {
+        submitError.value = JSON.stringify(detail)
+      }
+    } else {
+      submitError.value = data?.error || data?.message || axiosErr.message || '提交失败'
+    }
   } finally {
     submitting.value = false
   }
