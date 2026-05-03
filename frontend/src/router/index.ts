@@ -59,11 +59,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/SystemView.vue'),
       },
       {
-        path: 'monitor-history',
-        name: 'MonitorHistory',
-        component: () => import('@/views/MonitorHistoryView.vue'),
-      },
-      {
         path: 'abandonment',
         name: 'AccountAbandonment',
         component: () => import('@/views/AccountAbandonmentView.vue'),
