@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# 自动添加执行权限（仅首次需要）
+chmod +x "$0"
+
 cd /home/shadowfleet/ShadowFleet
 
 echo "=== [1/6] 拉取最新代码 ==="
