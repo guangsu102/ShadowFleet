@@ -55,6 +55,7 @@ services:
     volumes:
       - ./data/shadowfleet.db:/data/shadowfleet.db
       - ./data/logs:/app/logs
+      - ./data/key_pairs:/app/key_pairs
       - shadowfleet-artifacts:/var/www/shadowfleet-artifacts
       - ./data/config:/data/config:ro
     ports:
