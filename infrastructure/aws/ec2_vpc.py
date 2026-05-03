@@ -146,11 +146,17 @@ class EC2VpcClient:
                 )
             except ClientError as e:
                 if e.response["Error"]["Code"] == "InvalidSubnet.Conflict":
-                    existing = self.describe_subnet_ipv6_cidr(subnet_id)
-                    self._logger.debug(
-                        "IPv6 CIDR already associated after conflict: subnet=%s cidr=%s",
-                        subnet_id, existing,
-                    )
+                    try:
+                        existing = self.describe_subnet_ipv6_cidr(subnet_id)
+                        self._logger.debug(
+                            "IPv6 CIDR already associated after conflict: subnet=%s cidr=%s",
+                            subnet_id, existing,
+                        )
+                    except Exception:
+                        self._logger.debug(
+                            "IPv6 CIDR conflict for subnet=%s but could not retrieve existing CIDR",
+                            subnet_id,
+                        )
                     return subnet_id, found_az
                 raise
         else:
