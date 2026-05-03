@@ -5,8 +5,6 @@ import {
   NSpin,
   NAlert,
   NDataTable,
-  NTabs,
-  NTab,
   NSelect,
   NTag,
   NText,
@@ -316,291 +314,272 @@ onUnmounted(() => {
     <NSpin :show="loadingCycles" :description="t('app.loading')">
       <NAlert v-if="fetchError" type="error" :title="fetchError" style="margin-bottom: 16px" closable @close="fetchError = null" />
 
-      <NTabs type="line" animated>
-        <!-- ══ Tab 1: Scan Cycle List ═══════════════════════════════════════════════ -->
-        <NTab name="cycles" :tab="t('monitor.scanCycleList')">
-          <div class="tab-card">
-            <!-- Stats row -->
-            <div class="stats-row">
-              <div class="stat-item stat-all">
-                <div class="stat-icon"><NIcon :component="IconCycle" /></div>
+      <!-- ══ Section 1: Scan Cycles ═══════════════════════════════════════════════ -->
+      <div class="page-section">
+        <div class="section-title">
+          <NIcon :component="IconCycle" />
+          <span>{{ t('monitor.scanCycleList') }}</span>
+        </div>
+
+        <!-- Stats row in one line -->
+        <div class="stats-row stats-row-inline">
+          <div class="stat-item stat-all">
+            <div class="stat-icon"><NIcon :component="IconCycle" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ cycles.length }}</div>
+              <div class="stat-label">{{ t('monitor.totalCycles') }}</div>
+            </div>
+          </div>
+          <div class="stat-item stat-success">
+            <div class="stat-icon"><NIcon :component="IconCheck" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ succeededCycles }}</div>
+              <div class="stat-label">{{ t('monitor.succeeded') }}</div>
+            </div>
+          </div>
+          <div class="stat-item stat-error">
+            <div class="stat-icon"><NIcon :component="IconFail" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ failedCycles }}</div>
+              <div class="stat-label">{{ t('monitor.failed') }}</div>
+            </div>
+          </div>
+          <div class="stat-item stat-info">
+            <div class="stat-icon"><NIcon :component="IconRun" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ runningCycles }}</div>
+              <div class="stat-label">{{ t('monitor.running') }}</div>
+            </div>
+          </div>
+          <div class="stat-item stat-warn">
+            <div class="stat-icon"><NIcon :component="IconCands" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ totalCandidates }}</div>
+              <div class="stat-label">{{ t('monitor.totalCandidates') }}</div>
+            </div>
+          </div>
+          <div class="stat-item stat-heal">
+            <div class="stat-icon"><NIcon :component="IconHeal" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ totalHealed }}</div>
+              <div class="stat-label">{{ t('monitor.totalHealed') }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="section-label">{{ t('monitor.filter') || '筛选与控制' }}</div>
+        <div class="controls-row">
+          <NSelect
+            v-model:value="statusFilter"
+            :options="statusOptions"
+            style="width: 160px"
+            :placeholder="t('monitor.filterStatus')"
+          />
+          <NSelect
+            v-model:value="cycleLimit"
+            :options="limitOptions"
+            style="width: 100px"
+            :placeholder="t('monitor.limit')"
+          />
+        </div>
+
+        <!-- Cycle table with row-click to select -->
+        <div class="table-wrapper">
+          <NDataTable
+            :columns="cycleColumns"
+            :data="filteredCycles"
+            :bordered="false"
+            :single-line="false"
+            size="small"
+            :pagination="{ pageSize: 10 }"
+            :row-key="(row: any) => row.cycle_id"
+            :row-props="(row: any) => ({
+              style: 'cursor: pointer',
+              onClick: () => onCycleSelect(row.cycle_id),
+            })"
+            :highlight-row="selectedCycleId !== null"
+          />
+        </div>
+
+        <!-- Cycle detail (shown when a cycle is selected) -->
+        <template v-if="selectedCycle">
+          <div class="cycle-detail-grid">
+            <div class="detail-item">
+              <div class="detail-label">{{ t('monitor.status') }}</div>
+              <NTag :type="statusTagType(selectedCycle.status)" size="small" style="margin-top: 4px">{{ selectedCycle.status }}</NTag>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">{{ t('monitor.candidates') }}</div>
+              <div class="detail-value">{{ selectedCycle.candidate_count }}</div>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">{{ t('monitor.confirmed') }}</div>
+              <div class="detail-value">{{ selectedCycle.confirmed_count }}</div>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">{{ t('monitor.healed') }}</div>
+              <div class="detail-value">{{ selectedCycle.healed_count }}</div>
+            </div>
+            <div class="detail-item detail-wide">
+              <div class="detail-label">{{ t('monitor.startedAt') }}</div>
+              <div class="detail-value">{{ fmtTs(selectedCycle.started_at) }}</div>
+            </div>
+            <div class="detail-item detail-wide">
+              <div class="detail-label">{{ t('monitor.finishedAt') }}</div>
+              <div class="detail-value">{{ fmtTs(selectedCycle.finished_at) }}</div>
+            </div>
+          </div>
+          <NAlert v-if="selectedCycle.error_message" type="error" style="margin-bottom: 12px">
+            {{ selectedCycle.error_message }}
+          </NAlert>
+        </template>
+      </div>
+
+      <!-- ══ Section 2: Detection Records ═══════════════════════════════════════ -->
+      <div class="page-section">
+        <div class="section-title">
+          <NIcon :component="IconCands" />
+          <span>{{ t('monitor.nodeDetectionRecords') }}</span>
+        </div>
+
+        <!-- Detection stats in one line -->
+        <div class="stats-row stats-row-inline" v-if="selectedCycleId !== null">
+          <div class="stat-item stat-error">
+            <div class="stat-icon"><NIcon :component="IconBlock" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ confirmedCount }}</div>
+              <div class="stat-label">{{ t('monitor.gfwBlocked') }}</div>
+            </div>
+          </div>
+          <div class="stat-item stat-warn">
+            <div class="stat-icon"><NIcon :component="IconCand2" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ candidateCount }}</div>
+              <div class="stat-label">{{ t('monitor.candidate') }}</div>
+            </div>
+          </div>
+          <div class="stat-item stat-neutral">
+            <div class="stat-icon"><NIcon :component="IconOther" /></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ otherCount }}</div>
+              <div class="stat-label">{{ t('monitor.other') }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="section-label">{{ t('monitor.filter') || '筛选与控制' }}</div>
+        <div class="controls-row">
+          <NSelect
+            v-model:value="selectedCycleId"
+            :options="cycleSelectOptions"
+            style="width: 280px"
+            :placeholder="t('monitor.selectCycle')"
+            @update:value="onCycleSelect"
+          />
+          <NSelect
+            v-model:value="detectionStatusFilter"
+            :options="detectionStatusOptions"
+            style="width: 200px"
+            :placeholder="t('monitor.filterStatus')"
+          />
+        </div>
+
+        <NSpin :show="loadingDetections" :description="t('monitor.loadingDetections')">
+          <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
+
+          <template v-if="selectedCycleId === null">
+            <NEmpty :description="t('monitor.selectCycleAbove')" style="margin: 24px 0" />
+          </template>
+          <template v-else>
+            <template v-if="filteredDetections.length === 0 && !loadingDetections && !detectionError">
+              <NEmpty :description="t('monitor.noDetections')" style="margin: 24px 0" />
+            </template>
+            <template v-else>
+              <div class="table-wrapper">
+                <NDataTable
+                  :columns="detectionColumns"
+                  :data="filteredDetections"
+                  :bordered="false"
+                  :single-line="false"
+                  size="small"
+                  :pagination="{ pageSize: 10 }"
+                  :row-key="(row: any) => row.id"
+                >
+                  <template #empty>
+                    <NEmpty :description="t('monitor.noDetections')" />
+                  </template>
+                </NDataTable>
+              </div>
+            </template>
+          </template>
+        </NSpin>
+      </div>
+
+      <!-- ══ Section 3: Block Confirmation Summary ══════════════════════════════ -->
+      <div class="page-section">
+        <div class="section-title">
+          <NIcon :component="IconBlock" />
+          <span>{{ t('monitor.blockConfirmationProgress') }}</span>
+        </div>
+
+        <NAlert type="info" :title="t('monitor.blockConfirmation')" style="margin-bottom: 16px">
+          {{ t('monitor.blockConfirmationDesc') }}
+        </NAlert>
+
+        <NSpin :show="loadingCycles || loadingDetections" :description="t('monitor.loadingDetections')">
+          <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
+
+          <!-- Confirmation stats in one line -->
+          <template v-if="confirmedNodeRows.length > 0">
+            <div class="stats-row stats-row-inline">
+              <div class="stat-item stat-error">
+                <div class="stat-icon"><NIcon :component="IconBlock" /></div>
                 <div class="stat-body">
-                  <div class="stat-value">{{ cycles.length }}</div>
-                  <div class="stat-label">{{ t('monitor.totalCycles') }}</div>
+                  <div class="stat-value">{{ confirmedNodeRows.length }}</div>
+                  <div class="stat-label">{{ t('monitor.confirmedNodesTotal') || '确认阻断节点' }}</div>
                 </div>
               </div>
               <div class="stat-item stat-success">
-                <div class="stat-icon"><NIcon :component="IconCheck" /></div>
+                <div class="stat-icon"><NIcon :component="IconHeal" /></div>
                 <div class="stat-body">
-                  <div class="stat-value">{{ succeededCycles }}</div>
-                  <div class="stat-label">{{ t('monitor.succeeded') }}</div>
-                </div>
-              </div>
-              <div class="stat-item stat-error">
-                <div class="stat-icon"><NIcon :component="IconFail" /></div>
-                <div class="stat-body">
-                  <div class="stat-value">{{ failedCycles }}</div>
-                  <div class="stat-label">{{ t('monitor.failed') }}</div>
-                </div>
-              </div>
-              <div class="stat-item stat-info">
-                <div class="stat-icon"><NIcon :component="IconRun" /></div>
-                <div class="stat-body">
-                  <div class="stat-value">{{ runningCycles }}</div>
-                  <div class="stat-label">{{ t('monitor.running') }}</div>
+                  <div class="stat-value">{{ confirmedNodeRows.filter(r => r.triggered_healing === 'Yes').length }}</div>
+                  <div class="stat-label">{{ t('monitor.triggeredHealing') || '已触发自愈' }}</div>
                 </div>
               </div>
               <div class="stat-item stat-warn">
-                <div class="stat-icon"><NIcon :component="IconCands" /></div>
+                <div class="stat-icon"><NIcon :component="IconRun" /></div>
                 <div class="stat-body">
-                  <div class="stat-value">{{ totalCandidates }}</div>
-                  <div class="stat-label">{{ t('monitor.totalCandidates') }}</div>
-                </div>
-              </div>
-              <div class="stat-item stat-heal">
-                <div class="stat-icon"><NIcon :component="IconHeal" /></div>
-                <div class="stat-body">
-                  <div class="stat-value">{{ totalHealed }}</div>
-                  <div class="stat-label">{{ t('monitor.totalHealed') }}</div>
+                  <div class="stat-value">{{ confirmedNodeRows.filter(r => r.triggered_healing === 'No').length }}</div>
+                  <div class="stat-label">{{ t('monitor.pendingHealing') || '等待自愈' }}</div>
                 </div>
               </div>
             </div>
+          </template>
 
-            <!-- Controls -->
-            <div class="section-label">{{ t('monitor.filter') || '筛选与控制' }}</div>
-            <div class="controls-row">
-              <NSelect
-                v-model:value="statusFilter"
-                :options="statusOptions"
-                style="width: 160px"
-                :placeholder="t('monitor.filterStatus')"
-              />
-              <NSelect
-                v-model:value="cycleLimit"
-                :options="limitOptions"
-                style="width: 100px"
-                :placeholder="t('monitor.limit')"
-              />
-            </div>
+          <NText depth="3" style="font-size: 13px; display: block; margin-bottom: 8px">
+            {{ t('monitor.confirmedNodesAcrossAllCycles') || 'GFW 阻断确认节点汇总（所有周期）' }}
+          </NText>
 
-            <!-- Cycle table with row-click to select -->
+          <template v-if="confirmedNodeRows.length === 0 && !loadingCycles && !loadingDetections">
+            <NEmpty :description="t('monitor.noConfirmations')" style="margin: 24px 0" />
+          </template>
+          <template v-else>
             <div class="table-wrapper">
               <NDataTable
-                :columns="cycleColumns"
-                :data="filteredCycles"
+                :columns="confirmedNodeColumns"
+                :data="confirmedNodeRows"
                 :bordered="false"
                 :single-line="false"
                 size="small"
                 :pagination="{ pageSize: 10 }"
-                :row-key="(row: any) => row.cycle_id"
-                :row-props="(row: any) => ({
-                  style: 'cursor: pointer',
-                  onClick: () => onCycleSelect(row.cycle_id),
-                })"
-                :highlight-row="selectedCycleId !== null"
+                :row-key="(row: any) => row.node_id"
               />
             </div>
-
-            <!-- Cycle detail + detections (always shown when a cycle is selected) -->
-            <template v-if="selectedCycle">
-              <div class="cycle-detail-grid">
-                <div class="detail-item">
-                  <div class="detail-label">{{ t('monitor.status') }}</div>
-                  <NTag :type="statusTagType(selectedCycle.status)" size="small" style="margin-top: 4px">{{ selectedCycle.status }}</NTag>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">{{ t('monitor.candidates') }}</div>
-                  <div class="detail-value">{{ selectedCycle.candidate_count }}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">{{ t('monitor.confirmed') }}</div>
-                  <div class="detail-value">{{ selectedCycle.confirmed_count }}</div>
-                </div>
-                <div class="detail-item">
-                  <div class="detail-label">{{ t('monitor.healed') }}</div>
-                  <div class="detail-value">{{ selectedCycle.healed_count }}</div>
-                </div>
-                <div class="detail-item detail-wide">
-                  <div class="detail-label">{{ t('monitor.startedAt') }}</div>
-                  <div class="detail-value">{{ fmtTs(selectedCycle.started_at) }}</div>
-                </div>
-                <div class="detail-item detail-wide">
-                  <div class="detail-label">{{ t('monitor.finishedAt') }}</div>
-                  <div class="detail-value">{{ fmtTs(selectedCycle.finished_at) }}</div>
-                </div>
-              </div>
-              <NAlert v-if="selectedCycle.error_message" type="error" style="margin-bottom: 12px">
-                {{ selectedCycle.error_message }}
-              </NAlert>
-
-              <NSpin :show="loadingDetections" :description="t('monitor.loadingDetections')">
-                <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
-
-                <NText depth="3" style="font-size: 13px; display: block; margin-bottom: 8px">
-                  {{ t('monitor.detectionsForCycle', { id: selectedCycleId ?? '?' }) }}
-                </NText>
-
-                <template v-if="detections.length === 0 && !loadingDetections && !detectionError">
-                  <NEmpty :description="t('monitor.noDetections')" style="margin: 24px 0" />
-                </template>
-
-                <template v-else>
-                  <div class="table-wrapper">
-                    <NDataTable
-                      :columns="detectionColumns"
-                      :data="detections"
-                      :bordered="false"
-                      :single-line="false"
-                      size="small"
-                      :pagination="{ pageSize: 10 }"
-                      :row-key="(row: any) => row.id"
-                    >
-                      <template #empty>
-                        <NEmpty :description="t('monitor.noDetections')" />
-                      </template>
-                    </NDataTable>
-                  </div>
-                </template>
-              </NSpin>
-            </template>
-          </div>
-        </NTab>
-
-        <!-- ══ Tab 2: Detection Records ═══════════════════════════════════════════ -->
-        <NTab name="detections" :tab="t('monitor.nodeDetectionRecords')">
-          <div class="tab-card">
-            <div class="section-label">{{ t('monitor.filter') || '筛选与控制' }}</div>
-            <div class="controls-row">
-              <NSelect
-                v-model:value="selectedCycleId"
-                :options="cycleSelectOptions"
-                style="width: 280px"
-                :placeholder="t('monitor.selectCycle')"
-                @update:value="onCycleSelect"
-              />
-              <NSelect
-                v-model:value="detectionStatusFilter"
-                :options="detectionStatusOptions"
-                style="width: 200px"
-                :placeholder="t('monitor.filterStatus')"
-              />
-            </div>
-
-            <NSpin :show="loadingDetections" :description="t('monitor.loadingDetections')">
-              <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
-
-              <template v-if="selectedCycleId === null">
-                <NEmpty :description="t('monitor.selectCycleAbove')" style="margin: 24px 0" />
-              </template>
-              <template v-else>
-                <div class="table-wrapper">
-                  <NDataTable
-                    :columns="detectionColumns"
-                    :data="filteredDetections"
-                    :bordered="false"
-                    :single-line="false"
-                    size="small"
-                    :pagination="{ pageSize: 10 }"
-                    :row-key="(row: any) => row.id"
-                  >
-                    <template #empty>
-                      <NEmpty :description="t('monitor.noDetections')" />
-                    </template>
-                  </NDataTable>
-                </div>
-              </template>
-            </NSpin>
-
-            <template v-if="selectedCycleId !== null">
-              <div class="stats-row stats-row-3" style="margin-top: 16px">
-                <div class="stat-item stat-error">
-                  <div class="stat-icon"><NIcon :component="IconBlock" /></div>
-                  <div class="stat-body">
-                    <div class="stat-value">{{ confirmedCount }}</div>
-                    <div class="stat-label">{{ t('monitor.gfwBlocked') }}</div>
-                  </div>
-                  <NTag type="error" size="small" round>GFW Blocked</NTag>
-                </div>
-                <div class="stat-item stat-warn">
-                  <div class="stat-icon"><NIcon :component="IconCand2" /></div>
-                  <div class="stat-body">
-                    <div class="stat-value">{{ candidateCount }}</div>
-                    <div class="stat-label">{{ t('monitor.candidate') }}</div>
-                  </div>
-                  <NTag type="warning" size="small" round>Candidate</NTag>
-                </div>
-                <div class="stat-item stat-neutral">
-                  <div class="stat-icon"><NIcon :component="IconOther" /></div>
-                  <div class="stat-body">
-                    <div class="stat-value">{{ otherCount }}</div>
-                    <div class="stat-label">{{ t('monitor.other') }}</div>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-        </NTab>
-
-        <!-- ══ Tab 3: Block Confirmation Summary ══════════════════════════════════ -->
-        <NTab name="confirmation" :tab="t('monitor.blockConfirmationProgress')">
-          <div class="tab-card">
-            <NAlert type="info" :title="t('monitor.blockConfirmation')" style="margin-bottom: 16px">
-              {{ t('monitor.blockConfirmationDesc') }}
-            </NAlert>
-
-            <NSpin :show="loadingCycles || loadingDetections" :description="t('monitor.loadingDetections')">
-              <NAlert v-if="detectionError" type="error" :title="detectionError" style="margin-bottom: 12px" closable @close="detectionError = null" />
-
-              <template v-if="confirmedNodeRows.length > 0">
-                <div class="stats-row stats-row-3">
-                  <div class="stat-item stat-error">
-                    <div class="stat-icon"><NIcon :component="IconBlock" /></div>
-                    <div class="stat-body">
-                      <div class="stat-value">{{ confirmedNodeRows.length }}</div>
-                      <div class="stat-label">{{ t('monitor.confirmedNodesTotal') || '确认阻断节点' }}</div>
-                    </div>
-                  </div>
-                  <div class="stat-item stat-success">
-                    <div class="stat-icon"><NIcon :component="IconHeal" /></div>
-                    <div class="stat-body">
-                      <div class="stat-value">{{ confirmedNodeRows.filter(r => r.triggered_healing === 'Yes').length }}</div>
-                      <div class="stat-label">{{ t('monitor.triggeredHealing') || '已触发自愈' }}</div>
-                    </div>
-                  </div>
-                  <div class="stat-item stat-warn">
-                    <div class="stat-icon"><NIcon :component="IconRun" /></div>
-                    <div class="stat-body">
-                      <div class="stat-value">{{ confirmedNodeRows.filter(r => r.triggered_healing === 'No').length }}</div>
-                      <div class="stat-label">{{ t('monitor.pendingHealing') || '等待自愈' }}</div>
-                    </div>
-                  </div>
-                </div>
-              </template>
-
-              <NText depth="3" style="font-size: 13px; display: block; margin-bottom: 8px">
-                {{ t('monitor.confirmedNodesAcrossAllCycles') || 'GFW 阻断确认节点汇总（所有周期）' }}
-              </NText>
-
-              <template v-if="confirmedNodeRows.length === 0 && !loadingCycles && !loadingDetections">
-                <NEmpty :description="t('monitor.noConfirmations')" style="margin: 24px 0" />
-              </template>
-              <template v-else>
-                <div class="table-wrapper">
-                  <NDataTable
-                    :columns="confirmedNodeColumns"
-                    :data="confirmedNodeRows"
-                    :bordered="false"
-                    :single-line="false"
-                    size="small"
-                    :pagination="{ pageSize: 10 }"
-                    :row-key="(row: any) => row.node_id"
-                  />
-                </div>
-              </template>
-            </NSpin>
-          </div>
-        </NTab>
-      </NTabs>
+          </template>
+        </NSpin>
+      </div>
     </NSpin>
   </div>
 </template>
@@ -609,51 +588,45 @@ onUnmounted(() => {
 .monitor-history-page {
   height: 100%;
   overflow-y: auto;
+  padding: 0 4px 20px;
 }
 
-.tab-card {
-  padding: 8px 0 20px;
+/* ── Page Sections ───────────────────────────────────────────────────────── */
+.page-section {
+  margin-bottom: 24px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px 16px 20px;
+  border: 1px solid #e8ecf0;
 }
 
-/* ── Stats Row ────────────────────────────────────────────────────────────── */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.section-title .n-icon {
+  color: #6366f1;
+  font-size: 18px;
+}
+
+/* ── Stats Row (one line) ───────────────────────────────────────────────── */
 .stats-row {
   display: grid;
-  grid-template-columns: 1fr;
   gap: 8px;
   margin-bottom: 16px;
 }
 
-.stats-row-3 {
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
-
-.stats-row-3 .stat-item {
-  padding: 12px 14px;
+.stats-row-inline {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 10px;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.stats-row-3 .stat-icon {
-  width: 32px;
-  height: 32px;
-}
-
-.stats-row-3 .stat-body {
-  text-align: left;
-  flex: 1;
-}
-
-.stats-row-3 .stat-value {
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.stats-row-3 .stat-label {
-  font-size: 11px;
-  margin-top: 2px;
 }
 
 .stat-item {
@@ -859,16 +832,6 @@ onUnmounted(() => {
   flex: 1;
   height: 1px;
   background: #f1f5f9;
-}
-
-/* ── Tab Transitions ─────────────────────────────────────────────────────── */
-:deep(.n-tab-pane) {
-  animation: tabFadeIn 0.25s ease;
-}
-
-@keyframes tabFadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
