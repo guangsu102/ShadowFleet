@@ -128,6 +128,13 @@ class EC2VpcClient:
             subnet_id = candidate_subnet_id
             found_az = candidate_az
             vpc_ipv6_cidr = self.ensure_vpc_ipv6_enabled(vpc_id)
+            response = self._execute_ec2_call(
+                operation_name="describe_subnet_for_ipv6",
+                func=lambda: self._ec2_client.describe_subnets(SubnetIds=[subnet_id]),
+            )
+            subnets_checked = response.get("Subnets", [])
+            if subnets_checked and subnets_checked[0].get("Ipv6CidrBlock"):
+                return subnet_id, found_az
             subnet_ipv6_cidr = self._subnet_ipv6_from_vpc(vpc_ipv6_cidr)
             self._execute_ec2_call(
                 operation_name="associate_subnet_ipv6",
