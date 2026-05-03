@@ -28,12 +28,22 @@ def handle_provision_failure(
 ) -> None:
     logger = runtime_context.logger.getChild(logger_name)
     set_event_type("provisioning_failed")
-    logger.exception(
-        "Provisioning failed for node=%s protocol=%s asset_id=%s",
+    skip_rollback = runtime_context.config.app.skip_rollback_on_failure
+    logger.info(
+        "Provisioning failed for node=%s protocol=%s asset_id=%s (skip_rollback=%s)",
         request.node_name,
         request.protocol_type,
         selection_result.asset_id,
+        skip_rollback,
     )
+    if skip_rollback:
+        logger.warning(
+            "skip_rollback_on_failure is enabled — EC2 instances and resources will NOT be terminated. "
+            "Please manually clean up: instance_id=%s xboard_node_id=%s",
+            getattr(launch_result, "instance_id", None),
+            getattr(registered_node_result, "xboard_node_id", None),
+        )
+        return
     asset_repo.create_asset_event(
         AssetEventCreateRequest(
             asset_id=selection_result.asset_id,

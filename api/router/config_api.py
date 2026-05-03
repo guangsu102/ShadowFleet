@@ -62,6 +62,7 @@ class AppUpdateRequest(BaseModel):
     probe_poll_interval_seconds: float | None = None
     probe_heartbeat_timeout_seconds: float | None = None
     key_pair_local_dir: str | None = None
+    skip_rollback_on_failure: bool | None = None
 
 
 class LoggingUpdateRequest(BaseModel):
@@ -160,6 +161,7 @@ async def update_app(
         "probe_poll_interval_seconds": request.probe_poll_interval_seconds,
         "probe_heartbeat_timeout_seconds": request.probe_heartbeat_timeout_seconds,
         "key_pair_local_dir": request.key_pair_local_dir,
+        "skip_rollback_on_failure": request.skip_rollback_on_failure,
     }
     for key, value in fields.items():
         if value is not None:

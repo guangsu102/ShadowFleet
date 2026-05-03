@@ -49,6 +49,7 @@ class AppRuntimeConfig(BaseModel):
     xboard_sentinel_api_base_url: str | None = None
     xboard_sentinel_api_key: str | None = None
     key_pair_local_dir: str = "key_pairs"
+    skip_rollback_on_failure: bool = False
 
     @field_validator("request_timeout_seconds")
     @classmethod
