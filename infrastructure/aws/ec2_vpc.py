@@ -176,13 +176,22 @@ class EC2VpcClient:
                 raise RuntimeError("AWS create_subnet returned no SubnetId")
             found_az = response.get("Subnet", {}).get("AvailabilityZone", availability_zone)
 
-            self._execute_ec2_call(
-                operation_name="associate_subnet_ipv6",
-                func=lambda: self._ec2_client.associate_subnet_cidr_block(
-                    SubnetId=subnet_id, Ipv6CidrBlock=subnet_ipv6_cidr
-                ),
-                is_write=True,
-            )
+            try:
+                self._execute_ec2_call(
+                    operation_name="associate_subnet_ipv6",
+                    func=lambda: self._ec2_client.associate_subnet_cidr_block(
+                        SubnetId=subnet_id, Ipv6CidrBlock=subnet_ipv6_cidr
+                    ),
+                    is_write=True,
+                )
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "InvalidSubnet.Conflict":
+                    self._logger.debug(
+                        "IPv6 CIDR already associated after conflict during subnet creation: subnet=%s",
+                        subnet_id,
+                    )
+                else:
+                    raise
 
         self._execute_ec2_call(
             operation_name="enable_subnet_ipv6",
