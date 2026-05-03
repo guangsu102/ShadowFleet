@@ -16,9 +16,9 @@ router = APIRouter(prefix="/api/v1")
 
 
 class ProvisionTaskCreateRequest(BaseModel):
-    protocol_type: str = Field(...)
-    node_name: str = Field(...)
-    port: str = Field(...)
+    protocol_type: str = Field(..., min_length=1)
+    node_name: str = Field(..., min_length=1, max_length=64)
+    port: str = Field(..., min_length=1)
     server_port: int = Field(..., ge=1, le=65535)
     rate: float = Field(default=1.0, ge=0)
     asset_type: str = "aws"
