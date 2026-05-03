@@ -557,7 +557,7 @@ onMounted(fetchAssets)
       :mask-closable="false"
       :segmented="{ content: true, footer: 'soft' }"
     >
-      <NTabs type="line" animated>
+      <NTabs v-model:value="modalTab" type="line" animated>
         <!-- ── AWS Tab ───────────────────────────────────────────────────── -->
         <NTabPane name="aws" tab="AWS 资产">
           <div class="modal-form">
