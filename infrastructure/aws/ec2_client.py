@@ -75,7 +75,7 @@ class EC2Client:
             aws_credential=aws_credential,
         )
         self._execute_ec2_call = self._build_execute_call()
-        self.vpc = EC2VpcClient(self._ec2_client, self._execute_ec2_call)
+        self.vpc = EC2VpcClient(self._ec2_client, self._execute_ec2_call, self._logger)
         self.ipv6 = EC2Ipv6Client(self._ec2_client, self._execute_ec2_call)
 
     @property

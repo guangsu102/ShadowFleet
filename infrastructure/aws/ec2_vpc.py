@@ -1,3 +1,4 @@
+import logging
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -10,9 +11,15 @@ from botocore.exceptions import ClientError
 class EC2VpcClient:
     """EC2 VPC/Subnet/SecurityGroup operations, delegating to the shared boto client."""
 
-    def __init__(self, ec2_client: BaseClient, execute_ec2_call: Callable[..., Any]) -> None:
+    def __init__(
+        self,
+        ec2_client: BaseClient,
+        execute_ec2_call: Callable[..., Any],
+        logger: logging.Logger,
+    ) -> None:
         self._ec2_client = ec2_client
         self._execute_ec2_call = execute_ec2_call
+        self._logger = logger
 
     # ------------------------------------------------------------------ VPC
     def find_or_create_vpc(self, vpc_cidr: str = "10.88.0.0/16") -> str:
