@@ -533,9 +533,11 @@ def _start_ready_callback_server(runtime_context: RuntimeContext) -> ThreadingHT
         app_config.phone_home_listen_host,
         app_config.phone_home_listen_port,
     )
+    family = socket.AF_INET6 if ":" in resolved_host else socket.AF_INET
     server = ThreadingHTTPServer(
         (resolved_host, resolved_port),
         _build_ready_callback_handler(runtime_context),
+        address_family=family,
     )
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
@@ -713,7 +715,11 @@ def _start_artifact_cache_server(
         if prev:
             logger.info("Using previously cached V2bX version: %s", prev)
     handler_class = _build_static_file_handler(cache_dir, logger)
-    server = ThreadingHTTPServer(("::", app_config.artifact_cache_listen_port), handler_class)
+    server = ThreadingHTTPServer(
+        ("::", app_config.artifact_cache_listen_port),
+        handler_class,
+        address_family=socket.AF_INET6,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     ipv6 = get_daemon_public_ipv6()
