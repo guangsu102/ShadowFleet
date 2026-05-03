@@ -136,13 +136,23 @@ class EC2VpcClient:
             if subnets_checked and subnets_checked[0].get("Ipv6CidrBlock"):
                 return subnet_id, found_az
             subnet_ipv6_cidr = self._subnet_ipv6_from_vpc(vpc_ipv6_cidr)
-            self._execute_ec2_call(
-                operation_name="associate_subnet_ipv6",
-                func=lambda: self._ec2_client.associate_subnet_cidr_block(
-                    SubnetId=subnet_id, Ipv6CidrBlock=subnet_ipv6_cidr
-                ),
-                is_write=True,
-            )
+            try:
+                self._execute_ec2_call(
+                    operation_name="associate_subnet_ipv6",
+                    func=lambda: self._ec2_client.associate_subnet_cidr_block(
+                        SubnetId=subnet_id, Ipv6CidrBlock=subnet_ipv6_cidr
+                    ),
+                    is_write=True,
+                )
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "InvalidSubnet.Conflict":
+                    existing = self.describe_subnet_ipv6_cidr(subnet_id)
+                    self._logger.debug(
+                        "IPv6 CIDR already associated after conflict: subnet=%s cidr=%s",
+                        subnet_id, existing,
+                    )
+                    return subnet_id, found_az
+                raise
         else:
             vpc_ipv6_cidr = self.ensure_vpc_ipv6_enabled(vpc_id)
             subnet_ipv6_cidr = self._subnet_ipv6_from_vpc(vpc_ipv6_cidr)
