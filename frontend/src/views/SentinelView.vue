@@ -11,7 +11,6 @@ import {
   NEmpty,
   NIcon,
   NButton,
-  NCard,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import apiClient from '@/api/client'
@@ -48,7 +47,6 @@ const cycles = ref<MonitorCycleResponse[]>([])
 const detections = ref<DetectionRecordResponse[]>([])
 const loadingCycles = ref(true)
 const loadingDetections = ref(false)
-const fetchingSummary = ref(false)
 const triggerScanning = ref(false)
 const fetchError = ref<string | null>(null)
 const detectionError = ref<string | null>(null)

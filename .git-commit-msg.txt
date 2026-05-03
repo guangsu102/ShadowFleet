@@ -1,0 +1,9 @@
+feat(Sentinel): 重构 Sentinel 监控页面，补齐后端 API
+
+- 新增 MonitorRepo.get_cycle_by_id() 直接按 ID 查询
+- 修复 GET /monitor/cycles/{id} 效率（不再全表拉取）
+- 新增 GET /monitor/summary 聚合统计端点
+- 新增 POST /monitor/trigger-scan 手动触发扫描端点
+- 重写 SentinelView.vue：新增状态 Banner（扫描中/空闲）、确认阻断统计、筛选功能
+- MonitorHistoryView.vue 改为重定向到 /sentinel
+- 补充 sentinel i18n 中英文翻译及前端类型定义
