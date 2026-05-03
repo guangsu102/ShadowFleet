@@ -185,13 +185,26 @@ class EC2VpcClient:
                     is_write=True,
                 )
             except ClientError as e:
-                if e.response["Error"]["Code"] == "InvalidSubnet.Conflict":
+                error_code = e.response["Error"]["Code"]
+                if error_code == "InvalidSubnet.Conflict":
                     self._logger.debug(
                         "IPv6 CIDR already associated after conflict during subnet creation: subnet=%s",
                         subnet_id,
                     )
                 else:
+                    self._logger.error(
+                        "associate_subnet_ipv6 failed with non-conflict error: code=%s subnet=%s",
+                        error_code,
+                        subnet_id,
+                    )
                     raise
+            except Exception as e:
+                self._logger.error(
+                    "associate_subnet_ipv6 failed with unexpected exception: type=%s subnet=%s",
+                    type(e).__name__,
+                    subnet_id,
+                )
+                raise
 
         self._execute_ec2_call(
             operation_name="enable_subnet_ipv6",
