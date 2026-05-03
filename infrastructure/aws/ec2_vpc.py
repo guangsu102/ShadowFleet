@@ -396,15 +396,19 @@ class EC2VpcClient:
             if route.get("DestinationCidrBlock") == "0.0.0.0/0" and route.get("GatewayId"):
                 return
         igw_id = self._get_igw_for_vpc(route_table_id)
-        self._execute_ec2_call(
-            operation_name="create_igw_route",
-            func=lambda: self._ec2_client.create_route(
-                RouteTableId=route_table_id,
-                DestinationCidrBlock="0.0.0.0/0",
-                GatewayId=igw_id,
-            ),
-            is_write=True,
-        )
+        try:
+            self._execute_ec2_call(
+                operation_name="create_igw_route",
+                func=lambda: self._ec2_client.create_route(
+                    RouteTableId=route_table_id,
+                    DestinationCidrBlock="0.0.0.0/0",
+                    GatewayId=igw_id,
+                ),
+                is_write=True,
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "RouteAlreadyExists":
+                raise
 
     def _get_igw_for_vpc(self, route_table_id: str) -> str:
         """Look up the IGW attached to the VPC owning this route table."""
@@ -522,14 +526,18 @@ class EC2VpcClient:
         )
         routes = response["RouteTables"][0]["Routes"]
         for route in routes:
-            if route.get("DestinationCidrBlock") == "0.0.0.0/0" and route.get("NatGatewayId"):
+            if route.get("DestinationCidrBlock") == "0.0.0.0/0":
                 return
-        self._execute_ec2_call(
-            operation_name="create_nat_route",
-            func=lambda: self._ec2_client.create_route(
-                RouteTableId=route_table_id,
-                DestinationCidrBlock="0.0.0.0/0",
-                NatGatewayId=nat_gateway_id,
-            ),
-            is_write=True,
-        )
+        try:
+            self._execute_ec2_call(
+                operation_name="create_nat_route",
+                func=lambda: self._ec2_client.create_route(
+                    RouteTableId=route_table_id,
+                    DestinationCidrBlock="0.0.0.0/0",
+                    NatGatewayId=nat_gateway_id,
+                ),
+                is_write=True,
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "RouteAlreadyExists":
+                raise
