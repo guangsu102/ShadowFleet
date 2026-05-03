@@ -179,6 +179,32 @@ class MonitorRepo:
             error_message=row["error_message"],
         )
 
+    def get_cycle_by_id(self, cycle_id: int) -> MonitorCycleRecord | None:
+        with self._sqlite_manager.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM fleet_monitor_cycles
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (cycle_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return MonitorCycleRecord(
+            id=int(row["id"]),
+            correlation_id=str(row["correlation_id"]),
+            status=str(row["status"]),
+            candidate_count=int(row["candidate_count"]),
+            confirmed_count=int(row["confirmed_count"]),
+            healed_count=int(row["healed_count"]),
+            failed_count=int(row["failed_count"]),
+            started_at=str(row["started_at"]),
+            finished_at=row["finished_at"],
+            error_message=row["error_message"],
+        )
+
     def list_recent_cycles(self, limit: int = 50) -> list[MonitorCycleRecord]:
         with self._sqlite_manager.connection() as connection:
             rows = connection.execute(

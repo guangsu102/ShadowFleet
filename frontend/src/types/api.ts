@@ -416,6 +416,18 @@ export interface DetectionRecordResponse {
   created_at: string
 }
 
+export interface MonitorSummaryStats {
+  total_cycles: number
+  total_confirmed: number
+  total_healed: number
+  pending_healing: number
+}
+
+export interface MonitorSummaryResponse {
+  latest_cycle: MonitorCycleResponse | null
+  stats: MonitorSummaryStats
+}
+
 // ============ Config ============
 export interface ConfigResponse {
   app: Record<string, unknown>

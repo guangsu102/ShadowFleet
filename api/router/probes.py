@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from api.auth.dependencies import get_current_user, require_operator
 from api.deps import get_runtime_context
-from database.monitor_repo import MonitorRepo
+from database.monitor_repo import MonitorCycleRecord, MonitorRepo
 from services.dashboard_models import ProbeHealthRow
 from services.dashboard_service import DashboardService
 from services.runtime_service import RuntimeContext
@@ -53,6 +53,18 @@ class DetectionRecordResponse(BaseModel):
     reason: str | None = None
     probe_provider: str | None = None
     created_at: str = ""
+
+
+class MonitorSummaryStats(BaseModel):
+    total_cycles: int
+    total_confirmed: int
+    total_healed: int
+    pending_healing: int
+
+
+class MonitorSummaryResponse(BaseModel):
+    latest_cycle: MonitorCycleResponse | None = None
+    stats: MonitorSummaryStats
 
 
 def _probe_to_response(row: ProbeHealthRow) -> ProbeResponse:
@@ -135,6 +147,15 @@ async def generate_bootstrap_token(
     }
 
 
+def _cycle_to_response(c: MonitorCycleRecord) -> MonitorCycleResponse:
+    return MonitorCycleResponse(
+        cycle_id=c.id, status=c.status, candidate_count=c.candidate_count,
+        confirmed_count=c.confirmed_count, healed_count=c.healed_count,
+        failed_count=c.failed_count, started_at=c.started_at,
+        finished_at=c.finished_at, error_message=c.error_message,
+    )
+
+
 @router.get("/monitor/cycles", response_model=list[MonitorCycleResponse])
 async def list_monitor_cycles(
     ctx: RuntimeContext = Depends(get_runtime_context),
@@ -142,15 +163,7 @@ async def list_monitor_cycles(
     limit: int = 20,
 ) -> list[MonitorCycleResponse]:
     cycles = MonitorRepo(ctx).list_recent_cycles(limit=limit)
-    return [
-        MonitorCycleResponse(
-            cycle_id=c.id, status=c.status, candidate_count=c.candidate_count,
-            confirmed_count=c.confirmed_count, healed_count=c.healed_count,
-            failed_count=c.failed_count, started_at=c.started_at,
-            finished_at=c.finished_at, error_message=c.error_message,
-        )
-        for c in cycles
-    ]
+    return [_cycle_to_response(c) for c in cycles]
 
 
 @router.get("/monitor/cycles/{cycle_id}", response_model=MonitorCycleResponse)
@@ -159,16 +172,51 @@ async def get_monitor_cycle(
     ctx: RuntimeContext = Depends(get_runtime_context),
     _current_user: None = Depends(get_current_user),
 ) -> MonitorCycleResponse:
-    cycles = MonitorRepo(ctx).list_recent_cycles(limit=1000)
-    for c in cycles:
-        if c.id == cycle_id:
-            return MonitorCycleResponse(
-                cycle_id=c.id, status=c.status, candidate_count=c.candidate_count,
-                confirmed_count=c.confirmed_count, healed_count=c.healed_count,
-                failed_count=c.failed_count, started_at=c.started_at,
-                finished_at=c.finished_at, error_message=c.error_message,
-            )
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitor cycle not found")
+    c = MonitorRepo(ctx).get_cycle_by_id(cycle_id)
+    if c is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitor cycle not found")
+    return _cycle_to_response(c)
+
+
+@router.get("/monitor/summary", response_model=MonitorSummaryResponse)
+async def get_monitor_summary(
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(get_current_user),
+) -> MonitorSummaryResponse:
+    repo = MonitorRepo(ctx)
+    latest = repo.get_latest_cycle()
+    cycles = repo.list_recent_cycles(limit=1000)
+
+    total_confirmed = sum(c.confirmed_count for c in cycles)
+    total_healed = sum(c.healed_count for c in cycles)
+    pending = total_confirmed - total_healed
+
+    return MonitorSummaryResponse(
+        latest_cycle=_cycle_to_response(latest) if latest else None,
+        stats=MonitorSummaryStats(
+            total_cycles=len(cycles),
+            total_confirmed=total_confirmed,
+            total_healed=total_healed,
+            pending_healing=max(0, pending),
+        ),
+    )
+
+
+@router.post("/monitor/trigger-scan")
+async def trigger_scan_cycle(
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(get_current_user),
+) -> MonitorCycleResponse:
+    import asyncio
+    from services.monitor import MonitorService
+    service = MonitorService(ctx)
+    result = await asyncio.to_thread(service.run_scan_cycle)
+    return MonitorCycleResponse(
+        cycle_id=result.cycle_id, status="succeeded",
+        candidate_count=result.candidate_count, confirmed_count=result.confirmed_count,
+        healed_count=result.healed_count, failed_count=result.failed_count,
+        started_at="", finished_at=None, error_message=None,
+    )
 
 
 @router.get("/monitor/detections", response_model=list[DetectionRecordResponse])

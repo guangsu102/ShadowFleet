@@ -436,8 +436,25 @@ export const zhMessages: Messages = {
   },
 
   sentinel: {
-    title: '哨兵',
+    title: '哨兵监控',
     comingSoon: '即将推出',
+    scanRunning: '扫描进行中',
+    scanIdle: '哨兵空闲',
+    scanning: '扫描中…',
+    lastScan: '上次扫描',
+    triggerScan: '手动触发扫描',
+    triggerFailed: '触发扫描失败',
+    candidates: '候选',
+    confirmed: '已确认',
+    healed: '已自愈',
+    totalCycles: '总周期',
+    scanCycleList: '当前 & 历史扫描周期',
+    detectionRecords: '节点检测记录',
+    blockConfirmation: '阻断确认汇总',
+    confirmedNodesTotal: '确认阻断节点',
+    filterHealing: '筛选自愈状态',
+    triggered: '已触发',
+    pending: '等待',
   },
 
   monitor: {
@@ -489,6 +506,8 @@ export const zhMessages: Messages = {
     all: '全部',
     filterStatus: '筛选状态',
     limit: '每页条数',
+    triggered: '已触发',
+    pending: '等待',
   },
 
   system: {
@@ -1115,8 +1134,25 @@ export const enMessages = {
   },
 
   sentinel: {
-    title: 'Sentinel',
+    title: 'Sentinel Monitor',
     comingSoon: 'Coming soon',
+    scanRunning: 'Scanning',
+    scanIdle: 'Sentinel Idle',
+    scanning: 'Scanning…',
+    lastScan: 'Last Scan',
+    triggerScan: 'Trigger Scan',
+    triggerFailed: 'Failed to trigger scan',
+    candidates: 'Candidates',
+    confirmed: 'Confirmed',
+    healed: 'Healed',
+    totalCycles: 'Total Cycles',
+    scanCycleList: 'Current & Historical Scan Cycles',
+    detectionRecords: 'Node Detection Records',
+    blockConfirmation: 'Block Confirmation Summary',
+    confirmedNodesTotal: 'Confirmed Blocked Nodes',
+    filterHealing: 'Filter Healing Status',
+    triggered: 'Triggered',
+    pending: 'Pending',
   },
 
   monitor: {
@@ -1162,12 +1198,14 @@ export const enMessages = {
     reason: 'Reason',
     probeProvider: 'Probe Provider',
     createdAt: 'Created At',
-    loadCyclesFailed: '加载监控周期失败',
-    loadDetectionsFailed: '加载检测记录失败',
-    noCycleSelected: '请先选择一个周期',
-    all: '全部',
-    filterStatus: '筛选状态',
-    limit: '每页条数',
+    loadCyclesFailed: 'Failed to load monitor cycles',
+    loadDetectionsFailed: 'Failed to load detection records',
+    noCycleSelected: 'Please select a cycle first',
+    all: 'All',
+    filterStatus: 'Filter Status',
+    limit: 'Limit',
+    triggered: 'Triggered',
+    pending: 'Pending',
   },
 
   system: {
