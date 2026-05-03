@@ -151,4 +151,7 @@ class AuthUserRepo:
 
     def ensure_default_admin(self) -> None:
         if self.get_by_username("admin") is None:
-            self.create_user("admin", "admin123", "admin")
+            try:
+                self.create_user("admin", "admin123", "admin")
+            except APIError:
+                pass
