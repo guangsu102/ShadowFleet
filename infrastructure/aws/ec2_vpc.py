@@ -428,6 +428,21 @@ class EC2VpcClient:
             raise RuntimeError(f"No Internet Gateway found for VPC {vpc_id}")
         return igws[0]["InternetGatewayId"]
 
+    def find_existing_nat_gateway(self, subnet_id: str) -> tuple[str, str] | None:
+        """Return (nat_gateway_id, eip_allocation_id) of an existing available NAT Gateway, or None."""
+        response = self._execute_ec2_call(
+            operation_name="describe_nat",
+            func=lambda: self._ec2_client.describe_nat_gateways(
+                Filters=[{"Name": "subnet-id", "Values": [subnet_id]}]
+            ),
+        )
+        for nat in response.get("NatGateways", []):
+            if nat.get("State") == "available":
+                addrs = nat.get("NatGatewayAddresses", [])
+                if addrs and addrs[0].get("AllocationId"):
+                    return (nat["NatGatewayId"], addrs[0]["AllocationId"])
+        return None
+
     # ------------------------------------------------------------ NAT Gateway
     def find_or_create_nat_gateway(
         self,

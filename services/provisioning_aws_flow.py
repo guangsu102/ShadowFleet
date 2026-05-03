@@ -297,9 +297,14 @@ def _ensure_public_network_access(
 
     # 5. For instances WITHOUT a public IP, set up NAT Gateway on this public subnet
     #    so they can still reach the internet outbound.
-    eip_allocation_id = vpc_client.allocate_elastic_ip()
-    nat_gateway_id = vpc_client.find_or_create_nat_gateway(subnet_id, eip_allocation_id)
-    logger.info("NAT Gateway %s created in subnet %s", nat_gateway_id, subnet_id)
+    existing_nat = vpc_client.find_existing_nat_gateway(subnet_id)
+    if existing_nat:
+        nat_gateway_id, eip_allocation_id = existing_nat
+        logger.info("Reusing existing NAT Gateway %s in subnet %s", nat_gateway_id, subnet_id)
+    else:
+        eip_allocation_id = vpc_client.allocate_elastic_ip()
+        nat_gateway_id = vpc_client.find_or_create_nat_gateway(subnet_id, eip_allocation_id)
+        logger.info("NAT Gateway %s created in subnet %s", nat_gateway_id, subnet_id)
 
     # 6. NAT route is already on the main route table; add it if not present
     vpc_client.ensure_nat_route(rt_id, nat_gateway_id)

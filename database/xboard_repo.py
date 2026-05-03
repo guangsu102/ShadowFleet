@@ -175,6 +175,8 @@ class XboardRepo:
                 func=_operation,
                 should_retry=self._should_retry_database_error,
             )
+        except IndexError:
+            raise
         except PsycopgError as exc:
             set_event_type("db_query_failed")
             self._logger.exception("Failed to register Xboard node name=%s", node_name)
@@ -214,6 +216,8 @@ class XboardRepo:
                 should_retry=self._should_retry_database_error,
             )
         except XboardNodeNotFoundError:
+            raise
+        except IndexError:
             raise
         except PsycopgError as exc:
             set_event_type("db_query_failed")
