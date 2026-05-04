@@ -258,3 +258,23 @@ class MonitorRepo:
                 (xboard_node_id, limit),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def prune_successful_detections(self, keep_count: int = 30) -> int:
+        with self._sqlite_manager.connection() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM fleet_monitor_detections
+                WHERE detection_status != 'failed'
+                  AND id NOT IN (
+                      SELECT id FROM fleet_monitor_detections
+                      WHERE detection_status != 'failed'
+                      ORDER BY created_at DESC, id DESC
+                      LIMIT ?
+                  )
+                """,
+                (keep_count,),
+            )
+        deleted = cursor.rowcount
+        if deleted > 0:
+            self._logger.info("Pruned %s successful detection records, kept latest %s per node", deleted, keep_count)
+        return deleted

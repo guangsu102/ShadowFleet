@@ -161,6 +161,7 @@ class MonitorService:
                 healed_count,
                 failed_count,
             )
+            self._monitor_repo.prune_successful_detections(keep_count=30)
             return MonitorCycleResult(
                 cycle_id=cycle_id,
                 candidate_count=candidate_count,
