@@ -215,11 +215,14 @@ def _build_ready_callback_handler(
 
     class ReadyCallbackHandler(BaseHTTPRequestHandler):
         def __init__(self, *args: object, **kwargs: object) -> None:
-            super().__init__(*args, **kwargs)
+            # Set attributes BEFORE calling super().__init__(), because BaseHTTPRequestHandler's
+            # __init__ synchronously calls handle() -> do_POST() -> _handle_ready_callback()
+            # the moment __init__ returns. Any attribute accessed there must exist first.
             self._ready_callback_service = ready_callback_service
             self._probe_registry_service = probe_registry_service
             self._probe_command_service = probe_command_service
             self._logger = logger
+            super().__init__(*args, **kwargs)
 
         def do_POST(self) -> None:  # noqa: N802
             if self.path == READY_CALLBACK_PATH:
