@@ -96,14 +96,22 @@ class TelegramReporter:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(coroutine)
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(coroutine)
+            finally:
+                loop.close()
             return
 
         error_holder: list[BaseException] = []
 
         def _thread_target() -> None:
             try:
-                asyncio.run(coroutine)
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(coroutine)
+                finally:
+                    loop.close()
             except BaseException as exc:  # pragma: no cover - defensive bridge
                 error_holder.append(exc)
 
