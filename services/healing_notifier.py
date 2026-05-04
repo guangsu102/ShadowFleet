@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from models.message_models import TelegramMessage
+from models.message_models import TelegramMessage, TelegramNotificationType
 from services.healing_models import HealRequest, HealResult
 from services.runtime_service import RuntimeContext
 
@@ -8,6 +8,7 @@ from services.runtime_service import RuntimeContext
 def notify_healing_success(runtime_context: RuntimeContext, result: HealResult) -> None:
     runtime_context.tg_reporter.send(
         TelegramMessage(
+            type=TelegramNotificationType.HEALING_SUCCESS,
             level="INFO",
             title="战损自愈完成",
             body=(
@@ -32,6 +33,7 @@ def notify_healing_failure(
 ) -> None:
     runtime_context.tg_reporter.send(
         TelegramMessage(
+            type=TelegramNotificationType.HEALING_FAILURE,
             level="ERROR",
             title="战损自愈失败",
             body=(

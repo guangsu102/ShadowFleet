@@ -7,7 +7,7 @@ from pathlib import Path
 from database.connection import PostgresConnectionPool
 from database.sqlite_connection import SqliteConnectionManager
 from models.config_models import AppConfig
-from models.message_models import TelegramMessage
+from models.message_models import TelegramMessage, TelegramNotificationType
 from utils.config_parser import load_config, sanitize_config_for_logging
 from utils.logger import configure_logging, generate_correlation_id, set_correlation_id, set_event_type
 from utils.tg_reporter import TelegramReporter
@@ -114,8 +114,9 @@ def build_runtime_context(config_path: str | Path | None = None) -> RuntimeConte
     if reporter.enabled:
         reporter.send(
             TelegramMessage(
+                type=TelegramNotificationType.SYSTEM_STARTUP,
                 level="INFO",
-                title="ShadowFleet runtime initialized",
+                title="ShadowFleet 运行时已初始化",
                 body="Foundation runtime context is ready.",
             )
         )

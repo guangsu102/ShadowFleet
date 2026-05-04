@@ -87,7 +87,7 @@ class TelegramReporter:
 
     def _build_message_text(self, message: TelegramMessage) -> str:
         return (
-            f"{self._message_prefix} [{message.level}]\n"
+            f"{self._message_prefix} [{message.level}] [{message.type.value}]\n"
             f"{message.title}\n"
             f"{message.body}"
         )

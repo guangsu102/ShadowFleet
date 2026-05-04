@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from models.message_models import TelegramMessage, TelegramNotificationType
 from services.asset_selector_service import AssetSelectionResult
 from services.node_registry_service import NodeStateChangeResult
 from services.provisioning_models import ProvisionRequest
 from services.runtime_service import RuntimeContext
-from models.message_models import TelegramMessage
 
 
 def notify_success(
@@ -19,14 +19,15 @@ def notify_success(
 ) -> None:
     runtime_context.tg_reporter.send(
         TelegramMessage(
+            type=TelegramNotificationType.PROVISION_SUCCESS,
             level="INFO",
-            title="ShadowFleet provision succeeded",
+            title="节点开通成功",
             body=(
-                f"node={request.node_name} protocol={request.protocol_type} "
-                f"asset={selection_result.asset_name} region={selection_result.region or '-'} "
-                f"xboard_node_id={online_result.xboard_node_id} "
-                f"instance_id={instance_id or '-'} ipv6={ipv6_address or '-'} "
-                f"domain={domain_name or '-'} cf_record_id={cloudflare_record_id or '-'}"
+                f"节点名称={request.node_name} 协议={request.protocol_type} "
+                f"资产={selection_result.asset_name} 区域={selection_result.region or '-'} "
+                f"Xboard节点ID={online_result.xboard_node_id} "
+                f"实例ID={instance_id or '-'} IPv6={ipv6_address or '-'} "
+                f"域名={domain_name or '-'} Cloudflare记录ID={cloudflare_record_id or '-'}"
             ),
         )
     )
@@ -42,13 +43,14 @@ def notify_failure(
 ) -> None:
     runtime_context.tg_reporter.send(
         TelegramMessage(
+            type=TelegramNotificationType.PROVISION_FAILURE,
             level="ERROR",
-            title="ShadowFleet provision failed",
+            title="节点开通失败",
             body=(
-                f"node={request.node_name} protocol={request.protocol_type} "
-                f"asset={selection_result.asset_name} region={selection_result.region or '-'} "
-                f"xboard_node_id={xboard_node_id or '-'} instance_id={instance_id or '-'} "
-                f"error={error}"
+                f"节点名称={request.node_name} 协议={request.protocol_type} "
+                f"资产={selection_result.asset_name} 区域={selection_result.region or '-'} "
+                f"Xboard节点ID={xboard_node_id or '-'} 实例ID={instance_id or '-'} "
+                f"错误={error}"
             ),
         )
     )

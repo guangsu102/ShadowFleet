@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from models.message_models import TelegramMessage
+from models.message_models import TelegramMessage, TelegramNotificationType
 from services.runtime_service import RuntimeContext
 
 
@@ -15,6 +15,7 @@ def notify_account_abandoned(
 ) -> None:
     runtime_context.tg_reporter.send(
         TelegramMessage(
+            type=TelegramNotificationType.ACCOUNT_ABANDONED,
             level="CRITICAL",
             title="AWS账号封禁，已执行静默弃尸",
             body=(

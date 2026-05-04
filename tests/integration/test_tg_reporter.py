@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from telegram.error import TelegramError
 
-from models.message_models import TelegramMessage
+from models.message_models import TelegramMessage, TelegramNotificationType
 from utils.tg_reporter import TelegramReporter
 
 
@@ -34,24 +34,24 @@ def make_reporter(
 class TestTelegramReporterBasic:
     def test_disabled_returns_false(self) -> None:
         reporter = make_reporter(enabled=False)
-        message = TelegramMessage(level="INFO", title="t", body="b")
+        message = TelegramMessage(type=TelegramNotificationType.PROVISION_SUCCESS, level="INFO", title="t", body="b")
         assert reporter.send(message) is False
 
     def test_not_configured_returns_false(self) -> None:
         reporter = make_reporter(enabled=True, bot_token=None)
-        message = TelegramMessage(level="INFO", title="t", body="b")
+        message = TelegramMessage(type=TelegramNotificationType.PROVISION_SUCCESS, level="INFO", title="t", body="b")
         assert reporter.send(message) is False
 
     def test_missing_chat_id_returns_false(self) -> None:
         reporter = make_reporter(enabled=True, chat_id=None)
-        message = TelegramMessage(level="INFO", title="t", body="b")
+        message = TelegramMessage(type=TelegramNotificationType.PROVISION_SUCCESS, level="INFO", title="t", body="b")
         assert reporter.send(message) is False
 
     def test_message_format(self) -> None:
         reporter = make_reporter()
-        message = TelegramMessage(level="ERROR", title="title", body="line1\nline2")
+        message = TelegramMessage(type=TelegramNotificationType.PROVISION_SUCCESS, level="ERROR", title="title", body="line1\nline2")
         text = reporter._build_message_text(message)
-        assert "[ShadowFleet] [ERROR]" in text
+        assert "[ShadowFleet] [ERROR] [provision_success]" in text
         assert "title" in text
         assert "line1" in text
 
@@ -63,7 +63,7 @@ class TestTelegramReporterSend:
         reporter._bot.send_message = MagicMock(return_value=object())
         reporter._run_async = MagicMock(return_value=None)
 
-        message = TelegramMessage(level="INFO", title="ok", body="done")
+        message = TelegramMessage(type=TelegramNotificationType.PROVISION_SUCCESS, level="INFO", title="ok", body="done")
         result = reporter.send(message)
 
         assert result is True
@@ -87,7 +87,7 @@ class TestTelegramReporterSend:
             ]
         )
 
-        message = TelegramMessage(level="INFO", title="retry", body="body")
+        message = TelegramMessage(type=TelegramNotificationType.PROVISION_FAILURE, level="INFO", title="retry", body="body")
         result = reporter.send(message)
 
         assert result is True
@@ -100,7 +100,7 @@ class TestTelegramReporterSend:
         reporter._bot.send_message = MagicMock(return_value=object())
         reporter._run_async = MagicMock(side_effect=TelegramError("fail"))
 
-        message = TelegramMessage(level="ERROR", title="fail", body="body")
+        message = TelegramMessage(type=TelegramNotificationType.PROVISION_FAILURE, level="ERROR", title="fail", body="body")
         result = reporter.send(message)
 
         assert result is False
@@ -112,7 +112,7 @@ class TestTelegramReporterSend:
         reporter._bot.send_message = MagicMock(return_value=object())
         reporter._run_async = MagicMock(side_effect=RuntimeError("bridge"))
 
-        message = TelegramMessage(level="ERROR", title="runtime", body="body")
+        message = TelegramMessage(type=TelegramNotificationType.PROVISION_FAILURE, level="ERROR", title="runtime", body="body")
         result = reporter.send(message)
 
         assert result is False
@@ -124,7 +124,7 @@ class TestTelegramReporterSend:
         reporter._bot.send_message = MagicMock(return_value=object())
         reporter._run_async = MagicMock(side_effect=TelegramError("always fail"))
 
-        message = TelegramMessage(level="ERROR", title="backoff", body="body")
+        message = TelegramMessage(type=TelegramNotificationType.HEALING_FAILURE, level="ERROR", title="backoff", body="body")
         start = time.monotonic()
         reporter.send(message)
         elapsed = time.monotonic() - start

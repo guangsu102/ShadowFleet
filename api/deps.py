@@ -15,9 +15,9 @@ def get_runtime_context() -> RuntimeContext:
         set_event_type("api_initialized")
         _runtime_context.logger.info("API runtime context ready.")
         if _runtime_context.tg_reporter.enabled:
-            from models.message_models import TelegramMessage
+            from models.message_models import TelegramMessage, TelegramNotificationType
             _runtime_context.tg_reporter.send(
-                TelegramMessage(level="INFO", title="ShadowFleet API started", body="FastAPI backend is ready.")
+                TelegramMessage(type=TelegramNotificationType.SYSTEM_STARTUP, level="INFO", title="ShadowFleet API 已启动", body="FastAPI 后端已就绪。")
             )
     return _runtime_context
 

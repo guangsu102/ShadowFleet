@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from models.message_models import TelegramMessage
+from models.message_models import TelegramMessage, TelegramNotificationType
 from services.runtime_service import RuntimeContext
 
 
@@ -19,6 +19,7 @@ def notify_daemon_worker_cycle_failed(
 ) -> None:
     runtime_context.tg_reporter.send(
         TelegramMessage(
+            type=TelegramNotificationType.DAEMON_WORKER_FAILED,
             level="ERROR",
             title=f"守护进程 Worker 异常: {ctx.worker_name}",
             body=(
