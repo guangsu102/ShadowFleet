@@ -15,64 +15,107 @@ READY_CALLBACK_STATUS_LIST = "'pending', 'received', 'completed'"
 
 
 def ensure_schema(db_path: str) -> None:
-    """Create fleet_ready_callbacks table if it does not exist (for existing databases)."""
+    """Initialize the full ShadowFleet schema using the shared builder."""
     conn = sqlite3.connect(db_path)
     try:
-        tables = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='fleet_ready_callbacks'"
-        ).fetchone()
-        if tables:
-            print("fleet_ready_callbacks table already exists.")
-            return
+        from database.sqlite_connection import SqliteConnectionManager
 
-        print("Creating fleet_ready_callbacks table ...")
-        conn.execute(f"""
-            CREATE TABLE IF NOT EXISTS fleet_ready_callbacks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id INTEGER NOT NULL UNIQUE,
-                xboard_node_id INTEGER NOT NULL UNIQUE,
-                correlation_id TEXT NOT NULL,
-                callback_token TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL CHECK (status IN ({READY_CALLBACK_STATUS_LIST})),
-                payload_json TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                received_at TEXT,
-                completed_at TEXT,
-                FOREIGN KEY (task_id) REFERENCES fleet_provisioning_tasks(id) ON DELETE CASCADE
-            )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fleet_ready_callbacks_token_status ON fleet_ready_callbacks (callback_token, status)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fleet_ready_callbacks_task_status ON fleet_ready_callbacks (task_id, status)"
-        )
+        script = SqliteConnectionManager._build_schema_script()
+        for stmt in script.split(";"):
+            trimmed = stmt.strip()
+            if trimmed:
+                try:
+                    conn.executescript(trimmed)
+                except sqlite3.OperationalError:
+                    pass
         conn.commit()
-        print("fleet_ready_callbacks table created.")
+        print("Schema initialized (tables created if absent).")
+    except ImportError:
+        print("Warning: could not import SqliteConnectionManager, falling back to local schema.")
+        _ensure_local_schema(conn)
+        conn.commit()
     finally:
         conn.close()
 
 
+def _ensure_local_schema(conn: sqlite3.Connection) -> None:
+    """Minimal fallback schema for environments where sqlite_connection.py is not importable."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS fleet_provisioning_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_type TEXT NOT NULL CHECK (task_type IN ('provision_node')),
+            status TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed')),
+            correlation_id TEXT NOT NULL,
+            request_payload_json TEXT NOT NULL,
+            result_payload_json TEXT,
+            last_error TEXT,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 1,
+            locked_by TEXT,
+            locked_at TEXT,
+            next_run_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_fleet_provisioning_tasks_status_next_run_at
+            ON fleet_provisioning_tasks (status, next_run_at);
+        CREATE INDEX IF NOT EXISTS idx_fleet_provisioning_tasks_correlation_id
+            ON fleet_provisioning_tasks (correlation_id);
+        CREATE INDEX IF NOT EXISTS idx_fleet_provisioning_tasks_created_at
+            ON fleet_provisioning_tasks (created_at);
+
+        CREATE TABLE IF NOT EXISTS fleet_ready_callbacks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL UNIQUE,
+            xboard_node_id INTEGER NOT NULL UNIQUE,
+            correlation_id TEXT NOT NULL,
+            callback_token TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'received', 'completed')),
+            payload_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            received_at TEXT,
+            completed_at TEXT,
+            FOREIGN KEY (task_id) REFERENCES fleet_provisioning_tasks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_fleet_ready_callbacks_token_status
+            ON fleet_ready_callbacks (callback_token, status);
+        CREATE INDEX IF NOT EXISTS idx_fleet_ready_callbacks_task_status
+            ON fleet_ready_callbacks (task_id, status);
+    """)
+
+
 def insert_test_callback(db_path: str) -> str | None:
-    """Insert a dummy pending callback record and return its token. Returns None if task_id 1 does not exist."""
+    """Insert a dummy pending callback record and return its token.
+    Creates a placeholder provisioning task if none exists so the FK constraint is satisfied."""
     conn = sqlite3.connect(db_path)
     try:
-        exists = conn.execute(
-            "SELECT id FROM fleet_provisioning_tasks WHERE id = 1"
-        ).fetchone()
-        if not exists:
-            print("fleet_provisioning_tasks table empty or task_id=1 missing, skipping auto-insert.")
-            return None
+        now_expr = "datetime('now')"
+        row = conn.execute("SELECT id FROM fleet_provisioning_tasks WHERE id = 1").fetchone()
+        if not row:
+            conn.execute(f"""
+                INSERT INTO fleet_provisioning_tasks
+                    (task_type, status, correlation_id, request_payload_json,
+                     attempt_count, max_attempts, next_run_at, created_at, updated_at)
+                VALUES
+                    ('provision_node', 'running', 'python-test-callback-corr', '{{}}',
+                     0, 1, {now_expr}, {now_expr}, {now_expr})
+            """)
+            conn.commit()
+            row = conn.execute("SELECT id FROM fleet_provisioning_tasks WHERE id = 1").fetchone()
+            if not row:
+                print("Failed to create a placeholder provisioning task.")
+                return None
 
         import secrets
         token = secrets.token_urlsafe(24)
-        now = "datetime('now')"
         conn.execute(f"""
             INSERT INTO fleet_ready_callbacks
                 (task_id, xboard_node_id, correlation_id, callback_token, status, created_at, updated_at)
             VALUES
-                (1, 1, 'python-test-correlation', ?, 'pending', {now}, {now})
+                (1, 1, 'python-test-correlation', ?, 'pending', {now_expr}, {now_expr})
         """, (token,))
         conn.commit()
         print(f"Inserted test callback record with task_id=1, token={token}")
