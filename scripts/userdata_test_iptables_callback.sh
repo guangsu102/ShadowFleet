@@ -116,7 +116,8 @@ wait_for_debconf_lock() {
   local waited=0
   while fuser /var/cache/debconf/config.dat >/dev/null 2>&1; do
     if [ "$waited" -ge 30 ]; then
-      return 1
+      log "[TEST] debconf lock still held after 30s, will try to proceed anyway"
+      return 0
     fi
     sleep 1
     waited=$((waited + 1))
@@ -125,15 +126,18 @@ wait_for_debconf_lock() {
 }
 
 log "[TEST] Waiting for debconf lock to be released"
-if ! wait_for_debconf_lock; then
-  log "[TEST] debconf lock timed out, continuing anyway"
-fi
+wait_for_debconf_lock
 
 log "[TEST] Pre-setting debconf answers for iptables-persistent"
-sudo debconf-set-selections <<'EOF_DEBCONF'
+for _ in 1 2 3; do
+  (sudo debconf-set-selections <<'EOF_DEBCONF'
 iptables-persistent iptables-persistent/autosave_v4 boolean true
 iptables-persistent iptables-persistent/autosave_v6 boolean true
 EOF_DEBCONF
+) && break
+  log "[TEST] debconf locked, retrying in 2 seconds"
+  sleep 2
+done
 
 log "[TEST] Installing Nginx reverse proxy for AnyTLS passthrough"
 sudo apt-get update -y
@@ -157,7 +161,8 @@ stream {
 EOF_NGINX
 sudo ln -sf /etc/nginx/sites-available/v2bx-node-1.conf /etc/nginx/sites-enabled/v2bx-node-1.conf
 sudo ln -sf /etc/nginx/sites-available/v2bx-base-stream.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
-sudo nginx -t && sudo systemctl reload nginx
+sudo nginx -t 2>&1 | tee /dev/stderr || true
+sudo systemctl reload nginx 2>/dev/null || sudo systemctl restart nginx 2>/dev/null || true
 
 log "[TEST] Configuring iptables connection limit (500 conn/IP on port 443)"
 # --- Base iptables rules (idempotent, first-run only) ---
