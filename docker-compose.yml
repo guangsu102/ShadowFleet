@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ---------------------------------------------------------------------------
   # ShadowFleet API + Frontend (FastAPI serves Vue SPA static files)
