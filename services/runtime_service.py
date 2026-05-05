@@ -112,12 +112,15 @@ def build_runtime_context(config_path: str | Path | None = None) -> RuntimeConte
     logger.info("Runtime context initialized successfully.")
 
     if reporter.enabled:
-        reporter.send(
-            TelegramMessage(
-                type=TelegramNotificationType.SYSTEM_STARTUP,
-                level="INFO",
-                title="ShadowFleet 运行时已初始化",
-                body="Foundation runtime context is ready.",
+        try:
+            reporter.send(
+                TelegramMessage(
+                    type=TelegramNotificationType.SYSTEM_STARTUP,
+                    level="INFO",
+                    title="ShadowFleet 运行时已初始化",
+                    body="Foundation runtime context is ready.",
+                )
             )
-        )
+        except Exception:
+            logger.exception("Failed to send Telegram startup notification.")
     return runtime_context

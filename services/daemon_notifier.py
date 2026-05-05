@@ -17,15 +17,18 @@ def notify_daemon_worker_cycle_failed(
     runtime_context: RuntimeContext,
     ctx: DaemonWorkerAlertContext,
 ) -> None:
-    runtime_context.tg_reporter.send(
-        TelegramMessage(
-            type=TelegramNotificationType.DAEMON_WORKER_FAILED,
-            level="ERROR",
-            title=f"守护进程 Worker 异常: {ctx.worker_name}",
-            body=(
-                f"Worker={ctx.worker_name} 周期执行失败 "
-                f"错误={ctx.error_message} "
-                f"Correlation-ID={ctx.correlation_id}"
-            ),
+    try:
+        runtime_context.tg_reporter.send(
+            TelegramMessage(
+                type=TelegramNotificationType.DAEMON_WORKER_FAILED,
+                level="ERROR",
+                title=f"守护进程 Worker 异常: {ctx.worker_name}",
+                body=(
+                    f"Worker={ctx.worker_name} 周期执行失败 "
+                    f"错误={ctx.error_message} "
+                    f"Correlation-ID={ctx.correlation_id}"
+                ),
+            )
         )
-    )
+    except Exception:
+        runtime_context.logger.exception("Failed to send Telegram notification for daemon worker failure.")

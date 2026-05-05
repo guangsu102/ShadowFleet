@@ -17,20 +17,23 @@ def notify_success(
     domain_name: str | None,
     cloudflare_record_id: str | None,
 ) -> None:
-    runtime_context.tg_reporter.send(
-        TelegramMessage(
-            type=TelegramNotificationType.PROVISION_SUCCESS,
-            level="INFO",
-            title="节点开通成功",
-            body=(
-                f"节点名称={request.node_name} 协议={request.protocol_type} "
-                f"资产={selection_result.asset_name} 区域={selection_result.region or '-'} "
-                f"Xboard节点ID={online_result.xboard_node_id} "
-                f"实例ID={instance_id or '-'} IPv6={ipv6_address or '-'} "
-                f"域名={domain_name or '-'} Cloudflare记录ID={cloudflare_record_id or '-'}"
-            ),
+    try:
+        runtime_context.tg_reporter.send(
+            TelegramMessage(
+                type=TelegramNotificationType.PROVISION_SUCCESS,
+                level="INFO",
+                title="节点开通成功",
+                body=(
+                    f"节点名称={request.node_name} 协议={request.protocol_type} "
+                    f"资产={selection_result.asset_name} 区域={selection_result.region or '-'} "
+                    f"Xboard节点ID={online_result.xboard_node_id} "
+                    f"实例ID={instance_id or '-'} IPv6={ipv6_address or '-'} "
+                    f"域名={domain_name or '-'} Cloudflare记录ID={cloudflare_record_id or '-'}"
+                ),
+            )
         )
-    )
+    except Exception:
+        runtime_context.logger.exception("Failed to send Telegram notification for provision success.")
 
 
 def notify_failure(
@@ -41,16 +44,19 @@ def notify_failure(
     instance_id: str | None,
     xboard_node_id: int | None,
 ) -> None:
-    runtime_context.tg_reporter.send(
-        TelegramMessage(
-            type=TelegramNotificationType.PROVISION_FAILURE,
-            level="ERROR",
-            title="节点开通失败",
-            body=(
-                f"节点名称={request.node_name} 协议={request.protocol_type} "
-                f"资产={selection_result.asset_name} 区域={selection_result.region or '-'} "
-                f"Xboard节点ID={xboard_node_id or '-'} 实例ID={instance_id or '-'} "
-                f"错误={error}"
-            ),
+    try:
+        runtime_context.tg_reporter.send(
+            TelegramMessage(
+                type=TelegramNotificationType.PROVISION_FAILURE,
+                level="ERROR",
+                title="节点开通失败",
+                body=(
+                    f"节点名称={request.node_name} 协议={request.protocol_type} "
+                    f"资产={selection_result.asset_name} 区域={selection_result.region or '-'} "
+                    f"Xboard节点ID={xboard_node_id or '-'} 实例ID={instance_id or '-'} "
+                    f"错误={error}"
+                ),
+            )
         )
-    )
+    except Exception:
+        runtime_context.logger.exception("Failed to send Telegram notification for provision failure.")
