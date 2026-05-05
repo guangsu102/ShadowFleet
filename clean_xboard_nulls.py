@@ -9,15 +9,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import psycopg2
 
+# Xboard PostgreSQL 连接配置（从 config.yaml 读取）
+XBOARD_CONFIG = {
+    "host": "137.175.65.47",
+    "port": 5432,
+    "database": "xboard",
+    "user": "tanxuan",
+    "password": "tanxuan1993",
+    "sslmode": "prefer",
+}
+
 
 def main():
-    conn = psycopg2.connect(
-        host="localhost",
-        port=5432,
-        database="xboard",
-        user="xboard",
-        password="your_password_here",  # <-- 改成你的实际密码
-    )
+    conn = psycopg2.connect(**XBOARD_CONFIG)
     cursor = conn.cursor()
 
     # 先预览脏数据
