@@ -1,23 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-# Kill any residual apt/dpkg/debconf processes from the first run (V2bX install) to release locks
-for pid in $(pgrep -f "apt-get|dpkg|debconf" 2>/dev/null); do
-  sudo kill -9 "$pid" 2>/dev/null || true
-done
-sleep 1
-# Remove stale locks
-sudo rm -f /var/cache/debconf/*.dat.lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
-sudo rm -f /var/lib/dpkg/lock-frontend.stamp /var/lib/dpkg/lock.stamp 2>/dev/null || true
-
-# Pre-set debconf answers BEFORE dpkg --configure -a so iptables-persistent postinst won't prompt
-for _ in 1 2 3; do
-  (sudo debconf-set-selections <<'EOF_DEBCONF' 2>/dev/null && break) || sleep 2
-done
-
-# Reconfigure dpkg in case it was interrupted (iptables-persistent postinst will use pre-set answers now)
-sudo dpkg --configure -a 2>/dev/null || true
-
 LOGFILE="/var/log/shadowfleet-user-data.log"
 if [ -w "$LOGFILE" ] || [ -w "$(dirname "$LOGFILE")" ]; then
   exec > >(sudo tee -a "$LOGFILE" >/dev/null) 2>&1
@@ -98,75 +81,155 @@ ensure_command() {
   exit 1
 }
 
-# --- SKIP: V2bX install (already installed on EC2) ---
-# ensure_command curl
-# ensure_command tee
-# log "Downloading V2bX install script"
-# ... (full install block skipped)
-
-# --- SKIP: V2bX config write (already configured) ---
-# log "Writing V2bX config"
-# sudo mkdir -p /etc/V2bX
-# sudo tee /etc/V2bX/config.json >/dev/null <<'EOF_V2BX_CONFIG'
-# ... (config JSON skipped)
-
-# --- SKIP: sing origin config write ---
-# log "Writing V2bX sing origin config"
-# sudo tee /etc/V2bX/sing_origin.json >/dev/null <<'EOF_V2BX_SING_ORIGIN'
-# ... (sing origin JSON skipped)
-
-# --- SKIP: V2bX service restart ---
-# log "Restarting V2bX service"
-# sudo systemctl daemon-reload || true
-# sudo systemctl enable V2bX
-# sudo systemctl restart V2bX
-# sleep 3
-# sudo systemctl is-active --quiet V2bX
-
 # ============================================
-# TEST SECTION: Nginx + iptables + Callback
+# V2bX Bootstrap (full production flow)
 # ============================================
 
-log "[TEST] Starting Nginx + iptables + callback test"
+log "[TEST] V2bX bootstrap started"
 
-wait_for_debconf_lock() {
-  local waited=0
-  while fuser /var/cache/debconf/config.dat >/dev/null 2>&1; do
-    if [ "$waited" -ge 30 ]; then
-      log "[TEST] debconf lock still held after 30s, will try to proceed anyway"
-      return 0
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
-  return 0
+log "Downloading V2bX install script"
+DAEMON_ARTIFACT_BASE_URL=""
+DAEMON_INSTALL_SCRIPT_URL=""
+
+if [ -n "${DAEMON_ARTIFACT_BASE_URL}" ]; then
+  curl -fsSL "${DAEMON_INSTALL_SCRIPT_URL}" -o "${INSTALL_SCRIPT_PATH}"
+  sed -i 's|https://github.com/wyx2685/V2bX/releases/download|'"${DAEMON_ARTIFACT_BASE_URL}"'/releases|g' "${INSTALL_SCRIPT_PATH}"
+  sed -i 's|https://raw.githubusercontent.com/wyx2685/V2bX-script/master|'"${DAEMON_ARTIFACT_BASE_URL}"'/raw|g' "${INSTALL_SCRIPT_PATH}"
+  sed -i 's|^[[:space:]]*last_version=\$(curl -Ls "[^"]*api\.github\.com[^"]*latest[^"]*")[^;]*|last_version=""|' "${INSTALL_SCRIPT_PATH}"
+else
+  curl -fsSL "https://raw.githubusercontent.com/wyx2685/V2bX-script/master/install.sh" -o "${INSTALL_SCRIPT_PATH}"
+fi
+chmod +x "${INSTALL_SCRIPT_PATH}"
+
+log "Installing V2bX"
+printf 'n\n' | sudo bash "${INSTALL_SCRIPT_PATH}"
+
+log "Writing V2bX config"
+sudo mkdir -p /etc/V2bX
+sudo tee /etc/V2bX/config.json >/dev/null <<'EOF_V2BX_CONFIG'
+{
+  "Log": {
+    "Level": "error",
+    "Output": ""
+  },
+  "Cores": [
+    {
+      "Type": "sing",
+      "Name": "shadowfleet-sing",
+      "Log": {
+        "Level": "error",
+        "Timestamp": true
+      },
+      "NTP": {
+        "Enable": false,
+        "Server": "time.apple.com",
+        "ServerPort": 0
+      },
+      "OriginalPath": "/etc/V2bX/sing_origin.json"
+    }
+  ],
+  "Nodes": [
+    {
+      "Name": "test-ec2-node",
+      "Core": "sing",
+      "CoreName": "shadowfleet-sing",
+      "ApiHost": "http://10.112.1.88:8787",
+      "ApiKey": "sk_test_key",
+      "NodeID": 1,
+      "NodeType": "anytls",
+      "Timeout": 30,
+      "ListenIP": "::",
+      "SendIP": "::",
+      "ListenPort": 5105,
+      "DeviceOnlineMinTraffic": 100,
+      "MinReportTraffic": 0,
+      "EnableTFO": false,
+      "CertConfig": {
+        "CertMode": "none",
+        "RejectUnknownSni": false,
+        "CertDomain": "",
+        "CertFile": "/etc/V2bX/cert/node.pem",
+        "KeyFile": "/etc/V2bX/cert/node.key"
+      },
+      "MultiplexConfig": {
+        "Enable": true,
+        "Padding": true,
+        "Brutal": {
+          "Enable": false,
+          "UpMbps": 0,
+          "DownMbps": 0
+        }
+      }
+    }
+  ]
 }
+EOF_V2BX_CONFIG
 
-wait_for_dpkg_lock() {
-  local waited=0
-  while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
-    if [ "$waited" -ge 60 ]; then
-      log "[TEST] dpkg lock still held after 60s, will try to proceed anyway"
-      return 1
-    fi
-    log "[TEST] dpkg lock held by another process, waiting..."
-    sleep 2
-    waited=$((waited + 2))
-  done
-  return 0
+log "Writing V2bX sing origin config"
+sudo tee /etc/V2bX/sing_origin.json >/dev/null <<'EOF_V2BX_SING_ORIGIN'
+{
+  "dns": {
+    "servers": [
+      {
+        "tag": "cf",
+        "address": "1.1.1.1"
+      }
+    ],
+    "strategy": "prefer_ipv6"
+  },
+  "outbounds": [
+    {
+      "tag": "direct",
+      "type": "direct",
+      "domain_resolver": {
+        "server": "cf",
+        "strategy": "prefer_ipv6"
+      }
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "ip_is_private": true,
+        "outbound": "block"
+      },
+      {
+        "outbound": "direct",
+        "network": [
+          "udp",
+          "tcp"
+        ]
+      }
+    ]
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    }
+  }
 }
+EOF_V2BX_SING_ORIGIN
 
-log "[TEST] Waiting for debconf lock to be released"
-wait_for_debconf_lock
+log "Restarting V2bX service"
+sudo systemctl daemon-reload || true
+sudo systemctl enable V2bX
+sudo systemctl restart V2bX
+sleep 3
+sudo systemctl is-active --quiet V2bX
 
-log "[TEST] Installing Nginx reverse proxy for AnyTLS passthrough"
-log "[TEST] Waiting for dpkg lock to be released"
-wait_for_dpkg_lock
+# ============================================
+# Nginx reverse proxy (AnyTLS passthrough)
+# ============================================
 
+log "Installing Nginx reverse proxy for AnyTLS passthrough"
 sudo apt-get update -y || true
 sudo apt-get install -y nginx
 
-# --- AnyTLS Nginx config for node 1 (port 5105) ---
+# AnyTLS Nginx config for node 1 (port 5105)
 sudo tee /etc/nginx/sites-available/v2bx-node-1.conf >/dev/null <<'EOF_NGINX'
 stream {
     upstream v2bx_backend_1 {
@@ -184,11 +247,14 @@ stream {
 EOF_NGINX
 sudo ln -sf /etc/nginx/sites-available/v2bx-node-1.conf /etc/nginx/sites-enabled/v2bx-node-1.conf
 sudo ln -sf /etc/nginx/sites-available/v2bx-base-stream.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
-sudo nginx -t 2>&1 | tee /dev/stderr || true
-sudo systemctl reload nginx 2>/dev/null || sudo systemctl restart nginx 2>/dev/null || true
+sudo nginx -t && sudo systemctl reload nginx
 
-log "[TEST] Configuring iptables connection limit (500 conn/IP on port 443)"
-# --- Base iptables rules (idempotent, first-run only) ---
+# ============================================
+# iptables connlimit (idempotent, no iptables-persistent)
+# ============================================
+
+log "Configuring iptables connection limit (500 conn/IP on port 443)"
+# --- Base iptables rules (idempotent) ---
 sudo iptables -C INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 sudo iptables -C INPUT -i lo -j ACCEPT 2>/dev/null || sudo iptables -A INPUT -i lo -j ACCEPT
 sudo iptables -C INPUT -p icmp -j ACCEPT 2>/dev/null || sudo iptables -A INPUT -p icmp -j ACCEPT
@@ -196,9 +262,10 @@ sudo iptables -C INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || sudo iptables 
 sudo iptables -C INPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
 sudo iptables -C INPUT -p udp --dport 67 -j ACCEPT 2>/dev/null || sudo iptables -A INPUT -p udp --dport 67 -j ACCEPT
 sudo iptables -C INPUT -j DROP 2>/dev/null || sudo iptables -A INPUT -j DROP
+# Connlimit rules for port 443 (idempotent)
 sudo iptables -C INPUT -p tcp --syn --dport 443 -m connlimit --connlimit-above 500 --connlimit-mask 32 -j DROP 2>/dev/null || sudo iptables -A INPUT -p tcp --syn --dport 443 -m connlimit --connlimit-above 500 --connlimit-mask 32 -j DROP
 sudo iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || sudo iptables -A INPUT -p tcp --dport 443 -j ACCEPT
-sudo netfilter-persistent save 2>/dev/null || true
+# IPv6 connlimit rules for port 443 (idempotent)
 sudo ip6tables -C INPUT -p tcp --syn --dport 443 -m connlimit --connlimit-above 500 --connlimit-mask 128 -j DROP 2>/dev/null || sudo ip6tables -A INPUT -p tcp --syn --dport 443 -m connlimit --connlimit-above 500 --connlimit-mask 128 -j DROP
 sudo ip6tables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || sudo ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
 

@@ -353,7 +353,6 @@ def _build_connlimit_block(
         "|| sudo iptables -A INPUT -p tcp --dport "
         f"{port}"
         " -j ACCEPT\n"
-        "sudo netfilter-persistent save 2>/dev/null || true\n"
         # IPv6 connlimit
         "sudo ip6tables -C INPUT -p tcp --syn --dport "
         f"{port}"
@@ -426,27 +425,12 @@ def _build_security_hardening_block(
     if capabilities.requires_nginx_stream:
         parts.append(
             'log "Installing Nginx reverse proxy for AnyTLS passthrough"\n'
-            "while fuser /var/cache/debconf/config.dat >/dev/null 2>&1; do sleep 1; done\n"
-            "sudo debconf-set-selections <<'EOF_DEBCONF'\n"
-            "iptables-persistent iptables-persistent/autosave_v4 boolean true\n"
-            "iptables-persistent iptables-persistent/autosave_v6 boolean true\n"
-            "EOF_DEBCONF\n"
             "sudo apt-get update -y\n"
-            "sudo apt-get install -y nginx iptables-persistent\n"
+            "sudo apt-get install -y nginx\n"
             + _build_nginx_stream_block(request.nginx_internal_port, request.xboard_node_id)
         )
 
     if capabilities.connlimit_port is not None:
-        if not capabilities.requires_nginx_stream:
-            parts.append(
-                "while fuser /var/cache/debconf/config.dat >/dev/null 2>&1; do sleep 1; done\n"
-                "sudo debconf-set-selections <<'EOF_DEBCONF'\n"
-                "iptables-persistent iptables-persistent/autosave_v4 boolean true\n"
-                "iptables-persistent iptables-persistent/autosave_v6 boolean true\n"
-                "EOF_DEBCONF\n"
-                "sudo apt-get update -y\n"
-                "sudo apt-get install -y iptables-persistent\n"
-            )
         parts.append(
             'log "Configuring iptables connection limit (500 conn/IP on port '
             f"{capabilities.connlimit_port}"
