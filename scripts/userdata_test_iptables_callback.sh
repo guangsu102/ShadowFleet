@@ -1,6 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
+# Kill any residual apt/dpkg/debconf processes from the first run (V2bX install) to release locks
+for pid in $(pgrep -f "apt-get|dpkg|debconf" 2>/dev/null); do
+  sudo kill -9 "$pid" 2>/dev/null || true
+done
+sleep 1
+# Remove stale locks
+sudo rm -f /var/cache/debconf/*.dat.lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
+sudo rm -f /var/lib/dpkg/lock-frontend.stamp /var/lib/dpkg/lock.stamp 2>/dev/null || true
+# Reconfigure dpkg in case it was interrupted
+sudo dpkg --configure -a 2>/dev/null || true
+
 LOGFILE="/var/log/shadowfleet-user-data.log"
 if [ -w "$LOGFILE" ] || [ -w "$(dirname "$LOGFILE")" ]; then
   exec > >(sudo tee -a "$LOGFILE" >/dev/null) 2>&1
