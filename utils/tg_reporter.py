@@ -93,30 +93,14 @@ class TelegramReporter:
         )
 
     def _run_async(self, coroutine: Coroutine[Any, Any, Any]) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
+        def _run_in_thread() -> None:
             loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
                 loop.run_until_complete(coroutine)
             finally:
                 loop.close()
-            return
 
-        done_event = threading.Event()
-        error_holder: list[BaseException] = []
-
-        async def _wrapper() -> None:
-            nonlocal error_holder
-            try:
-                result = await coroutine
-            except BaseException as exc:
-                error_holder.append(exc)
-            finally:
-                done_event.set()
-
-        loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_wrapper(), loop=loop))
-        done_event.wait()
-
-        if error_holder:
-            raise error_holder[0]
+        thread = threading.Thread(target=_run_in_thread, daemon=True)
+        thread.start()
+        thread.join()
