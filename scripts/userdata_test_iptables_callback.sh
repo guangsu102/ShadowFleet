@@ -164,7 +164,7 @@ log "[TEST] Waiting for dpkg lock to be released"
 wait_for_dpkg_lock
 
 sudo apt-get update -y || true
-sudo apt-get install -y nginx iptables-persistent || true
+sudo apt-get install -y nginx
 
 # --- AnyTLS Nginx config for node 1 (port 5105) ---
 sudo tee /etc/nginx/sites-available/v2bx-node-1.conf >/dev/null <<'EOF_NGINX'
