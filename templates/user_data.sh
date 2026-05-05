@@ -37,7 +37,8 @@ EOF_CALLBACK
 )
 
   for attempt in 1 2 3 4 5 6; do
-    if curl -fsS \
+    # Use -k to skip SSL certificate verification for self-signed certs
+    if curl -fsSk \
       -X POST \
       -H "Content-Type: application/json" \
       --connect-timeout 5 \

@@ -375,31 +375,55 @@ def _build_nginx_stream_block(
 ) -> str:
     """Generate Nginx per-node stream config for AnyTLS passthrough.
     Uses a unique file per node to support multiple AnyTLS nodes on same machine.
+    Nginx stream configs MUST go in /etc/nginx/conf.d/ (not sites-available/).
+    NOTE: Debian's default nginx package does NOT include stream module.
+          Must install nginx-full and add load_module directive to nginx.conf.
     """
     safe_node_id = str(node_id)
-    node_config_path = f"/etc/nginx/sites-available/v2bx-node-{safe_node_id}.conf"
-    node_enabled_path = f"/etc/nginx/sites-enabled/v2bx-node-{safe_node_id}.conf"
-    return (
-        f"# --- AnyTLS Nginx config for node {safe_node_id} (port {nginx_internal_port}) ---\n"
-        f"sudo tee {node_config_path} >/dev/null <<'EOF_NGINX'\n"
+    # Stream configs must be in conf.d/ with .conf extension for nginx to load them
+    stream_config_path = f"/etc/nginx/conf.d/v2bx-stream-{safe_node_id}.conf"
+
+    # Build nginx stream config
+    nginx_template = (
+        "# AnyTLS stream proxy for node {node_id}\n"
         "stream {{\n"
-        "    upstream v2bx_backend_{nid} {{\n"
-        "        server 127.0.0.1:{port};\n"
+        "    upstream v2bx_backend_{node_id} {{\n"
+        "        server 127.0.0.1:{internal_port};\n"
         "    }}\n"
         "    server {{\n"
         "        listen 443;\n"
-        f"        # node_{safe_node_id} backend\n"
-        "        proxy_pass v2bx_backend_{nid};\n"
+        "        proxy_pass v2bx_backend_{node_id};\n"
         "        proxy_protocol off;\n"
         "        proxy_timeout 300s;\n"
         "        proxy_connect_timeout 10s;\n"
         "    }}\n"
         "}}\n"
+    ).format(node_id=safe_node_id, internal_port=nginx_internal_port)
+
+    # Load module directive - must be at top of nginx.conf, before any other directives
+    # Use a separate file in /etc/nginx/modules-enabled/ for clean modularity
+    stream_load_module_conf = "/etc/nginx/modules-enabled/99-stream.conf"
+
+    return (
+        f'log "Installing Nginx reverse proxy for AnyTLS passthrough"\n'
+        "sudo apt-get update -y\n"
+        # nginx-full includes stream module; basic nginx does NOT
+        "sudo apt-get install -y nginx-full\n"
+        # Enable stream module (required for nginx stream directive)
+        # Debian: load_module must be at top level, before 'events' block
+        f"sudo tee {stream_load_module_conf} >/dev/null <<'EOF_LOAD_MODULE'\n"
+        "load_module modules/ngx_stream_module.so;\n"
+        "EOF_LOAD_MODULE\n"
+        # Ensure conf.d directory exists
+        "sudo mkdir -p /etc/nginx/conf.d\n"
+        # Write stream config (idempotent: overwrite on each run)
+        f"sudo tee {stream_config_path} >/dev/null <<'EOF_NGINX'\n"
+        f"{nginx_template}"
         "EOF_NGINX\n"
-        f"sudo ln -sf {node_config_path} {node_enabled_path}\n"
-        f"sudo ln -sf /etc/nginx/sites-available/v2bx-base-stream.conf /etc/nginx/sites-enabled/ 2>/dev/null || true\n"
-        "sudo nginx -t && sudo systemctl reload nginx\n"
-    ).format(nid=safe_node_id, port=nginx_internal_port)
+        # Test and reload nginx (start if not running)
+        "sudo nginx -t && sudo systemctl enable nginx 2>/dev/null || true\n"
+        "sudo systemctl reload nginx || sudo systemctl start nginx\n"
+    )
 
 
 def _build_nginx_base_stream_config() -> str:
@@ -423,12 +447,8 @@ def _build_security_hardening_block(
     parts: list[str] = []
 
     if capabilities.requires_nginx_stream:
-        parts.append(
-            'log "Installing Nginx reverse proxy for AnyTLS passthrough"\n'
-            "sudo apt-get update -y\n"
-            "sudo apt-get install -y nginx\n"
-            + _build_nginx_stream_block(request.nginx_internal_port, request.xboard_node_id)
-        )
+        # _build_nginx_stream_block includes: apt-get install nginx + config + nginx reload
+        parts.append(_build_nginx_stream_block(request.nginx_internal_port, request.xboard_node_id))
 
     if capabilities.connlimit_port is not None:
         parts.append(
