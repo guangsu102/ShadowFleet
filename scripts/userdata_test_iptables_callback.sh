@@ -9,7 +9,13 @@ sleep 1
 # Remove stale locks
 sudo rm -f /var/cache/debconf/*.dat.lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
 sudo rm -f /var/lib/dpkg/lock-frontend.stamp /var/lib/dpkg/lock.stamp 2>/dev/null || true
-# Reconfigure dpkg in case it was interrupted
+
+# Pre-set debconf answers BEFORE dpkg --configure -a so iptables-persistent postinst won't prompt
+for _ in 1 2 3; do
+  (sudo debconf-set-selections <<'EOF_DEBCONF' 2>/dev/null && break) || sleep 2
+done
+
+# Reconfigure dpkg in case it was interrupted (iptables-persistent postinst will use pre-set answers now)
 sudo dpkg --configure -a 2>/dev/null || true
 
 LOGFILE="/var/log/shadowfleet-user-data.log"
@@ -152,17 +158,6 @@ wait_for_dpkg_lock() {
 
 log "[TEST] Waiting for debconf lock to be released"
 wait_for_debconf_lock
-
-log "[TEST] Pre-setting debconf answers for iptables-persistent"
-for _ in 1 2 3; do
-  (sudo debconf-set-selections <<'EOF_DEBCONF'
-iptables-persistent iptables-persistent/autosave_v4 boolean true
-iptables-persistent iptables-persistent/autosave_v6 boolean true
-EOF_DEBCONF
-) && break
-  log "[TEST] debconf locked, retrying in 2 seconds"
-  sleep 2
-done
 
 log "[TEST] Installing Nginx reverse proxy for AnyTLS passthrough"
 log "[TEST] Waiting for dpkg lock to be released"
