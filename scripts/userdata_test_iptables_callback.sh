@@ -125,6 +125,20 @@ wait_for_debconf_lock() {
   return 0
 }
 
+wait_for_dpkg_lock() {
+  local waited=0
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+    if [ "$waited" -ge 60 ]; then
+      log "[TEST] dpkg lock still held after 60s, will try to proceed anyway"
+      return 1
+    fi
+    log "[TEST] dpkg lock held by another process, waiting..."
+    sleep 2
+    waited=$((waited + 2))
+  done
+  return 0
+}
+
 log "[TEST] Waiting for debconf lock to be released"
 wait_for_debconf_lock
 
@@ -140,8 +154,11 @@ EOF_DEBCONF
 done
 
 log "[TEST] Installing Nginx reverse proxy for AnyTLS passthrough"
-sudo apt-get update -y
-sudo apt-get install -y nginx iptables-persistent
+log "[TEST] Waiting for dpkg lock to be released"
+wait_for_dpkg_lock
+
+sudo apt-get update -y || true
+sudo apt-get install -y nginx iptables-persistent || true
 
 # --- AnyTLS Nginx config for node 1 (port 5105) ---
 sudo tee /etc/nginx/sites-available/v2bx-node-1.conf >/dev/null <<'EOF_NGINX'
