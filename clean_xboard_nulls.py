@@ -29,8 +29,8 @@ def main():
     cursor.execute("""
         SELECT id, name, group_ids, route_ids, tags, protocol_settings, rate_time_ranges
         FROM public.v2_server
-        WHERE group_ids IS NULL OR group_ids = ''
-           OR route_ids IS NULL OR route_ids = ''
+        WHERE group_ids IS NULL
+           OR route_ids IS NULL
            OR tags IS NULL
            OR protocol_settings IS NULL
            OR rate_time_ranges IS NULL
@@ -51,8 +51,8 @@ def main():
         FROM public.v2_server
         WHERE name LIKE 'sf-%'
           AND (
-              group_ids IS NULL OR group_ids = ''
-           OR route_ids IS NULL OR route_ids = ''
+              group_ids IS NULL
+           OR route_ids IS NULL
            OR tags IS NULL
            OR protocol_settings IS NULL
            OR rate_time_ranges IS NULL
@@ -71,23 +71,23 @@ def main():
     print("\n=== 执行清理 ===")
     cursor.execute("""
         UPDATE public.v2_server
-        SET group_ids = '[]'
-        WHERE (group_ids IS NULL OR group_ids = '')
+        SET group_ids = '[]'::jsonb
+        WHERE group_ids IS NULL
           AND name LIKE 'sf-%'
     """)
     print(f"  group_ids 已修复: {cursor.rowcount} 行")
 
     cursor.execute("""
         UPDATE public.v2_server
-        SET route_ids = '[]'
-        WHERE (route_ids IS NULL OR route_ids = '')
+        SET route_ids = '[]'::jsonb
+        WHERE route_ids IS NULL
           AND name LIKE 'sf-%'
     """)
     print(f"  route_ids 已修复: {cursor.rowcount} 行")
 
     cursor.execute("""
         UPDATE public.v2_server
-        SET tags = '[]'
+        SET tags = '[]'::jsonb
         WHERE tags IS NULL
           AND name LIKE 'sf-%'
     """)
@@ -95,7 +95,7 @@ def main():
 
     cursor.execute("""
         UPDATE public.v2_server
-        SET protocol_settings = '{}'
+        SET protocol_settings = '{}'::jsonb
         WHERE protocol_settings IS NULL
           AND name LIKE 'sf-%'
     """)
@@ -103,7 +103,7 @@ def main():
 
     cursor.execute("""
         UPDATE public.v2_server
-        SET rate_time_ranges = '[]'
+        SET rate_time_ranges = '[]'::jsonb
         WHERE rate_time_ranges IS NULL
           AND name LIKE 'sf-%'
     """)
@@ -118,8 +118,8 @@ def main():
         FROM public.v2_server
         WHERE name LIKE 'sf-%'
           AND (
-              group_ids IS NULL OR group_ids = ''
-           OR route_ids IS NULL OR route_ids = ''
+              group_ids IS NULL
+           OR route_ids IS NULL
            OR tags IS NULL
            OR protocol_settings IS NULL
            OR rate_time_ranges IS NULL
