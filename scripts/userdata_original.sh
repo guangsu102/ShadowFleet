@@ -1,7 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-exec > >(tee -a /var/log/shadowfleet-user-data.log) 2>&1
+LOGFILE="/var/log/shadowfleet-user-data.log"
+if [ -w "$LOGFILE" ] || [ -w "$(dirname "$LOGFILE")" ]; then
+  exec > >(sudo tee -a "$LOGFILE" >/dev/null) 2>&1
+elif [ -w "/tmp" ]; then
+  exec > >(tee -a "/tmp/shadowfleet-user-data.log" >/dev/null) 2>&1
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -221,6 +226,28 @@ sleep 3
 sudo systemctl is-active --quiet V2bX
 
 log "Installing Nginx reverse proxy for AnyTLS passthrough"
+
+wait_for_debconf_lock() {
+  local waited=0
+  while fuser /var/cache/debconf/config.dat >/dev/null 2>&1; do
+    if [ "$waited" -ge 30 ]; then
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
+if ! wait_for_debconf_lock; then
+  log "debconf lock timed out, continuing anyway"
+fi
+
+sudo debconf-set-selections <<'EOF_DEBCONF'
+iptables-persistent iptables-persistent/autosave_v4 boolean true
+iptables-persistent iptables-persistent/autosave_v6 boolean true
+EOF_DEBCONF
+
 sudo apt-get update -y
 sudo apt-get install -y nginx iptables-persistent
 # --- AnyTLS Nginx config for node 1 (port 5105) ---

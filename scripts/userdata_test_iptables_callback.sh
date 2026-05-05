@@ -1,7 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-exec > >(tee -a /var/log/shadowfleet-user-data.log) 2>&1
+LOGFILE="/var/log/shadowfleet-user-data.log"
+if [ -w "$LOGFILE" ] || [ -w "$(dirname "$LOGFILE")" ]; then
+  exec > >(sudo tee -a "$LOGFILE" >/dev/null) 2>&1
+elif [ -w "/tmp" ]; then
+  exec > >(tee -a "/tmp/shadowfleet-user-data.log" >/dev/null) 2>&1
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -107,9 +112,28 @@ ensure_command() {
 
 log "[TEST] Starting Nginx + iptables + callback test"
 
-# 预置 debconf 答案，防止 iptables-persistent 交互式对话框
-echo 'iptables-persistent iptables-persistent/autosave_v4 boolean true' | sudo debconf-set-selections
-echo 'iptables-persistent iptables-persistent/autosave_v6 boolean true' | sudo debconf-set-selections
+wait_for_debconf_lock() {
+  local waited=0
+  while fuser /var/cache/debconf/config.dat >/dev/null 2>&1; do
+    if [ "$waited" -ge 30 ]; then
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
+log "[TEST] Waiting for debconf lock to be released"
+if ! wait_for_debconf_lock; then
+  log "[TEST] debconf lock timed out, continuing anyway"
+fi
+
+log "[TEST] Pre-setting debconf answers for iptables-persistent"
+sudo debconf-set-selections <<'EOF_DEBCONF'
+iptables-persistent iptables-persistent/autosave_v4 boolean true
+iptables-persistent iptables-persistent/autosave_v6 boolean true
+EOF_DEBCONF
 
 log "[TEST] Installing Nginx reverse proxy for AnyTLS passthrough"
 sudo apt-get update -y
