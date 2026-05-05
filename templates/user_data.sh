@@ -1,7 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-exec > >(tee -a /var/log/shadowfleet-user-data.log) 2>&1
+LOGFILE="/var/log/shadowfleet-user-data.log"
+if [ -w "$LOGFILE" ] || [ -w "$(dirname "$LOGFILE")" ]; then
+  exec > >(sudo tee -a "$LOGFILE" >/dev/null) 2>&1
+elif [ -w "/tmp" ]; then
+  exec > >(tee -a "/tmp/shadowfleet-user-data.log" >/dev/null) 2>&1
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 
