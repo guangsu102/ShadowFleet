@@ -114,7 +114,7 @@ def test_update_node_host(pool: PostgresConnectionPool) -> None:
 
     # Find a node to test
     with pool.cursor() as cursor:
-        cursor.execute("SELECT id FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
+        cursor.execute("SELECT id FROM public.v2_server WHERE name LIKE 'sf-%%' LIMIT 1")
         row = cursor.fetchone()
         if row is None:
             print("No sf-* nodes found, creating a test node...")
@@ -136,7 +136,7 @@ def test_update_node_host(pool: PostgresConnectionPool) -> None:
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
-        WHERE id = %s AND name LIKE 'sf-%'
+        WHERE id = %s AND name LIKE 'sf-%%'
     """
     params = ("pool-test-" + str(utcnow), utcnow, node_id)
 

@@ -197,7 +197,7 @@ class XboardRepo:
             set_event_type("db_node_delete_skipped")
             self._logger.warning("Skipped delete_node: node_id=%s (invalid)", node_id)
             return
-        sql = "DELETE FROM public.v2_server WHERE id = %s AND name LIKE 'sf-%'"
+        sql = "DELETE FROM public.v2_server WHERE id = %s AND name LIKE 'sf-%%'"
 
         def _operation() -> None:
             with self._db_pool.cursor() as cursor:
@@ -234,7 +234,7 @@ class XboardRepo:
         sql = """
             UPDATE public.v2_server
             SET host = %s, updated_at = %s
-            WHERE id = %s AND name LIKE 'sf-%'
+            WHERE id = %s AND name LIKE 'sf-%%'
         """
         parameters = (host.strip(), self._utcnow(), node_id)
 
@@ -276,7 +276,7 @@ class XboardRepo:
                 server_port,
                 show
             FROM public.v2_server
-            WHERE id = %s AND name LIKE 'sf-%'
+            WHERE id = %s AND name LIKE 'sf-%%'
         """
 
         def _operation() -> XboardNodeRuntimeRecord:
@@ -405,7 +405,7 @@ class XboardRepo:
         sql = """
             UPDATE public.v2_server
             SET show = %s, updated_at = %s
-            WHERE id = %s AND name LIKE 'sf-%'
+            WHERE id = %s AND name LIKE 'sf-%%'
         """
         parameters = (visible, self._utcnow(), node_id)
 

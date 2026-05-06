@@ -49,7 +49,7 @@ def main():
     cursor.execute("""
         SELECT COUNT(*)
         FROM public.v2_server
-        WHERE name LIKE 'sf-%'
+        WHERE name LIKE 'sf-%%'
           AND (
               group_ids IS NULL
            OR route_ids IS NULL
@@ -74,7 +74,7 @@ def main():
         UPDATE public.v2_server
         SET group_ids = '[]'::jsonb
         WHERE group_ids IS NULL
-          AND name LIKE 'sf-%'
+          AND name LIKE 'sf-%%'
     """)
     print(f"  group_ids 已修复: {cursor.rowcount} 行")
 
@@ -82,7 +82,7 @@ def main():
         UPDATE public.v2_server
         SET route_ids = '[]'::jsonb
         WHERE route_ids IS NULL
-          AND name LIKE 'sf-%'
+          AND name LIKE 'sf-%%'
     """)
     print(f"  route_ids 已修复: {cursor.rowcount} 行")
 
@@ -90,7 +90,7 @@ def main():
         UPDATE public.v2_server
         SET tags = '[]'::jsonb
         WHERE tags IS NULL
-          AND name LIKE 'sf-%'
+          AND name LIKE 'sf-%%'
     """)
     print(f"  tags 已修复: {cursor.rowcount} 行")
 
@@ -98,7 +98,7 @@ def main():
         UPDATE public.v2_server
         SET protocol_settings = '{}'::jsonb
         WHERE protocol_settings IS NULL
-          AND name LIKE 'sf-%'
+          AND name LIKE 'sf-%%'
     """)
     print(f"  protocol_settings 已修复: {cursor.rowcount} 行")
 
@@ -106,7 +106,7 @@ def main():
         UPDATE public.v2_server
         SET rate_time_ranges = '[]'::jsonb
         WHERE rate_time_ranges IS NULL
-          AND name LIKE 'sf-%'
+          AND name LIKE 'sf-%%'
     """)
     print(f"  rate_time_ranges 已修复: {cursor.rowcount} 行")
 
@@ -117,7 +117,7 @@ def main():
     cursor.execute("""
         SELECT COUNT(*)
         FROM public.v2_server
-        WHERE name LIKE 'sf-%'
+        WHERE name LIKE 'sf-%%'
           AND (
               group_ids IS NULL
            OR route_ids IS NULL

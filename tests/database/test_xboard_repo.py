@@ -620,7 +620,7 @@ class TestXboardRepoSfGuard:
 
         call_args = mock_cursor.execute.call_args[0]
         sql = call_args[0]
-        assert "name LIKE 'sf-%'" in sql
+        assert "name LIKE 'sf-%%'" in sql
 
     def test_update_node_host_sql_contains_sf_guard(self) -> None:
         ctx = _make_runtime_context()
@@ -639,7 +639,7 @@ class TestXboardRepoSfGuard:
 
         call_args = mock_cursor.execute.call_args[0]
         sql = call_args[0]
-        assert "name LIKE 'sf-%'" in sql
+        assert "name LIKE 'sf-%%'" in sql
 
     def test_get_node_runtime_sql_contains_sf_guard(self) -> None:
         ctx = _make_runtime_context()
@@ -658,7 +658,7 @@ class TestXboardRepoSfGuard:
 
         call_args = mock_cursor.execute.call_args[0]
         sql = call_args[0]
-        assert "name LIKE 'sf-%'" in sql
+        assert "name LIKE 'sf-%%'" in sql
 
     def test_mark_node_online_sql_contains_sf_guard(self) -> None:
         ctx = _make_runtime_context()
@@ -677,7 +677,7 @@ class TestXboardRepoSfGuard:
 
         call_args = mock_cursor.execute.call_args[0]
         sql = call_args[0]
-        assert "name LIKE 'sf-%'" in sql
+        assert "name LIKE 'sf-%%'" in sql
 
     def test_mark_node_offline_sql_contains_sf_guard(self) -> None:
         ctx = _make_runtime_context()
@@ -696,4 +696,4 @@ class TestXboardRepoSfGuard:
 
         call_args = mock_cursor.execute.call_args[0]
         sql = call_args[0]
-        assert "name LIKE 'sf-%'" in sql
+        assert "name LIKE 'sf-%%'" in sql

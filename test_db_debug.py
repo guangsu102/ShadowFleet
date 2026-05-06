@@ -88,7 +88,7 @@ def test_same_cursor(connection_kwargs: dict) -> None:
     conn = connect(**connection_kwargs)
     cur = conn.cursor()
 
-    cur.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
+    cur.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%%' LIMIT 1")
     row = cur.fetchone()
     node_id = row[0]
     print(f"SELECT: id={node_id}, name={row[1]}, host={row[2]}")
@@ -112,7 +112,7 @@ def test_same_cursor(connection_kwargs: dict) -> None:
     conn = connect(**connection_kwargs)
     cur = conn.cursor()
 
-    cur.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
+    cur.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%%' LIMIT 1")
     row = cur.fetchone()
     node_id = row[0]
     conn.commit()  # commit after SELECT
@@ -142,7 +142,7 @@ def test_pool(connection_kwargs: dict) -> None:
     cur = conn.cursor()
 
     # Same pattern as test_db_pool.py
-    cur.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
+    cur.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%%' LIMIT 1")
     row = cur.fetchone()
     node_id = row[0]
     print(f"SELECT: id={node_id}")
@@ -177,7 +177,7 @@ def test_compare_params_style(connection_kwargs: dict) -> None:
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
-        WHERE id = %s AND name LIKE 'sf-%'
+        WHERE id = %s AND name LIKE 'sf-%%'
     """
     print(f"SQL repr: {repr(sql)}")
     print(f"SQL placeholder count: {sql.count('%s')}")
@@ -230,7 +230,7 @@ def test_compare_params_style(connection_kwargs: dict) -> None:
     # --- Test D: single-line SQL with list ---
     conn_d = connect(**connection_kwargs)
     cur_d = conn_d.cursor()
-    sql_d = "UPDATE public.v2_server SET host = %s, updated_at = %s WHERE id = %s AND name LIKE 'sf-%'"
+    sql_d = "UPDATE public.v2_server SET host = %s, updated_at = %s WHERE id = %s AND name LIKE 'sf-%%'"
     params_d = ["192.168.1.1-single", utcnow, 53]
     print(f"\nTest D (single-line, list): {params_d}, len={len(params_d)}")
     try:
@@ -250,7 +250,7 @@ def test_compare_params_style(connection_kwargs: dict) -> None:
     sql_e = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
-        WHERE id = %s AND name LIKE 'sf-%'
+        WHERE id = %s AND name LIKE 'sf-%%'
     """
     params_e = ["192.168.1.1-naive", utcnow_naive, 53]
     print(f"\nTest E (naive datetime, list): {params_e}, len={len(params_e)}")

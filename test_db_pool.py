@@ -74,7 +74,7 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
     # Find a node to test with
     conn = pool.getconn()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
+    cur.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%%' LIMIT 1")
     row = cur.fetchone()
     if row is None:
         print("No sf-* nodes found in xboard, creating a test node first...")
@@ -104,7 +104,7 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
-        WHERE id = %s AND name LIKE 'sf-%'
+        WHERE id = %s AND name LIKE 'sf-%%'
     """
     # Pass parameters as a list instead of tuple to avoid psycopg2 edge cases
     host_val = "192.168.1.1"
@@ -165,7 +165,7 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
 
     # Test: update a node
     with cursor(pool) as cur:
-        cur.execute("SELECT id FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
+        cur.execute("SELECT id FROM public.v2_server WHERE name LIKE 'sf-%%' LIMIT 1")
         row = cur.fetchone()
         if row is None:
             print("No sf-* nodes to test, skipping cursor pattern test")
@@ -178,7 +178,7 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
-        WHERE id = %s AND name LIKE 'sf-%'
+        WHERE id = %s AND name LIKE 'sf-%%'
     """
     with cursor(pool) as cur:
         cur.execute(sql, [f"test-{utcnow}", utcnow, node_id])
@@ -206,7 +206,7 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
     # Find a node
     conn = pool.getconn()
     cur = conn.cursor()
-    cur.execute("SELECT id FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
+    cur.execute("SELECT id FROM public.v2_server WHERE name LIKE 'sf-%%' LIMIT 1")
     row = cur.fetchone()
     if row is None:
         print("No sf-* nodes, creating one...")
@@ -231,7 +231,7 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
-        WHERE id = %s AND name LIKE 'sf-%'
+        WHERE id = %s AND name LIKE 'sf-%%'
     """
     try:
         cur2.execute(sql, ["buggy-test", utcnow, node_id])
