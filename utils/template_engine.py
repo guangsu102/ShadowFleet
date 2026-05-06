@@ -416,7 +416,7 @@ def _build_nginx_stream_block(
         "EOF_NGINX\n"
         # Add stream.conf.d include to nginx.conf BEFORE http {} block (idempotent)
         "if ! grep -q 'stream.conf.d' /etc/nginx/nginx.conf; then\n"
-        "    sudo sed -i 's/^http {$/include /etc/nginx/stream.conf.d/*.conf;\\nhttp {/' /etc/nginx/nginx.conf\n"
+        "    sudo sed -i 's|^http {|include /etc/nginx/stream.conf.d/*.conf;\\nhttp {|' /etc/nginx/nginx.conf\n"
         "fi\n"
         # Test and reload
         "sudo nginx -t && sudo systemctl enable nginx 2>/dev/null || true\n"
