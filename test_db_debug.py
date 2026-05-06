@@ -171,7 +171,7 @@ def test_compare_params_style(connection_kwargs: dict) -> None:
 
     print("\n=== COMPARE: list vs tuple params with multi-line SQL ===")
 
-    utcnow = datetime.now(tz.utc)
+    utcnow = datetime.now(timezone.utc)
 
     # SQL exactly like test_db_pool.py (multi-line with triple quotes)
     sql = """
