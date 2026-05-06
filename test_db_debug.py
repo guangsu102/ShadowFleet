@@ -65,7 +65,8 @@ def test_isolated(connection_kwargs: dict) -> None:
     conn.close()
 
     # TEST 5: UPDATE with 3 params
-    utcnow = datetime.utcnow()
+    from datetime import timezone as tz
+    utcnow = datetime.now(tz.utc)
     conn = connect(**connection_kwargs)
     cur = conn.cursor()
     cur.execute(
@@ -163,6 +164,86 @@ def test_pool(connection_kwargs: dict) -> None:
     pool.closeall()
 
 
+def test_compare_params_style(connection_kwargs: dict) -> None:
+    """Compare list vs tuple params with multi-line SQL (exact test_db_pool.py pattern)."""
+    from psycopg2 import connect
+    from datetime import timezone
+
+    print("\n=== COMPARE: list vs tuple params with multi-line SQL ===")
+
+    utcnow = datetime.now(tz.utc)
+
+    # SQL exactly like test_db_pool.py (multi-line with triple quotes)
+    sql = """
+        UPDATE public.v2_server
+        SET host = %s, updated_at = %s
+        WHERE id = %s AND name LIKE 'sf-%'
+    """
+    print(f"SQL repr: {repr(sql)}")
+    print(f"SQL placeholder count: {sql.count('%s')}")
+
+    # --- Test A: list params (like test_db_pool.py) ---
+    conn_a = connect(**connection_kwargs)
+    cur_a = conn_a.cursor()
+    params_a = ["192.168.1.1-list", utcnow, 53]
+    print(f"\nTest A (list params): {params_a}, len={len(params_a)}")
+    try:
+        cur_a.execute(sql, params_a)
+        print(f"SUCCESS! rowcount={cur_a.rowcount}")
+        conn_a.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_a.close()
+
+    # --- Test B: tuple params ---
+    conn_b = connect(**connection_kwargs)
+    cur_b = conn_b.cursor()
+    params_b = ("192.168.1.1-tuple", utcnow, 53)
+    print(f"\nTest B (tuple params): {params_b}, len={len(params_b)}")
+    try:
+        cur_b.execute(sql, params_b)
+        print(f"SUCCESS! rowcount={cur_b.rowcount}")
+        conn_b.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_b.close()
+
+    # --- Test C: list from list() cast ---
+    conn_c = connect(**connection_kwargs)
+    cur_c = conn_c.cursor()
+    params_c = list(["192.168.1.1-list-fn", utcnow, 53])
+    print(f"\nTest C (list() cast): {params_c}, len={len(params_c)}")
+    try:
+        cur_c.execute(sql, params_c)
+        print(f"SUCCESS! rowcount={cur_c.rowcount}")
+        conn_c.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_c.close()
+
+    # --- Test D: single-line SQL with list ---
+    conn_d = connect(**connection_kwargs)
+    cur_d = conn_d.cursor()
+    sql_d = "UPDATE public.v2_server SET host = %s, updated_at = %s WHERE id = %s AND name LIKE 'sf-%'"
+    params_d = ["192.168.1.1-single", utcnow, 53]
+    print(f"\nTest D (single-line, list): {params_d}, len={len(params_d)}")
+    try:
+        cur_d.execute(sql_d, params_d)
+        print(f"SUCCESS! rowcount={cur_d.rowcount}")
+        conn_d.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_d.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config.yaml")
@@ -191,6 +272,7 @@ def main() -> None:
     test_isolated(connection_kwargs)
     test_same_cursor(connection_kwargs)
     test_pool(connection_kwargs)
+    test_compare_params_style(connection_kwargs)
 
     print("\nAll tests done!")
 
