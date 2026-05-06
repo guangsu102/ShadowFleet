@@ -26,7 +26,7 @@ class RegisterNodeRequest:
     parent_id: int | None = None
     group_ids: list[int] | None = None
     route_ids: list[int] | None = None
-    tags: list[JsonValue] | dict[str, JsonValue] | None = None
+    tags: list[JsonValue] | None = None
     protocol_settings: dict[str, JsonValue] | None = None
     show: bool = True
     sort: int | None = None

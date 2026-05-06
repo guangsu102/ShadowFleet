@@ -47,7 +47,7 @@ class XboardNodeCreateRequest:
     parent_id: int | None = None
     group_ids: list[int] | None = None
     route_ids: list[int] | None = None
-    tags: list[JsonValue] | dict[str, JsonValue] | None = None
+    tags: list[JsonValue] | None = None
     protocol_settings: dict[str, JsonValue] | None = None
     show: bool = True
     sort: int | None = None
@@ -105,10 +105,21 @@ class XboardRepo:
         prefixed = f"{SHADOWFLEET_NODE_NAME_PREFIX}{name}"
         return prefixed[:MAX_NODE_NAME_LENGTH]
 
+    @staticmethod
+    def _normalize_node_type(node_type: str) -> str:
+        """将用户友好的协议名称转换为 Xboard 内部类型（小写）"""
+        type_mapping = {
+            'AnyTLS': 'anytls',
+            'Hysteria2': 'hysteria',
+            'hysteria2': 'hysteria',
+        }
+        return type_mapping.get(node_type, node_type.lower())
+
     def register_node(self, request: XboardNodeCreateRequest) -> int:
         self._validate_create_request(request)
         now = self._utcnow()
         node_name = self._enforce_sf_name(request.name)
+        normalized_node_type = self._normalize_node_type(request.node_type)
         sql = """
             INSERT INTO public.v2_server (
                 type,
@@ -137,7 +148,7 @@ class XboardRepo:
             RETURNING id
         """
         parameters = (
-            request.node_type,
+            normalized_node_type,
             request.code,
             request.parent_id,
             self._to_json_text(request.group_ids if request.group_ids is not None else []),

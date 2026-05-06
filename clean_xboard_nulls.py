@@ -29,16 +29,21 @@ def main():
     cursor.execute("""
         SELECT id, name, group_ids, route_ids, tags, protocol_settings, rate_time_ranges
         FROM public.v2_server
-        WHERE group_ids IS NULL
+        WHERE (group_ids IS NULL
            OR route_ids IS NULL
            OR tags IS NULL
            OR protocol_settings IS NULL
            OR rate_time_ranges IS NULL
+           OR json_typeof(group_ids) = 'object'
+           OR json_typeof(route_ids) = 'object'
+           OR json_typeof(tags) = 'object'
+           OR json_typeof(protocol_settings) = 'object'
+           OR json_typeof(rate_time_ranges) = 'object')
         LIMIT 20
     """)
     rows = cursor.fetchall()
     for row in rows:
-        print(f"  id={row[0]} name={row[1]} group_ids={row[2]!r} route_ids={row[3]!r}")
+        print(f"  id={row[0]} name={row[1]} group_ids={row[2]!r} route_ids={row[3]!r} tags={row[4]!r}")
 
     if not rows:
         print("  没有脏数据，无需清理")
@@ -49,13 +54,17 @@ def main():
     cursor.execute("""
         SELECT COUNT(*)
         FROM public.v2_server
-        WHERE name LIKE 'sf-%%'
-          AND (
+        WHERE (
               group_ids IS NULL
            OR route_ids IS NULL
            OR tags IS NULL
            OR protocol_settings IS NULL
            OR rate_time_ranges IS NULL
+           OR json_typeof(group_ids) = 'object'
+           OR json_typeof(route_ids) = 'object'
+           OR json_typeof(tags) = 'object'
+           OR json_typeof(protocol_settings) = 'object'
+           OR json_typeof(rate_time_ranges) = 'object'
           )
     """)
     result = cursor.fetchone()
@@ -72,40 +81,40 @@ def main():
     print("\n=== 执行清理 ===")
     cursor.execute("""
         UPDATE public.v2_server
-        SET group_ids = '[]'::jsonb
-        WHERE group_ids IS NULL
+        SET group_ids = '[]'::json
+        WHERE (group_ids IS NULL OR json_typeof(group_ids) = 'object')
           AND name LIKE 'sf-%%'
     """)
     print(f"  group_ids 已修复: {cursor.rowcount} 行")
 
     cursor.execute("""
         UPDATE public.v2_server
-        SET route_ids = '[]'::jsonb
-        WHERE route_ids IS NULL
+        SET route_ids = '[]'::json
+        WHERE (route_ids IS NULL OR json_typeof(route_ids) = 'object')
           AND name LIKE 'sf-%%'
     """)
     print(f"  route_ids 已修复: {cursor.rowcount} 行")
 
     cursor.execute("""
         UPDATE public.v2_server
-        SET tags = '[]'::jsonb
-        WHERE tags IS NULL
+        SET tags = '[]'::json
+        WHERE (tags IS NULL OR json_typeof(tags) = 'object')
           AND name LIKE 'sf-%%'
     """)
     print(f"  tags 已修复: {cursor.rowcount} 行")
 
     cursor.execute("""
         UPDATE public.v2_server
-        SET protocol_settings = '{}'::jsonb
-        WHERE protocol_settings IS NULL
+        SET protocol_settings = '[]'::json
+        WHERE (protocol_settings IS NULL OR json_typeof(protocol_settings) = 'object')
           AND name LIKE 'sf-%%'
     """)
     print(f"  protocol_settings 已修复: {cursor.rowcount} 行")
 
     cursor.execute("""
         UPDATE public.v2_server
-        SET rate_time_ranges = '[]'::jsonb
-        WHERE rate_time_ranges IS NULL
+        SET rate_time_ranges = '[]'::json
+        WHERE (rate_time_ranges IS NULL OR json_typeof(rate_time_ranges) = 'object')
           AND name LIKE 'sf-%%'
     """)
     print(f"  rate_time_ranges 已修复: {cursor.rowcount} 行")
@@ -124,6 +133,11 @@ def main():
            OR tags IS NULL
            OR protocol_settings IS NULL
            OR rate_time_ranges IS NULL
+           OR json_typeof(group_ids) = 'object'
+           OR json_typeof(route_ids) = 'object'
+           OR json_typeof(tags) = 'object'
+           OR json_typeof(protocol_settings) = 'object'
+           OR json_typeof(rate_time_ranges) = 'object'
           )
     """)
     remaining_result = cursor.fetchone()

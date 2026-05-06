@@ -48,7 +48,7 @@ class ProvisionRequest:
     parent_id: int | None = None
     group_ids: list[int] | None = None
     route_ids: list[int] | None = None
-    tags: list[str] | dict[str, str] | None = None
+    tags: list[str] | None = None
     protocol_settings: dict[str, str | int | float | bool | list[object] | dict[str, object] | None] | None = None
     show: bool = True
     sort: int | None = None
