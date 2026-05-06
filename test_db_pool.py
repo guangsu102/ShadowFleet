@@ -34,7 +34,7 @@ def build_connection_kwargs(xboard_config: dict) -> dict:
         "database": xboard_config["database"],
         "user": xboard_config["user"],
         "password": xboard_config.get("password"),
-        "sslmode": xboard_config.get("sslmode", "prefer"),
+        "sslmode": xboard_config.get("sslmode", xboard_config.get("ssl_mode", "prefer")),
         "connect_timeout": 10,
         "application_name": "shadowfleet-test",
     }
@@ -96,39 +96,38 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
             (node_id,),
         )
         conn.commit()
-
     cur.close()
     pool.putconn(conn)
 
-    # Now test the actual problematic pattern: UPDATE with %s placeholders and datetime
+    # Now test the actual problematic pattern with a fresh connection from the pool
     utcnow = datetime.now(timezone.utc)
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
         WHERE id = %s AND name LIKE 'sf-%'
     """
-
+    params = ("192.168.1.1", utcnow, node_id)
     print(f"Executing: {sql.strip()}")
-    print(f"Parameters: ('192.168.1.1', {utcnow}, {node_id})")
+    print(f"Parameters: {params}")
 
-    conn = pool.getconn()
-    cur = conn.cursor()
-    cur.execute(sql, ("192.168.1.1", utcnow, node_id))
-    print(f"rowcount: {cur.rowcount}")
-    conn.commit()
-    assert cur.rowcount == 1, f"Expected rowcount=1, got {cur.rowcount}"
+    conn2 = pool.getconn()
+    cur2 = conn2.cursor()
+    cur2.execute(sql, params)
+    print(f"rowcount: {cur2.rowcount}")
+    conn2.commit()
+    assert cur2.rowcount == 1, f"Expected rowcount=1, got {cur2.rowcount}"
 
     # Verify it was actually updated
-    cur.execute("SELECT host, updated_at FROM public.v2_server WHERE id = %s", (node_id,))
-    row = cur.fetchone()
+    cur2.execute("SELECT host, updated_at FROM public.v2_server WHERE id = %s", (node_id,))
+    row = cur2.fetchone()
     print(f"Verified: host={row[0]} updated_at={row[1]}")
     assert row[0] == "192.168.1.1"
 
     # Cleanup
-    cur.execute("DELETE FROM public.v2_server WHERE id = %s", (node_id,))
-    conn.commit()
-    cur.close()
-    pool.putconn(conn)
+    cur2.execute("DELETE FROM public.v2_server WHERE id = %s", (node_id,))
+    conn2.commit()
+    cur2.close()
+    pool.putconn(conn2)
     pool.closeall()
     print("Test 2 PASSED")
 
@@ -184,13 +183,12 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
         assert cur.rowcount == 1, f"Expected rowcount=1, got {cur.rowcount}"
 
     # Verify commit persisted
-    conn = pool.getconn()
-    cur = conn.cursor()
-    cur.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))
-    host = cur.fetchone()[0]
-    cur.close()
-    pool.putconn(conn)
-    assert "test-" in host, f"Expected host to contain 'test-', got {host}"
+    with connection(pool) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))
+        host = cur.fetchone()[0]
+        cur.close()
+        assert "test-" in host, f"Expected host to contain 'test-', got {host}"
 
     pool.closeall()
     print("Test 3 PASSED")
@@ -218,15 +216,14 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
         conn.commit()
     else:
         node_id = row[0]
-
     cur.close()
     pool.putconn(conn)
 
     # Simulate the BUGGY pattern (what the old code did):
     # connection with autocommit=False but NEVER calling commit()
-    conn = pool.getconn()
-    conn.autocommit = False
-    cur = conn.cursor()
+    conn2 = pool.getconn()
+    conn2.autocommit = False
+    cur2 = conn2.cursor()
 
     utcnow = datetime.now(timezone.utc)
     sql = """
@@ -235,26 +232,26 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
         WHERE id = %s AND name LIKE 'sf-%'
     """
     try:
-        cur.execute(sql, ("buggy-test", utcnow, node_id))
-        print(f"execute succeeded, rowcount={cur.rowcount}")
-        cur.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))
-        host = cur.fetchone()[0]
+        cur2.execute(sql, ("buggy-test", utcnow, node_id))
+        print(f"execute succeeded, rowcount={cur2.rowcount}")
+        cur2.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))
+        host = cur2.fetchone()[0]
         print(f"Read back host: {host}")
-        conn.rollback()
+        conn2.rollback()
     except Exception as e:
         print(f"Exception during buggy pattern: {type(e).__name__}: {e}")
-        conn.rollback()
+        conn2.rollback()
 
-    cur.close()
-    pool.putconn(conn)
+    cur2.close()
+    pool.putconn(conn2)
 
     # Check if the update persisted (it shouldn't without commit)
-    conn = pool.getconn()
-    cur = conn.cursor()
-    cur.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))
-    host = cur.fetchone()[0]
-    cur.close()
-    pool.putconn(conn)
+    conn3 = pool.getconn()
+    cur3 = conn3.cursor()
+    cur3.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))
+    host = cur3.fetchone()[0]
+    cur3.close()
+    pool.putconn(conn3)
     pool.closeall()
 
     if "buggy-test" in str(host):

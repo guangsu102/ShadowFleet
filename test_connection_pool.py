@@ -43,8 +43,8 @@ def build_runtime_context(cfg: dict) -> SimpleNamespace:
             port=xboard_cfg.get("port", 5432),
             database=xboard_cfg.get("database", "xboard"),
             user=xboard_cfg.get("user", "postgres"),
-            password=xboard_cfg.get("password", ""),
-            sslmode=xboard_cfg.get("sslmode", "prefer"),
+            password=xboard_cfg.get("password"),
+            ssl_mode=xboard_cfg.get("sslmode", xboard_cfg.get("ssl_mode", "prefer")),
         ),
         app=SimpleNamespace(
             request_timeout_seconds=app_cfg.get("request_timeout_seconds", 10),
