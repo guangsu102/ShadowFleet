@@ -169,8 +169,8 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
         row = cur.fetchone()
         if row is None:
             print("No sf-* nodes to test, skipping cursor pattern test")
-            pool.closeall()
             print("Test 3 PASSED (no nodes to test)")
+            pool.closeall()
             return
         node_id = row[0]
 
