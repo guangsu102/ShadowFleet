@@ -243,6 +243,27 @@ def test_compare_params_style(connection_kwargs: dict) -> None:
         traceback.print_exc()
     conn_d.close()
 
+    # --- Test E: naive datetime (no timezone) ---
+    conn_e = connect(**connection_kwargs)
+    cur_e = conn_e.cursor()
+    utcnow_naive = datetime.utcnow()
+    sql_e = """
+        UPDATE public.v2_server
+        SET host = %s, updated_at = %s
+        WHERE id = %s AND name LIKE 'sf-%'
+    """
+    params_e = ["192.168.1.1-naive", utcnow_naive, 53]
+    print(f"\nTest E (naive datetime, list): {params_e}, len={len(params_e)}")
+    try:
+        cur_e.execute(sql_e, params_e)
+        print(f"SUCCESS! rowcount={cur_e.rowcount}")
+        conn_e.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_e.close()
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
