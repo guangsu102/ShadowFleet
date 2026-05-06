@@ -52,15 +52,39 @@ def build_runtime_context(cfg: dict) -> SimpleNamespace:
             retry_backoff_seconds=app_cfg.get("retry_backoff_seconds", 1.0),
         ),
     )
-    logger = SimpleNamespace(
-        getChild=lambda name: logger,
-    )
+    root_logger = _MockLogger("")
 
     return SimpleNamespace(
         config=config,
-        logger=logger,
+        logger=root_logger,
         correlation_id="test",
     )
+
+
+class _MockLogger:
+    def __init__(self, prefix: str = ""):
+        self._prefix = prefix
+
+    def _log(self, level: str, msg: str, *args):
+        print(f"[{level.upper()}] {self._prefix}{msg % args}")
+
+    def getChild(self, name: str):
+        return _MockLogger(self._prefix + name + ".")
+
+    def info(self, msg: str, *args):
+        self._log("info", msg, *args)
+
+    def warning(self, msg: str, *args):
+        self._log("warning", msg, *args)
+
+    def error(self, msg: str, *args):
+        self._log("error", msg, *args)
+
+    def exception(self, msg: str, *args):
+        self._log("exception", msg, *args)
+
+    def debug(self, msg: str, *args):
+        self._log("debug", msg, *args)
 
 
 def test_pool_initialization(runtime) -> None:

@@ -106,7 +106,9 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
         SET host = %s, updated_at = %s
         WHERE id = %s AND name LIKE 'sf-%'
     """
-    params = ("192.168.1.1", utcnow, node_id)
+    # Pass parameters as a list instead of tuple to avoid psycopg2 edge cases
+    host_val = "192.168.1.1"
+    params = [host_val, utcnow, node_id]
     print(f"Executing: {sql.strip()}")
     print(f"Parameters: {params}")
 
@@ -121,7 +123,7 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
     cur2.execute("SELECT host, updated_at FROM public.v2_server WHERE id = %s", (node_id,))
     row = cur2.fetchone()
     print(f"Verified: host={row[0]} updated_at={row[1]}")
-    assert row[0] == "192.168.1.1"
+    assert row[0] == host_val
 
     # Cleanup
     cur2.execute("DELETE FROM public.v2_server WHERE id = %s", (node_id,))
@@ -179,7 +181,7 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
         WHERE id = %s AND name LIKE 'sf-%'
     """
     with cursor(pool) as cur:
-        cur.execute(sql, (f"test-{utcnow}", utcnow, node_id))
+        cur.execute(sql, [f"test-{utcnow}", utcnow, node_id])
         assert cur.rowcount == 1, f"Expected rowcount=1, got {cur.rowcount}"
 
     # Verify commit persisted
@@ -232,7 +234,7 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
         WHERE id = %s AND name LIKE 'sf-%'
     """
     try:
-        cur2.execute(sql, ("buggy-test", utcnow, node_id))
+        cur2.execute(sql, ["buggy-test", utcnow, node_id])
         print(f"execute succeeded, rowcount={cur2.rowcount}")
         cur2.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))
         host = cur2.fetchone()[0]
@@ -255,7 +257,7 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
     pool.closeall()
 
     if "buggy-test" in str(host):
-        print("WARNING: update persisted without explicit commit (autocommit=False was not effective?)")
+        print("WARNING: update persisted without explicit commit")
     else:
         print(f"Confirmed: update did NOT persist (host={host}), as expected without commit")
 
