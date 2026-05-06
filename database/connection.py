@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Iterator, cast
+from typing import TYPE_CHECKING, Iterator
 
 import psycopg2
-from dbutils.pooled_db import PooledDB
 from psycopg2 import InterfaceError, OperationalError
 from psycopg2.extensions import connection as PgConnection
 from psycopg2.extensions import cursor as PgCursor
+from psycopg2.pool import ThreadedConnectionPool
 
 from utils.logger import set_event_type
 from utils.resilience import execute_with_backoff
@@ -41,13 +41,9 @@ class PostgresConnectionPool:
         self._request_timeout_seconds = runtime_context.config.app.request_timeout_seconds
         self._max_retries = runtime_context.config.app.max_retries
         self._retry_backoff_seconds = runtime_context.config.app.retry_backoff_seconds
-        self._pool = PooledDB(
-            creator=psycopg2,
-            mincached=0,
-            maxcached=max_connections,
+        self._pool = ThreadedConnectionPool(
+            minconn=min_connections,
             maxconnections=max_connections,
-            blocking=True,
-            ping=1,
             **self._build_connection_kwargs(),
         )
 
@@ -61,36 +57,33 @@ class PostgresConnectionPool:
     @contextmanager
     def connection(self) -> Iterator[PgConnection]:
         connection = self._acquire_connection()
-        connection.autocommit = False
         try:
             yield connection
-            connection.commit()
         except Exception:
             connection.rollback()
             set_event_type("db_transaction_failed")
             self._logger.exception("PostgreSQL transaction failed and was rolled back")
             raise
         finally:
-            connection.close()
+            self._pool.putconn(connection)
 
     @contextmanager
     def cursor(self) -> Iterator[PgCursor]:
         with self.connection() as connection:
-            cursor = cast(PgCursor, connection.cursor())
+            cursor = connection.cursor()
             try:
                 yield cursor
             finally:
                 cursor.close()
 
     def close(self) -> None:
-        self._pool.close()
+        self._pool.closeall()
         set_event_type("db_pool_closed")
         self._logger.info("Closed PostgreSQL connection pool")
 
     def _acquire_connection(self) -> PgConnection:
         def _get_connection() -> PgConnection:
-            pooled_connection = self._pool.connection()
-            return cast(PgConnection, pooled_connection)
+            return self._pool.getconn()
 
         try:
             set_event_type("db_connection_acquire")
@@ -116,7 +109,7 @@ class PostgresConnectionPool:
         connection_kwargs: dict[str, object] = {
             "host": xboard_config.host,
             "port": xboard_config.port,
-            "dbname": xboard_config.database,
+            "database": xboard_config.database,
             "user": xboard_config.user,
             "sslmode": xboard_config.ssl_mode,
             "connect_timeout": self._request_timeout_seconds,
