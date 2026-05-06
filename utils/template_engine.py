@@ -375,13 +375,16 @@ def _build_nginx_stream_block(
 ) -> str:
     """Generate Nginx per-node stream config for AnyTLS passthrough.
     Uses a unique file per node to support multiple AnyTLS nodes on same machine.
-    Nginx stream configs MUST go in /etc/nginx/conf.d/ (not sites-available/).
     NOTE: Debian's nginx-full package auto-creates modules-enabled/99-stream.conf with
           load_module directive. Do NOT manually create or overwrite that file.
+    NOTE: Stream configs MUST go in /etc/nginx/sites-available/ (not conf.d/).
+          Debian's nginx.conf includes sites-enabled/ at top-level (alongside http {}),
+          but conf.d/ is only included inside the http {} block. Since stream {}
+          must be at top-level (outside http), we must use sites-available/.
     """
     safe_node_id = str(node_id)
-    # Stream configs must be in conf.d/ with .conf extension for nginx to load them
-    stream_config_path = f"/etc/nginx/conf.d/v2bx-stream-{safe_node_id}.conf"
+    # Stream configs must go in sites-available/ for Debian (top-level include)
+    stream_config_path = f"/etc/nginx/sites-available/v2bx-stream-{safe_node_id}.conf"
 
     # Build nginx stream config
     nginx_template = (
@@ -400,7 +403,7 @@ def _build_nginx_stream_block(
         "}}\n"
     ).format(node_id=safe_node_id, internal_port=nginx_internal_port)
 
-    # NOTE: Debian's nginx-full package auto-creates /etc/nginx/modules-enabled/99-stream.conf
+    # NOTE: Debian's nginx-full package auto-creates modules-enabled/99-stream.conf
     # with load_module directive. Do NOT overwrite it - doing so causes "module already loaded" error.
     # Only install nginx-full (which includes stream module) and write stream config.
     return (
@@ -408,12 +411,14 @@ def _build_nginx_stream_block(
         "sudo apt-get update -y\n"
         # nginx-full includes stream module; basic nginx does NOT
         "sudo apt-get install -y nginx-full\n"
-        # Ensure conf.d directory exists
-        "sudo mkdir -p /etc/nginx/conf.d\n"
+        # Ensure sites-available directory exists
+        "sudo mkdir -p /etc/nginx/sites-available\n"
         # Write stream config (idempotent: overwrite on each run)
         f"sudo tee {stream_config_path} >/dev/null <<'EOF_NGINX'\n"
         f"{nginx_template}"
         "EOF_NGINX\n"
+        # Symlink to sites-enabled for Debian's top-level include mechanism
+        f"sudo ln -sf {stream_config_path} /etc/nginx/sites-enabled/v2bx-stream-{safe_node_id}.conf\n"
         # Test and reload nginx (start if not running)
         "sudo nginx -t && sudo systemctl enable nginx 2>/dev/null || true\n"
         "sudo systemctl reload nginx || sudo systemctl start nginx\n"
@@ -423,11 +428,14 @@ def _build_nginx_stream_block(
 def _build_nginx_base_stream_config() -> str:
     """Generate shared Nginx base stream config with common settings.
     Includes all known node upstreams and is included from each node config.
+    Note: We now use per-node files in sites-available/ instead of a shared base config,
+          since each node has a unique port. This function is kept for backwards compat.
     """
     return (
         "# Nginx base stream config - included by all v2bx-node-*.conf files\n"
         "# This file should be symlinked to sites-enabled on first run\n"
         "# Do NOT listen here - each node config handles its own listen directive\n"
+        "# NOTE: Stream configs are now per-node in sites-available/ (top-level include)\n"
     )
 
 
