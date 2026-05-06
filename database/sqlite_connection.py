@@ -128,6 +128,29 @@ class SqliteConnectionManager:
                 CREATE INDEX IF NOT EXISTS idx_sse_events_created
                     ON sse_events (created_at DESC);
             """),
+            ("cleanup_duplicate_nodes_and_unique_index", """
+                -- This migration:
+                -- 1. Removes duplicate xboard_node_id entries (keeps highest id)
+                -- 2. Creates a partial UNIQUE index on xboard_node_id for active nodes
+                --
+                -- Step 1: Check if index already exists
+                -- (migration is idempotent - safe to run multiple times)
+
+                -- Step 2: Cleanup duplicates only if index doesn't exist yet
+                DELETE FROM fleet_nodes
+                WHERE is_deleted = 0
+                  AND id NOT IN (
+                      SELECT MAX(id)
+                      FROM fleet_nodes
+                      WHERE is_deleted = 0
+                      GROUP BY xboard_node_id
+                  );
+
+                -- Step 3: Create unique index on xboard_node_id for non-deleted nodes
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_fleet_nodes_xboard_node_id_active
+                    ON fleet_nodes (xboard_node_id)
+                    WHERE is_deleted = 0;
+            """),
         ]
         applied = connection.execute(
             "SELECT name FROM schema_migrations"
