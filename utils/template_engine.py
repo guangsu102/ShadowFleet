@@ -377,16 +377,14 @@ def _build_nginx_stream_block(
     Uses a unique file per node to support multiple AnyTLS nodes on same machine.
     NOTE: Debian's nginx-full package auto-creates modules-enabled/99-stream.conf with
           load_module directive. Do NOT manually create or overwrite that file.
-    NOTE: Stream configs MUST go in /etc/nginx/sites-available/ (not conf.d/).
-          Debian's nginx.conf includes sites-enabled/ at top-level (alongside http {}),
-          but conf.d/ is only included inside the http {} block. Since stream {}
-          must be at top-level (outside http), we must use sites-available/.
+    NOTE: Debian's nginx.conf includes sites-enabled/ INSIDE the http {} block, so
+          stream {} directives there would fail. We use /etc/nginx/stream.conf.d/
+          and modify nginx.conf to include it BEFORE the http {} block.
     """
     safe_node_id = str(node_id)
-    # Stream configs must go in sites-available/ for Debian (top-level include)
-    stream_config_path = f"/etc/nginx/sites-available/v2bx-stream-{safe_node_id}.conf"
+    stream_config_dir = "/etc/nginx/stream.conf.d"
+    stream_config_path = f"{stream_config_dir}/v2bx-stream-{safe_node_id}.conf"
 
-    # Build nginx stream config
     nginx_template = (
         "# AnyTLS stream proxy for node {node_id}\n"
         "stream {{\n"
@@ -403,23 +401,24 @@ def _build_nginx_stream_block(
         "}}\n"
     ).format(node_id=safe_node_id, internal_port=nginx_internal_port)
 
-    # NOTE: Debian's nginx-full package auto-creates modules-enabled/99-stream.conf
-    # with load_module directive. Do NOT overwrite it - doing so causes "module already loaded" error.
-    # Only install nginx-full (which includes stream module) and write stream config.
     return (
         f'log "Installing Nginx reverse proxy for AnyTLS passthrough"\n'
         "sudo apt-get update -y\n"
-        # nginx-full includes stream module; basic nginx does NOT
         "sudo apt-get install -y nginx-full\n"
-        # Ensure sites-available directory exists
-        "sudo mkdir -p /etc/nginx/sites-available\n"
-        # Write stream config (idempotent: overwrite on each run)
+        # Clean up old bad config files from previous broken deployments
+        f"sudo rm -f /etc/nginx/sites-enabled/v2bx-stream-{safe_node_id}.conf\n"
+        f"sudo rm -f /etc/nginx/sites-available/v2bx-stream-{safe_node_id}.conf\n"
+        # Create stream config directory
+        f"sudo mkdir -p {stream_config_dir}\n"
+        # Write stream config
         f"sudo tee {stream_config_path} >/dev/null <<'EOF_NGINX'\n"
         f"{nginx_template}"
         "EOF_NGINX\n"
-        # Symlink to sites-enabled for Debian's top-level include mechanism
-        f"sudo ln -sf {stream_config_path} /etc/nginx/sites-enabled/v2bx-stream-{safe_node_id}.conf\n"
-        # Test and reload nginx (start if not running)
+        # Add stream.conf.d include to nginx.conf BEFORE http {} block (idempotent)
+        "if ! grep -q 'stream.conf.d' /etc/nginx/nginx.conf; then\n"
+        "    sudo sed -i 's/^http {$/include /etc/nginx/stream.conf.d/*.conf;\\nhttp {/' /etc/nginx/nginx.conf\n"
+        "fi\n"
+        # Test and reload
         "sudo nginx -t && sudo systemctl enable nginx 2>/dev/null || true\n"
         "sudo systemctl reload nginx || sudo systemctl start nginx\n"
     )
