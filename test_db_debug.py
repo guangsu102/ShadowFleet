@@ -281,25 +281,88 @@ def test_compare_params_style(connection_kwargs: dict) -> None:
         traceback.print_exc()
     conn_f.close()
 
-    # --- Test G: multi-line SQL but NO datetime (replace with string) ---
-    conn_g = connect(**connection_kwargs)
-    cur_g = conn_g.cursor()
-    sql_g = """
-        UPDATE public.v2_server
-        SET host = %s, updated_at = %s
-        WHERE id = %s AND name LIKE 'sf-%'
-    """
-    params_g = ["192.168.1.1-no-datetime", "2026-05-06 05:17:00", 53]
-    print(f"\nTest G (multi-line, NO datetime): {params_g}, len={len(params_g)}")
+    # --- Test H: multi-line SQL with NO indentation (just newlines) ---
+    conn_h = connect(**connection_kwargs)
+    cur_h = conn_h.cursor()
+    utcnow_h = datetime.utcnow()
+    sql_h = (
+        "UPDATE public.v2_server\n"
+        "SET host = %s, updated_at = %s\n"
+        "WHERE id = %s AND name LIKE 'sf-%'"
+    )
+    params_h = ["192.168.1.1-no-indent", utcnow_h, 53]
+    print(f"\nTest H (newline-concat, NO indentation): {params_h}")
     try:
-        cur_g.execute(sql_g, params_g)
-        print(f"SUCCESS! rowcount={cur_g.rowcount}")
-        conn_g.commit()
+        cur_h.execute(sql_h, params_h)
+        print(f"SUCCESS! rowcount={cur_h.rowcount}")
+        conn_h.commit()
     except Exception as e:
         print(f"FAILED: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
-    conn_g.close()
+    conn_h.close()
+
+    # --- Test I: triple-quoted but single line (just newlines at start/end) ---
+    conn_i = connect(**connection_kwargs)
+    cur_i = conn_i.cursor()
+    utcnow_i = datetime.utcnow()
+    sql_i = """
+UPDATE public.v2_server SET host = %s, updated_at = %s WHERE id = %s AND name LIKE 'sf-%'
+"""
+    params_i = ["192.168.1.1-single-trip", utcnow_i, 53]
+    print(f"\nTest I (triple-quoted, single logical line): {params_i}")
+    try:
+        cur_i.execute(sql_i, params_i)
+        print(f"SUCCESS! rowcount={cur_i.rowcount}")
+        conn_i.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_i.close()
+
+    # --- Test J: triple-quoted multi-line with indentation removed ---
+    conn_j = connect(**connection_kwargs)
+    cur_j = conn_j.cursor()
+    utcnow_j = datetime.utcnow()
+    sql_j = """
+        UPDATE public.v2_server
+        SET host = %s, updated_at = %s
+        WHERE id = %s AND name LIKE 'sf-%'
+    """.strip()
+    params_j = ["192.168.1.1-stripped", utcnow_j, 53]
+    print(f"\nTest J (triple-quoted, .strip(), 3 params): {params_j}")
+    try:
+        cur_j.execute(sql_j, params_j)
+        print(f"SUCCESS! rowcount={cur_j.rowcount}")
+        conn_j.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_j.close()
+
+    # --- Test K: .strip() + .replace leading spaces on each line ---
+    conn_k = connect(**connection_kwargs)
+    cur_k = conn_k.cursor()
+    utcnow_k = datetime.utcnow()
+    raw = """
+        UPDATE public.v2_server
+        SET host = %s, updated_at = %s
+        WHERE id = %s AND name LIKE 'sf-%'
+    """
+    sql_k = '\n'.join(line.strip() for line in raw.splitlines())
+    params_k = ["192.168.1.1-line-stripped", utcnow_k, 53]
+    print(f"\nTest K (strip each line, NO leading spaces): {params_k}")
+    try:
+        cur_k.execute(sql_k, params_k)
+        print(f"SUCCESS! rowcount={cur_k.rowcount}")
+        conn_k.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_k.close()
 
 
 def main() -> None:
