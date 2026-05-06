@@ -376,8 +376,8 @@ def _build_nginx_stream_block(
     """Generate Nginx per-node stream config for AnyTLS passthrough.
     Uses a unique file per node to support multiple AnyTLS nodes on same machine.
     Nginx stream configs MUST go in /etc/nginx/conf.d/ (not sites-available/).
-    NOTE: Debian's default nginx package does NOT include stream module.
-          Must install nginx-full and add load_module directive to nginx.conf.
+    NOTE: Debian's nginx-full package auto-creates modules-enabled/99-stream.conf with
+          load_module directive. Do NOT manually create or overwrite that file.
     """
     safe_node_id = str(node_id)
     # Stream configs must be in conf.d/ with .conf extension for nginx to load them
@@ -400,20 +400,14 @@ def _build_nginx_stream_block(
         "}}\n"
     ).format(node_id=safe_node_id, internal_port=nginx_internal_port)
 
-    # Load module directive - must be at top of nginx.conf, before any other directives
-    # Use a separate file in /etc/nginx/modules-enabled/ for clean modularity
-    stream_load_module_conf = "/etc/nginx/modules-enabled/99-stream.conf"
-
+    # NOTE: Debian's nginx-full package auto-creates /etc/nginx/modules-enabled/99-stream.conf
+    # with load_module directive. Do NOT overwrite it - doing so causes "module already loaded" error.
+    # Only install nginx-full (which includes stream module) and write stream config.
     return (
         f'log "Installing Nginx reverse proxy for AnyTLS passthrough"\n'
         "sudo apt-get update -y\n"
         # nginx-full includes stream module; basic nginx does NOT
         "sudo apt-get install -y nginx-full\n"
-        # Enable stream module (required for nginx stream directive)
-        # Debian: load_module must be at top level, before 'events' block
-        f"sudo tee {stream_load_module_conf} >/dev/null <<'EOF_LOAD_MODULE'\n"
-        "load_module modules/ngx_stream_module.so;\n"
-        "EOF_LOAD_MODULE\n"
         # Ensure conf.d directory exists
         "sudo mkdir -p /etc/nginx/conf.d\n"
         # Write stream config (idempotent: overwrite on each run)

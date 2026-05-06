@@ -249,7 +249,10 @@ iptables-persistent iptables-persistent/autosave_v6 boolean true
 EOF_DEBCONF
 
 sudo apt-get update -y
-sudo apt-get install -y nginx iptables-persistent
+# NOTE: Debian's nginx package on Trixie auto-loads ngx_stream_module via modules-enabled/99-stream.conf.
+# Using nginx-full explicitly ensures stream module is available.
+# Do NOT manually write modules-enabled/99-stream.conf - that causes "module already loaded" error.
+sudo apt-get install -y nginx-full iptables-persistent
 # --- AnyTLS Nginx config for node 1 (port 5105) ---
 sudo tee /etc/nginx/sites-available/v2bx-node-1.conf >/dev/null <<'EOF_NGINX'
 stream {
@@ -267,6 +270,11 @@ stream {
 }
 EOF_NGINX
 sudo ln -sf /etc/nginx/sites-available/v2bx-node-1.conf /etc/nginx/sites-enabled/v2bx-node-1.conf
+# Create base config file before symlinking (idempotent)
+sudo tee /etc/nginx/sites-available/v2bx-base-stream.conf >/dev/null <<'EOF_BASE'
+# Nginx base stream config - included by all v2bx-node-*.conf files
+# This file is required for nginx.conf include directive
+EOF_BASE
 sudo ln -sf /etc/nginx/sites-available/v2bx-base-stream.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
 sudo nginx -t && sudo systemctl reload nginx
 log "Configuring iptables connection limit (500 conn/IP on port 443)"

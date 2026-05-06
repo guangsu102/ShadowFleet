@@ -226,8 +226,10 @@ sudo systemctl is-active --quiet V2bX
 # ============================================
 
 log "Installing Nginx reverse proxy for AnyTLS passthrough"
+# NOTE: Debian's nginx-full package auto-creates modules-enabled/99-stream.conf with load_module.
+# We MUST NOT overwrite it - doing so causes "module already loaded" error.
 sudo apt-get update -y || true
-sudo apt-get install -y nginx
+sudo apt-get install -y nginx-full
 
 # AnyTLS Nginx config for node 1 (port 5105)
 sudo tee /etc/nginx/sites-available/v2bx-node-1.conf >/dev/null <<'EOF_NGINX'
@@ -246,6 +248,11 @@ stream {
 }
 EOF_NGINX
 sudo ln -sf /etc/nginx/sites-available/v2bx-node-1.conf /etc/nginx/sites-enabled/v2bx-node-1.conf
+# Create base config file before symlinking (idempotent)
+sudo tee /etc/nginx/sites-available/v2bx-base-stream.conf >/dev/null <<'EOF_BASE'
+# Nginx base stream config - included by all v2bx-node-*.conf files
+# This file is required for nginx.conf include directive
+EOF_BASE
 sudo ln -sf /etc/nginx/sites-available/v2bx-base-stream.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
 sudo nginx -t && sudo systemctl reload nginx
 
