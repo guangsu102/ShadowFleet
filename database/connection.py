@@ -42,8 +42,8 @@ class PostgresConnectionPool:
         self._max_retries = runtime_context.config.app.max_retries
         self._retry_backoff_seconds = runtime_context.config.app.retry_backoff_seconds
         self._pool = ThreadedConnectionPool(
-            minconn=min_connections,
-            maxconnections=max_connections,
+            min_connections,
+            max_connections,
             **self._build_connection_kwargs(),
         )
 
