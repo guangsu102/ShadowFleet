@@ -27,56 +27,113 @@ def test_minimal_update(connection_kwargs: dict) -> None:
     from psycopg2 import connect
     from psycopg2.pool import ThreadedConnectionPool
 
-    print("\n=== PHASE 1: Plain connect (no pool) ===")
+    print("\n=== TEST 0: Raw SQL, no placeholders, no params ===")
+    conn0 = connect(**connection_kwargs)
+    cur0 = conn0.cursor()
+    try:
+        cur0.execute("SELECT 1 AS test")
+        print(f"Raw SQL success: {cur0.fetchone()}")
+    except Exception as e:
+        print(f"Raw SQL FAILED: {type(e).__name__}: {e}")
+    conn0.close()
+
+    print("\n=== TEST 1: SQL with 1 placeholder ===")
     conn1 = connect(**connection_kwargs)
-    print(f"conn1.status: {conn1.status}")
     cur1 = conn1.cursor()
-
-    cur1.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
-    row = cur1.fetchone()
-    print(f"SELECT result: {row}")
-    print(f"cur1.description: {cur1.description}")
-
-    # Try UPDATE on same cursor
-    sql_update = "UPDATE public.v2_server SET host = %s WHERE id = %s AND name LIKE 'sf-%'"
-    params = (row[2], row[0])
-    print(f"\nUPDATE params: {params}")
-    print(f"UPDATE params len: {len(params)}")
-    print(f"SQL: {repr(sql_update)}")
-    print(f"SQL placeholder count: {sql_update.count('%s')}")
-    cur1.execute(sql_update, params)
-    print(f"rowcount: {cur1.rowcount}")
-    conn1.commit()
-    print("Plain connect UPDATE: PASSED")
-    cur1.close()
+    try:
+        cur1.execute("SELECT %s AS test", (42,))
+        print(f"1 placeholder success: {cur1.fetchone()}")
+    except Exception as e:
+        print(f"1 placeholder FAILED: {type(e).__name__}: {e}")
     conn1.close()
 
-    print("\n=== PHASE 2: ThreadedConnectionPool ===")
-    pool = ThreadedConnectionPool(1, 10, **connection_kwargs)
-    conn2 = pool.getconn()
-    print(f"conn2.status: {conn2.status}")
-
+    print("\n=== TEST 2: SQL with 2 placeholders ===")
+    conn2 = connect(**connection_kwargs)
     cur2 = conn2.cursor()
-    cur2.execute("SELECT id, name, host FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
-    row2 = cur2.fetchone()
-    print(f"SELECT result: {row2}")
+    try:
+        cur2.execute("SELECT %s AS a, %s AS b", (1, 2))
+        print(f"2 placeholders success: {cur2.fetchone()}")
+    except Exception as e:
+        print(f"2 placeholders FAILED: {type(e).__name__}: {e}")
+    conn2.close()
 
-    # Try UPDATE on same cursor
-    sql_update2 = "UPDATE public.v2_server SET host = %s WHERE id = %s AND name LIKE 'sf-%'"
-    params2 = (row2[2], row2[0])
-    print(f"\nUPDATE params: {params2}")
-    print(f"UPDATE params len: {len(params2)}")
-    print(f"SQL: {repr(sql_update2)}")
-    print(f"SQL placeholder count: {sql_update2.count('%s')}")
-    cur2.execute(sql_update2, params2)
-    print(f"rowcount: {cur2.rowcount}")
-    conn2.commit()
-    print("Pool cursor UPDATE: PASSED")
+    print("\n=== TEST 3: UPDATE with hardcoded id, 1 placeholder ===")
+    conn3 = connect(**connection_kwargs)
+    cur3 = conn3.cursor()
+    try:
+        cur3.execute(
+            "UPDATE public.v2_server SET host = 'debug-host' WHERE id = 53"
+        )
+        print(f"Hardcoded UPDATE success, rowcount={cur3.rowcount}")
+        conn3.commit()
+    except Exception as e:
+        print(f"Hardcoded UPDATE FAILED: {type(e).__name__}: {e}")
+    conn3.close()
 
-    cur2.close()
-    pool.putconn(conn2)
-    pool.closeall()
-    print("\nAll tests passed!")
+    print("\n=== TEST 4: UPDATE with 1 param ===")
+    conn4 = connect(**connection_kwargs)
+    cur4 = conn4.cursor()
+    try:
+        cur4.execute(
+            "UPDATE public.v2_server SET host = %s WHERE id = 53",
+            ("param-host-1",)
+        )
+        print(f"1 param UPDATE success, rowcount={cur4.rowcount}")
+        conn4.commit()
+    except Exception as e:
+        print(f"1 param UPDATE FAILED: {type(e).__name__}: {e}")
+    conn4.close()
+
+    print("\n=== TEST 5: UPDATE with 2 params (the failing pattern) ===")
+    conn5 = connect(**connection_kwargs)
+    cur5 = conn5.cursor()
+    try:
+        cur5.execute(
+            "UPDATE public.v2_server SET host = %s WHERE id = %s",
+            ("param-host-2", 53)
+        )
+        print(f"2 param UPDATE success, rowcount={cur5.rowcount}")
+        conn5.commit()
+    except Exception as e:
+        print(f"2 param UPDATE FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn5.close()
+
+    print("\n=== TEST 6: connection.execute() (not cursor) ===")
+    conn6 = connect(**connection_kwargs)
+    try:
+        result = conn6.execute(
+            "UPDATE public.v2_server SET host = %s WHERE id = %s",
+            ("conn-execute-host", 53)
+        )
+        print(f"connection.execute success, rowcount={result.rowcount}")
+        conn6.commit()
+    except Exception as e:
+        print(f"connection.execute FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn6.close()
+
+    print("\n=== TEST 7: Pure psycopg2.sql.SQL ===")
+    conn7 = connect(**connection_kwargs)
+    cur7 = conn7.cursor()
+    from psycopg2 import sql
+    try:
+        query = sql.SQL("UPDATE public.v2_server SET host = {} WHERE id = {}").format(
+            sql.Literal("psycopg2-sql-host"),
+            sql.Literal(53)
+        )
+        cur7.execute(query)
+        print(f"psycopg2.sql success, rowcount={cur7.rowcount}")
+        conn7.commit()
+    except Exception as e:
+        print(f"psycopg2.sql FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn7.close()
+
+    print("\nDone!")
 
     # Step 4: Try UPDATE with updated_at = literal string
     sql2 = "UPDATE public.v2_server SET host = %s, updated_at = '2026-01-01 00:00:00' WHERE id = %s AND name LIKE 'sf-%'"
