@@ -58,7 +58,8 @@ def main():
            OR rate_time_ranges IS NULL
           )
     """)
-    count = cursor.fetchone()[0]
+    result = cursor.fetchone()
+    count = result[0] if result else 0
     print(f"\nShadowFleet 节点受影响数量: {count}")
 
     confirm = input("确认执行清理? 输入 YES 继续: ")
@@ -125,7 +126,8 @@ def main():
            OR rate_time_ranges IS NULL
           )
     """)
-    remaining = cursor.fetchone()[0]
+    remaining_result = cursor.fetchone()
+    remaining = remaining_result[0] if remaining_result else 0
     print(f"  清理后残留脏数据: {remaining} 行")
 
     conn.close()
