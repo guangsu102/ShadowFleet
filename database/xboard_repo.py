@@ -412,6 +412,52 @@ class XboardRepo:
             self._logger.exception("Failed to list Xboard server groups")
             raise XboardRepoError("Failed to list Xboard server groups") from exc
 
+    def list_all_shadowfleet_nodes(self) -> list[XboardNodeRuntimeRecord]:
+        """List all ShadowFleet-managed nodes from Xboard (name starts with sf-)."""
+        sql = """
+            SELECT
+                id,
+                type,
+                host,
+                port,
+                server_port,
+                show
+            FROM public.v2_server
+            WHERE name LIKE 'sf-%%'
+            ORDER BY id ASC
+        """
+
+        def _operation() -> list[XboardNodeRuntimeRecord]:
+            with self._db_pool.cursor() as cursor:
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+            return [
+                XboardNodeRuntimeRecord(
+                    node_id=int(row[0]),
+                    node_type=str(row[1]),
+                    host=str(row[2]),
+                    port=str(row[3]),
+                    server_port=int(row[4]),
+                    show=bool(row[5]),
+                )
+                for row in rows
+            ]
+
+        try:
+            return execute_with_backoff(
+                operation_name="xboard_list_all_nodes",
+                max_retries=self._max_retries,
+                base_delay_seconds=self._retry_backoff_seconds,
+                logger=self._logger,
+                event_type_prefix="db_query",
+                func=_operation,
+                should_retry=self._should_retry_database_error,
+            )
+        except PsycopgError as exc:
+            set_event_type("db_query_failed")
+            self._logger.exception("Failed to list all ShadowFleet nodes from Xboard")
+            raise XboardRepoError("Failed to list all ShadowFleet nodes from Xboard") from exc
+
     def _update_node_visibility(self, node_id: int, visible: bool) -> None:
         sql = """
             UPDATE public.v2_server

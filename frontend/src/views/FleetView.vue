@@ -13,6 +13,7 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NPopconfirm,
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
@@ -43,6 +44,8 @@ const formTaskType = ref<string | null>(null)
 const formReason = ref('')
 const formForceStrategy = ref<string | null>(null)
 const submitting = ref(false)
+const syncing = ref(false)
+const deletingNodeId = ref<number | null>(null)
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -216,6 +219,36 @@ async function submitManualTask() {
   }
 }
 
+// ── Delete Node ─────────────────────────────────────────────────────────────────
+async function deleteNode(xboardNodeId: number) {
+  deletingNodeId.value = xboardNodeId
+  try {
+    await apiClient.delete(`/nodes/${xboardNodeId}`)
+    message.success(`节点 #${xboardNodeId} 已删除`)
+    await fetchSnapshot()
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
+    message.error(axiosErr.response?.data?.error || axiosErr.response?.data?.message || axiosErr.message || '删除失败')
+  } finally {
+    deletingNodeId.value = null
+  }
+}
+
+// ── Sync with Xboard ────────────────────────────────────────────────────────────
+async function syncWithXboard() {
+  syncing.value = true
+  try {
+    const { data } = await apiClient.post<{ orphan_local_deleted: number; orphan_xboard_deleted: number; already_synced: number }>('/nodes/sync')
+    message.success(`同步完成：删除本地孤立节点 ${data.orphan_local_deleted}，已同步 ${data.already_synced}`)
+    await fetchSnapshot()
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
+    message.error(axiosErr.response?.data?.error || axiosErr.response?.data?.message || axiosErr.message || '同步失败')
+  } finally {
+    syncing.value = false
+  }
+}
+
 // ── Watchers ──────────────────────────────────────────────────────────────────
 function onSelectedNodeChange(val: number | null) {
   selectedNodeId.value = val
@@ -282,6 +315,22 @@ const nodeTableColumns = [
     ellipsis: { tooltip: true },
     render: (row: FleetNodeDashboardRowResponse) => row.last_error ?? '—',
   },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 100,
+    render: (row: FleetNodeDashboardRowResponse) =>
+      row.status !== 'deleted' ? h(NPopconfirm, {
+        onPositiveClick: () => deleteNode(row.xboard_node_id),
+      }, {
+        trigger: () => h(NButton, {
+          size: 'small',
+          type: 'error',
+          loading: deletingNodeId.value === row.xboard_node_id,
+        }, { default: () => '删除' }),
+        default: () => `确认删除节点 ${row.node_name}？`,
+      }) : null,
+  },
 ]
 
 const eventsColumns = [
@@ -327,6 +376,9 @@ onUnmounted(() => {
         <p class="fleet-subtitle">{{ t('fleet.headerDesc') }}</p>
       </div>
       <div class="fleet-header-actions">
+        <NButton type="info" :loading="syncing" @click="syncWithXboard">
+          {{ syncing ? '同步中...' : '同步 Xboard' }}
+        </NButton>
         <div :class="['fleet-sse-badge', sseConnected ? 'fleet-sse-live' : 'fleet-sse-offline']">
           <span class="fleet-sse-dot"></span>
           {{ sseConnected ? t('fleet.sseConnected') : t('fleet.sseDisconnected') }}

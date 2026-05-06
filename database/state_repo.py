@@ -453,3 +453,27 @@ class StateRepo:
                     f"Fleet node not found for xboard_node_id={xboard_node_id}"
                 )
 
+    def list_active_nodes(self) -> list[FleetNodeRecord]:
+        """List all active (non-deleted) nodes from local SQLite."""
+        sql = "SELECT * FROM fleet_nodes WHERE is_deleted = 0 ORDER BY id ASC"
+        with self._sqlite_manager.connection() as connection:
+            rows = connection.execute(sql).fetchall()
+        return [map_fleet_node_record(row) for row in rows]
+
+    def mark_node_deleted(self, xboard_node_id: int, reason: str | None = None) -> None:
+        """Mark a node as deleted in local SQLite."""
+        sql = """
+            UPDATE fleet_nodes
+            SET is_deleted = 1, status = 'deleted', updated_at = ?, deleted_at = ?
+            WHERE xboard_node_id = ?
+        """
+        timestamp = utcnow_iso()
+        with self._sqlite_manager.connection() as connection:
+            cursor = connection.execute(sql, (timestamp, timestamp, xboard_node_id))
+            if cursor.rowcount == 0:
+                raise FleetNodeNotFoundError(
+                    f"Fleet node not found for xboard_node_id={xboard_node_id}"
+                )
+        set_event_type("sqlite_node_marked_deleted")
+        self._logger.info("Marked node deleted locally xboard_node_id=%s", xboard_node_id)
+

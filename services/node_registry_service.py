@@ -474,3 +474,87 @@ class NodeRegistryService:
                 "Node delete failed; manual review required"
             ) from exc
 
+    def sync_with_xboard(self) -> dict[str, int]:
+        """
+        Synchronize local node records with xboard.
+        - xboard has node, local doesn't → mark local as deleted (orphan)
+        - local has node, xboard doesn't → mark local as deleted
+        - Both have same node_name → no action (already synced)
+
+        Returns summary: {orphan_local_deleted, orphan_xboard_deleted, already_synced}
+        """
+        from dataclasses import dataclass
+
+        @dataclass
+        class SyncSummary:
+            orphan_local_deleted: int = 0
+            orphan_xboard_deleted: int = 0
+            already_synced: int = 0
+
+        summary = SyncSummary()
+
+        xboard_nodes = self._xboard_repo.list_all_shadowfleet_nodes()
+        local_nodes = self._state_repo.list_active_nodes()
+
+        xboard_names = {self._strip_sf_prefix(n.node_name) for n in xboard_nodes}
+        local_names = {n.node_name for n in local_nodes}
+
+        local_by_name = {n.node_name: n for n in local_nodes}
+
+        for node in xboard_nodes:
+            name = self._strip_sf_prefix(node.node_name)
+            if name in local_names:
+                summary.already_synced += 1
+            else:
+                self._logger.info(
+                    "Found orphan xboard node without local record: id=%s name=%s",
+                    node.node_id,
+                    node.node_name,
+                )
+                summary.orphan_xboard_deleted += 1
+
+        for local_node in local_nodes:
+            if local_node.node_name not in xboard_names:
+                self._logger.info(
+                    "Found orphan local node without xboard record: id=%s xboard_node_id=%s name=%s. Marking deleted.",
+                    local_node.id,
+                    local_node.xboard_node_id,
+                    local_node.node_name,
+                )
+                self._state_repo.mark_node_deleted(
+                    xboard_node_id=local_node.xboard_node_id,
+                    reason="sync: node not found in xboard",
+                )
+                self._state_repo.create_event(
+                    FleetNodeEventCreateRequest(
+                        node_id=local_node.id,
+                        xboard_node_id=local_node.xboard_node_id,
+                        event_type="node_sync_deleted",
+                        correlation_id=self._runtime_context.correlation_id,
+                        from_status=local_node.status,
+                        to_status="deleted",
+                        message=f"Node deleted during xboard sync: not found in xboard",
+                    )
+                )
+                summary.orphan_local_deleted += 1
+
+        set_event_type("node_sync_completed")
+        self._logger.info(
+            "Xboard sync completed: orphan_local_deleted=%s orphan_xboard_deleted=%s already_synced=%s",
+            summary.orphan_local_deleted,
+            summary.orphan_xboard_deleted,
+            summary.already_synced,
+        )
+        return {
+            "orphan_local_deleted": summary.orphan_local_deleted,
+            "orphan_xboard_deleted": summary.orphan_xboard_deleted,
+            "already_synced": summary.already_synced,
+        }
+
+    @staticmethod
+    def _strip_sf_prefix(name: str) -> str:
+        """Strip sf- prefix from node name for comparison."""
+        if name.startswith("sf-"):
+            return name[3:]
+        return name
+

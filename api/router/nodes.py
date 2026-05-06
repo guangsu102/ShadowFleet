@@ -9,6 +9,7 @@ from services.dashboard_models import FleetNodeDashboardRow
 from services.dashboard_service import DashboardService
 from services.runtime_service import RuntimeContext
 from database.state_models import FleetNodeStatus
+from database.xboard_repo import XboardNodeNotFoundError
 
 
 router = APIRouter(prefix="/api/v1/nodes")
@@ -113,3 +114,34 @@ async def update_node_status(
         if row.xboard_node_id == node_id:
             return _to_response(row)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
+
+
+@router.delete("/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_node(
+    node_id: int,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> None:
+    from services.node_registry_service import NodeRegistryService, NodeRegistryServiceError
+    try:
+        NodeRegistryService(ctx).delete_node(node_id)
+    except XboardNodeNotFoundError:
+        pass
+    except NodeRegistryServiceError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+class SyncResultResponse(BaseModel):
+    orphan_local_deleted: int
+    orphan_xboard_deleted: int
+    already_synced: int
+
+
+@router.post("/sync", response_model=SyncResultResponse)
+async def sync_nodes(
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> SyncResultResponse:
+    from services.node_registry_service import NodeRegistryService
+    result = NodeRegistryService(ctx).sync_with_xboard()
+    return SyncResultResponse(**result)
