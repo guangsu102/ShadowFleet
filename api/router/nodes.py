@@ -132,8 +132,8 @@ async def delete_node(
 
 
 class SyncResultResponse(BaseModel):
+    created: int
     orphan_local_deleted: int
-    orphan_xboard_deleted: int
     already_synced: int
 
 

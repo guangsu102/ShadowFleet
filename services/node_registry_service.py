@@ -477,18 +477,18 @@ class NodeRegistryService:
     def sync_with_xboard(self) -> dict[str, int]:
         """
         Synchronize local node records with xboard.
-        - xboard has node, local doesn't → mark local as deleted (orphan)
+        - xboard has sf- node, local doesn't → create new local record
         - local has node, xboard doesn't → mark local as deleted
         - Both have same node_name → no action (already synced)
 
-        Returns summary: {orphan_local_deleted, orphan_xboard_deleted, already_synced}
+        Returns summary: {created, orphan_local_deleted, already_synced}
         """
         from dataclasses import dataclass
 
         @dataclass
         class SyncSummary:
+            created: int = 0
             orphan_local_deleted: int = 0
-            orphan_xboard_deleted: int = 0
             already_synced: int = 0
 
         summary = SyncSummary()
@@ -496,25 +496,40 @@ class NodeRegistryService:
         xboard_nodes = self._xboard_repo.list_all_shadowfleet_nodes()
         local_nodes = self._state_repo.list_active_nodes()
 
-        xboard_names = {self._strip_sf_prefix(n.node_name) for n in xboard_nodes}
+        xboard_names_stripped = {self._strip_sf_prefix(n.node_name) for n in xboard_nodes}
         local_names = {n.node_name for n in local_nodes}
 
-        local_by_name = {n.node_name: n for n in local_nodes}
-
         for node in xboard_nodes:
-            name = self._strip_sf_prefix(node.node_name)
-            if name in local_names:
+            name_stripped = self._strip_sf_prefix(node.node_name)
+            if name_stripped in local_names:
                 summary.already_synced += 1
             else:
                 self._logger.info(
-                    "Found orphan xboard node without local record: id=%s name=%s",
+                    "Found xboard node without local record, creating new: id=%s name=%s type=%s",
                     node.node_id,
                     node.node_name,
+                    node.node_type,
                 )
-                summary.orphan_xboard_deleted += 1
+                try:
+                    self._state_repo.create_node(
+                        FleetNodeCreateRequest(
+                            xboard_node_id=node.node_id,
+                            node_name=name_stripped,
+                            node_type=node.node_type,
+                            status="offline",
+                            status_reason="sync: created from xboard",
+                        )
+                    )
+                    summary.created += 1
+                except StateRepoError as exc:
+                    self._logger.warning(
+                        "Failed to create local record for xboard node id=%s: %s",
+                        node.node_id,
+                        exc,
+                    )
 
         for local_node in local_nodes:
-            if local_node.node_name not in xboard_names:
+            if local_node.node_name not in xboard_names_stripped:
                 self._logger.info(
                     "Found orphan local node without xboard record: id=%s xboard_node_id=%s name=%s. Marking deleted.",
                     local_node.id,
@@ -540,14 +555,14 @@ class NodeRegistryService:
 
         set_event_type("node_sync_completed")
         self._logger.info(
-            "Xboard sync completed: orphan_local_deleted=%s orphan_xboard_deleted=%s already_synced=%s",
+            "Xboard sync completed: created=%s orphan_local_deleted=%s already_synced=%s",
+            summary.created,
             summary.orphan_local_deleted,
-            summary.orphan_xboard_deleted,
             summary.already_synced,
         )
         return {
+            "created": summary.created,
             "orphan_local_deleted": summary.orphan_local_deleted,
-            "orphan_xboard_deleted": summary.orphan_xboard_deleted,
             "already_synced": summary.already_synced,
         }
 
