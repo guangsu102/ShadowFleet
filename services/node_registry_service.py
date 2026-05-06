@@ -49,6 +49,93 @@ class NodeRegistryService:
             request.node_type,
         )
 
+        # Check if a node with the same node_name already exists (for retry scenarios)
+        existing_node = self._state_repo.get_node_by_node_name(request.node_name)
+        if existing_node is not None:
+            old_xboard_node_id = existing_node.xboard_node_id
+            self._logger.info(
+                "Found existing node for name=%s old_xboard_node_id=%s, status=%s. "
+                "Creating new xboard node and cleaning up old one.",
+                request.node_name,
+                old_xboard_node_id,
+                existing_node.status,
+            )
+
+            # Create new xboard node
+            xboard_request = XboardNodeCreateRequest(
+                node_type=request.node_type,
+                name=request.node_name,
+                host=request.host,
+                port=request.port,
+                server_port=request.server_port,
+                rate=request.rate,
+                code=request.code,
+                parent_id=request.parent_id,
+                group_ids=request.group_ids,
+                route_ids=request.route_ids,
+                tags=request.tags,
+                protocol_settings=request.protocol_settings,
+                show=request.show,
+                sort=request.sort,
+                rate_time_enable=request.rate_time_enable,
+                rate_time_ranges=request.rate_time_ranges,
+            )
+            new_xboard_node_id = self._xboard_repo.register_node(xboard_request)
+
+            # Update local record with new xboard_node_id
+            self._state_repo.update_node_xboard_id(
+                node_id=existing_node.id,
+                new_xboard_node_id=new_xboard_node_id,
+                old_xboard_node_id=old_xboard_node_id,
+            )
+            self._state_repo.update_node_status(
+                xboard_node_id=new_xboard_node_id,
+                status="provisioning",
+                status_reason=request.status_reason,
+            )
+            self._state_repo.create_event(
+                FleetNodeEventCreateRequest(
+                    node_id=existing_node.id,
+                    xboard_node_id=new_xboard_node_id,
+                    event_type="node_retry",
+                    correlation_id=self._runtime_context.correlation_id,
+                    from_status=existing_node.status,
+                    to_status="provisioning",
+                    message=f"Node registration retried. Old xboard_node_id={old_xboard_node_id} replaced with new xboard_node_id={new_xboard_node_id}.",
+                    payload={
+                        "node_name": request.node_name,
+                        "node_type": request.node_type,
+                        "host": request.host,
+                        "show": request.show,
+                        "old_xboard_node_id": old_xboard_node_id,
+                        "new_xboard_node_id": new_xboard_node_id,
+                    },
+                )
+            )
+
+            # Delete old xboard node
+            try:
+                self._xboard_repo.delete_node(old_xboard_node_id)
+                self._logger.info(
+                    "Deleted old xboard node xboard_node_id=%s for node_name=%s",
+                    old_xboard_node_id,
+                    request.node_name,
+                )
+            except XboardNodeNotFoundError:
+                self._logger.warning(
+                    "Old xboard node not found (may have been deleted already) xboard_node_id=%s",
+                    old_xboard_node_id,
+                )
+
+            set_event_type("node_registration_completed")
+            return RegisterNodeResult(
+                local_node_id=existing_node.id,
+                xboard_node_id=new_xboard_node_id,
+                status="provisioning",
+                node_name=request.node_name,
+                node_type=request.node_type,
+            )
+
         xboard_request = XboardNodeCreateRequest(
             node_type=request.node_type,
             name=request.node_name,

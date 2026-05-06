@@ -330,6 +330,21 @@ class ProvisioningTaskRepo:
         self._logger.info("Manually reset task for retry id=%s", task_id)
         return self.get_task_by_id(task_id)
 
+    def delete_task(self, task_id: int) -> bool:
+        with self._sqlite_manager.connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM fleet_provisioning_tasks WHERE id = ?",
+                (task_id,),
+            )
+            if cursor.rowcount == 0:
+                raise ProvisioningTaskNotFoundError(
+                    f"Provisioning task not found for deletion: task_id={task_id}"
+                )
+
+        set_event_type("sqlite_provision_task_deleted")
+        self._logger.info("Deleted provisioning task id=%s", task_id)
+        return True
+
     def _update_task_terminal_state(
         self,
         task_id: int,

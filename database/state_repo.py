@@ -139,6 +139,38 @@ class StateRepo:
             return None
         return map_fleet_node_record(row)
 
+    def get_node_by_node_name(self, node_name: str) -> FleetNodeRecord | None:
+        sql = "SELECT * FROM fleet_nodes WHERE node_name = ? AND is_deleted = 0"
+        with self._sqlite_manager.connection() as connection:
+            row = connection.execute(sql, (node_name.strip(),)).fetchone()
+        if row is None:
+            return None
+        return map_fleet_node_record(row)
+
+    def update_node_xboard_id(
+        self,
+        node_id: int,
+        new_xboard_node_id: int,
+        old_xboard_node_id: int,
+    ) -> None:
+        sql = """
+            UPDATE fleet_nodes
+            SET xboard_node_id = ?, updated_at = ?
+            WHERE id = ?
+        """
+        timestamp = utcnow_iso()
+        with self._sqlite_manager.connection() as connection:
+            cursor = connection.execute(sql, (new_xboard_node_id, timestamp, node_id))
+            if cursor.rowcount == 0:
+                raise FleetNodeNotFoundError(f"Fleet node not found for id={node_id}")
+        set_event_type("sqlite_node_xboard_id_updated")
+        self._logger.info(
+            "Updated local fleet node id=%s xboard_node_id: %s -> %s",
+            node_id,
+            old_xboard_node_id,
+            new_xboard_node_id,
+        )
+
     def list_nodes_by_aws_account_id(
         self,
         aws_account_id: str,

@@ -177,6 +177,18 @@ async def retry_provisioning_task(
     return _to_response(record)
 
 
+@router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_provisioning_task(
+    task_id: int,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> None:
+    try:
+        ProvisioningTaskService(ctx).delete_task(task_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
 @router.get("/manual-tasks", response_model=list[TaskResponse])
 async def list_manual_tasks(
     ctx: RuntimeContext = Depends(get_runtime_context),

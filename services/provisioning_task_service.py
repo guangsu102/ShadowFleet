@@ -10,6 +10,7 @@ from database.provisioning_task_repo import (
     ProvisioningTaskRecord,
     ProvisioningTaskRepo,
 )
+from database.state_repo import StateRepo
 from services.provisioner_service import ProvisionerService
 from services.provisioning_models import ProvisionRequest, ProvisionResult
 from services.runtime_service import RuntimeContext
@@ -40,6 +41,7 @@ class ProvisioningTaskService:
         self._runtime_context = runtime_context
         self._logger = runtime_context.logger.getChild("services.provisioning_task")
         self._task_repo = ProvisioningTaskRepo(runtime_context)
+        self._state_repo = StateRepo(runtime_context)
         self._max_attempts = runtime_context.config.app.max_retries + 1
         self._retry_backoff_seconds = runtime_context.config.app.retry_backoff_seconds
 
@@ -54,6 +56,14 @@ class ProvisioningTaskService:
         rate_time_ranges: list[Any] | None = None,
         status_reason: str | None = None,
     ) -> ProvisioningTaskSubmitResult:
+        # Check if node_name already exists
+        existing_node = self._state_repo.get_node_by_node_name(request.node_name)
+        if existing_node is not None:
+            raise ProvisioningTaskServiceError(
+                f"Node name '{request.node_name}' already exists (xboard_node_id={existing_node.xboard_node_id}, status={existing_node.status}). "
+                f"Use retry endpoint to retry a failed provisioning, or delete the existing node first."
+            )
+
         enriched = replace(
             request,
             group_ids=group_ids,
@@ -110,6 +120,16 @@ class ProvisioningTaskService:
         finally:
             set_correlation_id(original_cid)
             set_event_type("general")
+
+    def delete_task(self, task_id: int) -> None:
+        task = self._task_repo.get_task_by_id(task_id)
+        if task.status == "running":
+            raise ProvisioningTaskServiceError(
+                f"Task {task_id} is running and cannot be deleted"
+            )
+        set_event_type("provision_task_deleted")
+        self._logger.info("Deleting task id=%s", task_id)
+        self._task_repo.delete_task(task_id)
 
     def list_recent_tasks(self, limit: int = 20) -> list[ProvisioningTaskRecord]:
         return self._task_repo.list_recent_tasks(limit=limit)

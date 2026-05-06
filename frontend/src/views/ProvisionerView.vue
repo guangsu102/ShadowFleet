@@ -25,6 +25,7 @@ import {
   NCode,
   NDrawer,
   NDrawerContent,
+  NPopconfirm,
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
@@ -85,6 +86,7 @@ const showDetailDrawer = ref(false)
 const selectedTask = ref<TaskResponse | null>(null)
 const detailLoading = ref(false)
 const retryingTaskId = ref<number | null>(null)
+const deletingTaskId = ref<number | null>(null)
 
 // ── Form ──────────────────────────────────────────────────────────────────────
 const protocolType = ref('AnyTLS')
@@ -233,6 +235,23 @@ async function retryTask(id: number) {
     message.error(axiosErr.response?.data?.error || axiosErr.message || '重试失败')
   } finally {
     retryingTaskId.value = null
+  }
+}
+
+async function deleteTask(id: number) {
+  deletingTaskId.value = id
+  try {
+    await apiClient.delete(`/tasks/${id}`)
+    message.success(`任务 #${id} 已删除`)
+    showDetailDrawer.value = false
+    selectedTask.value = null
+    await fetchTasks()
+    await fetchStats()
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
+    message.error(axiosErr.response?.data?.error || axiosErr.message || '删除失败')
+  } finally {
+    deletingTaskId.value = null
   }
 }
 
@@ -401,9 +420,18 @@ const columns = [
   { title: '创建时间', key: 'created_at', render: (row: TaskResponse) => fmtTs(row.created_at) },
   { title: '锁定者', key: 'locked_by', render: (row: TaskResponse) => row.locked_by ?? '—' },
   {
-    title: '操作', key: 'actions', align: 'center' as const, width: 80,
-    render: (row: TaskResponse) =>
-      h(NButton, { size: 'small', onClick: () => openDetail(row) }, { default: () => '详情' }),
+    title: '操作', key: 'actions', align: 'center' as const, width: 160,
+    render: (row: TaskResponse) => h(NSpace, { size: 'small' }, {
+      default: () => [
+        h(NButton, { size: 'small', onClick: () => openDetail(row) }, { default: () => '详情' }),
+        row.status !== 'running' ? h(NPopconfirm, {
+          onPositiveClick: () => deleteTask(row.id),
+        }, {
+          trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' }),
+          default: () => '确认删除？',
+        }) : null,
+      ],
+    }),
   },
 ]
 
@@ -794,6 +822,21 @@ export default { name: 'ProvisionerView' }
               >
                 排队中
               </NButton>
+              <NPopconfirm
+                v-if="selectedTask.status !== 'running'"
+                @positive-click="deleteTask(selectedTask.id)"
+              >
+                <template #trigger>
+                  <NButton
+                    type="error"
+                    :loading="deletingTaskId === selectedTask.id"
+                    :disabled="deletingTaskId !== null"
+                  >
+                    删除任务
+                  </NButton>
+                </template>
+                确认删除任务 #{{ selectedTask.id }}？此操作不可撤销。
+              </NPopconfirm>
             </NSpace>
           </template>
 
