@@ -264,6 +264,43 @@ def test_compare_params_style(connection_kwargs: dict) -> None:
         traceback.print_exc()
     conn_e.close()
 
+    # --- Test F: EXACT copy of TEST 5 (single-line SQL, 3 params with datetime) ---
+    conn_f = connect(**connection_kwargs)
+    cur_f = conn_f.cursor()
+    utcnow_f = datetime.utcnow()
+    sql_f = "UPDATE public.v2_server SET host = %s, updated_at = %s WHERE id = %s"
+    params_f = ("test-3p-exact", utcnow_f, 53)
+    print(f"\nTest F (exact TEST 5 pattern, tuple): {params_f}")
+    try:
+        cur_f.execute(sql_f, params_f)
+        print(f"SUCCESS! rowcount={cur_f.rowcount}")
+        conn_f.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_f.close()
+
+    # --- Test G: multi-line SQL but NO datetime (replace with string) ---
+    conn_g = connect(**connection_kwargs)
+    cur_g = conn_g.cursor()
+    sql_g = """
+        UPDATE public.v2_server
+        SET host = %s, updated_at = %s
+        WHERE id = %s AND name LIKE 'sf-%'
+    """
+    params_g = ["192.168.1.1-no-datetime", "2026-05-06 05:17:00", 53]
+    print(f"\nTest G (multi-line, NO datetime): {params_g}, len={len(params_g)}")
+    try:
+        cur_g.execute(sql_g, params_g)
+        print(f"SUCCESS! rowcount={cur_g.rowcount}")
+        conn_g.commit()
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    conn_g.close()
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
