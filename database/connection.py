@@ -59,6 +59,7 @@ class PostgresConnectionPool:
         connection = self._acquire_connection()
         try:
             yield connection
+            connection.commit()
         except Exception:
             connection.rollback()
             set_event_type("db_transaction_failed")
