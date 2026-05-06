@@ -164,25 +164,29 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
                 cur.close()
 
     # Test: update a node
+    should_close_pool = False
     with cursor(pool) as cur:
         cur.execute("SELECT id FROM public.v2_server WHERE name LIKE 'sf-%%' LIMIT 1")
         row = cur.fetchone()
         if row is None:
             print("No sf-* nodes to test, skipping cursor pattern test")
             print("Test 3 PASSED (no nodes to test)")
-            pool.closeall()
-            return
-        node_id = row[0]
+            should_close_pool = True
+        else:
+            node_id = row[0]
+            utcnow = datetime.utcnow()
+            sql = """
+                UPDATE public.v2_server
+                SET host = %s, updated_at = %s
+                WHERE id = %s AND name LIKE 'sf-%%'
+            """
+            with cursor(pool) as cur:
+                cur.execute(sql, [f"test-{utcnow}", utcnow, node_id])
+                assert cur.rowcount == 1, f"Expected rowcount=1, got {cur.rowcount}"
 
-    utcnow = datetime.utcnow()
-    sql = """
-        UPDATE public.v2_server
-        SET host = %s, updated_at = %s
-        WHERE id = %s AND name LIKE 'sf-%%'
-    """
-    with cursor(pool) as cur:
-        cur.execute(sql, [f"test-{utcnow}", utcnow, node_id])
-        assert cur.rowcount == 1, f"Expected rowcount=1, got {cur.rowcount}"
+    if should_close_pool:
+        pool.closeall()
+        return
 
     # Verify commit persisted
     with connection(pool) as conn:
@@ -192,6 +196,7 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
         cur.close()
         assert "test-" in host, f"Expected host to contain 'test-', got {host}"
 
+    # Cleanup: with block has exited, pool is still open
     pool.closeall()
     print("Test 3 PASSED")
 
