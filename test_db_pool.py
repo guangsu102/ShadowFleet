@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -65,8 +65,8 @@ def test_threaded_connection_pool(connection_kwargs: dict) -> None:
 
 
 def test_update_with_utcnow(connection_kwargs: dict) -> None:
-    """Test 2: Reproduce the original bug - UPDATE with %s and datetime.utcnow()."""
-    print("\n=== Test 2: UPDATE with datetime.utcnow() ===")
+    """Test 2: Reproduce the original bug - UPDATE with %s and datetime."""
+    print("\n=== Test 2: UPDATE with datetime ===")
     from psycopg2.pool import ThreadedConnectionPool
 
     pool = ThreadedConnectionPool(1, 10, **connection_kwargs)
@@ -91,7 +91,6 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
     else:
         node_id, name, old_host = row
         print(f"Found node: id={node_id} name={name} host={old_host}")
-        # Temporarily set host to something else
         cur.execute(
             "UPDATE public.v2_server SET host = '127.0.0.1' WHERE id = %s",
             (node_id,),
@@ -101,20 +100,20 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
     cur.close()
     pool.putconn(conn)
 
-    # Now test the actual problematic pattern: UPDATE with %s placeholders and datetime.utcnow()
-    conn = pool.getconn()
-    cur = conn.cursor()
-    utcnow = datetime.utcnow()
+    # Now test the actual problematic pattern: UPDATE with %s placeholders and datetime
+    utcnow = datetime.now(timezone.utc)
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
         WHERE id = %s AND name LIKE 'sf-%'
     """
-    parameters = ("192.168.1.1", utcnow, node_id)
 
     print(f"Executing: {sql.strip()}")
-    print(f"Parameters: {parameters}")
-    cur.execute(sql, parameters)
+    print(f"Parameters: ('192.168.1.1', {utcnow}, {node_id})")
+
+    conn = pool.getconn()
+    cur = conn.cursor()
+    cur.execute(sql, ("192.168.1.1", utcnow, node_id))
     print(f"rowcount: {cur.rowcount}")
     conn.commit()
     assert cur.rowcount == 1, f"Expected rowcount=1, got {cur.rowcount}"
@@ -174,7 +173,7 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
             return
         node_id = row[0]
 
-    utcnow = datetime.utcnow()
+    utcnow = datetime.now(timezone.utc)
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
@@ -226,10 +225,10 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
     # Simulate the BUGGY pattern (what the old code did):
     # connection with autocommit=False but NEVER calling commit()
     conn = pool.getconn()
-    conn.autocommit = False  # This is what PooledDB did
+    conn.autocommit = False
     cur = conn.cursor()
 
-    utcnow = datetime.utcnow()
+    utcnow = datetime.now(timezone.utc)
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
@@ -238,12 +237,9 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
     try:
         cur.execute(sql, ("buggy-test", utcnow, node_id))
         print(f"execute succeeded, rowcount={cur.rowcount}")
-        # BUG: no commit! Connection goes back to pool in inconsistent state
-        # Let's try to fetch with the same cursor
         cur.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))
         host = cur.fetchone()[0]
         print(f"Read back host: {host}")
-        # Rollback to clean up
         conn.rollback()
     except Exception as e:
         print(f"Exception during buggy pattern: {type(e).__name__}: {e}")
@@ -252,7 +248,7 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
     cur.close()
     pool.putconn(conn)
 
-    # Now check if the update persisted (it shouldn't without commit)
+    # Check if the update persisted (it shouldn't without commit)
     conn = pool.getconn()
     cur = conn.cursor()
     cur.execute("SELECT host FROM public.v2_server WHERE id = %s", (node_id,))

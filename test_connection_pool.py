@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
-from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).parent))
 from database.connection import PostgresConnectionPool
@@ -27,55 +27,45 @@ def load_config(config_path: str | None = None) -> dict:
         config_path = "config.yaml"
     path = Path(config_path)
     if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
+        raise FileNotFoundError(f"Config file not found: {path}")
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
-class MinimalAppRuntimeConfig(BaseModel):
-    request_timeout_seconds: int = 10
-    max_retries: int = 3
-    retry_backoff_seconds: float = 1.0
+def build_runtime_context(cfg: dict) -> SimpleNamespace:
+    """Build a minimal RuntimeContext mock that PostgresConnectionPool expects."""
+    xboard_cfg = cfg.get("xboard", {})
+    app_cfg = cfg.get("app", {})
+
+    config = SimpleNamespace(
+        xboard=SimpleNamespace(
+            host=xboard_cfg.get("host", "localhost"),
+            port=xboard_cfg.get("port", 5432),
+            database=xboard_cfg.get("database", "xboard"),
+            user=xboard_cfg.get("user", "postgres"),
+            password=xboard_cfg.get("password", ""),
+            sslmode=xboard_cfg.get("sslmode", "prefer"),
+        ),
+        app=SimpleNamespace(
+            request_timeout_seconds=app_cfg.get("request_timeout_seconds", 10),
+            max_retries=app_cfg.get("max_retries", 3),
+            retry_backoff_seconds=app_cfg.get("retry_backoff_seconds", 1.0),
+        ),
+    )
+    logger = SimpleNamespace(
+        getChild=lambda name: logger,
+    )
+
+    return SimpleNamespace(
+        config=config,
+        logger=logger,
+        correlation_id="test",
+    )
 
 
-class MinimalXboardConfig(BaseModel):
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str | None = None
-    ssl_mode: str = "prefer"
-
-
-class MinimalConfig(BaseModel):
-    app: MinimalAppRuntimeConfig = MinimalAppRuntimeConfig()
-    xboard: MinimalXboardConfig | None = None
-
-
-class MinimalRuntimeContext:
-    """Minimal mock of RuntimeContext needed to create PostgresConnectionPool."""
-
-    def __init__(self, cfg: dict) -> None:
-        self.config = MinimalConfig(**cfg)
-        self.logger = MinimalLogger()
-        self.correlation_id = "test-correlation-id"
-
-
-class MinimalLogger:
-    def getChild(self, name: str):
-        return MinimalLogger()
-
-    def exception(self, msg, *args):
-        print(f"[EXCEPTION] {msg % args}")
-
-    def info(self, msg, *args):
-        print(f"[INFO] {msg % args}")
-
-
-def test_pool_initialization(config: dict) -> None:
+def test_pool_initialization(runtime) -> None:
     """Test 1: Pool initializes correctly."""
     print("\n=== Test 1: Pool initialization ===")
-    runtime = MinimalRuntimeContext(config)
     pool = PostgresConnectionPool(runtime)
     print("Pool created successfully")
     pool.close()
@@ -118,16 +108,17 @@ def test_update_node_host(pool: PostgresConnectionPool) -> None:
             print(f"Found node id={node_id}")
 
     # Test the exact pattern that was failing
-    utcnow = datetime.utcnow()
+    utcnow = datetime.now(timezone.utc)
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
         WHERE id = %s AND name LIKE 'sf-%'
     """
-    parameters = (f"pool-test-{utcnow}", utcnow, node_id)
+    params = ("pool-test-" + str(utcnow), utcnow, node_id)
 
+    print(f"Parameters: {params}")
     with pool.cursor() as cursor:
-        cursor.execute(sql, parameters)
+        cursor.execute(sql, params)
         print(f"rowcount: {cursor.rowcount}")
         assert cursor.rowcount == 1, f"Expected rowcount=1, got {cursor.rowcount}"
 
@@ -156,11 +147,10 @@ def test_concurrent_connections(pool: PostgresConnectionPool) -> None:
 
     def worker(worker_id: int) -> None:
         try:
-            utcnow = datetime.utcnow()
             with pool.cursor() as cursor:
                 cursor.execute("SELECT id FROM public.v2_server LIMIT 1")
                 row = cursor.fetchone()
-                host = f"worker-{worker_id}-{utcnow}"
+                host = f"worker-{worker_id}"
                 if row:
                     cursor.execute(
                         "UPDATE public.v2_server SET host = %s WHERE id = %s",
@@ -194,8 +184,8 @@ def main() -> None:
 
     print(f"Testing against xboard at {config['xboard']['host']}:{config['xboard']['port']}")
 
-    test_pool_initialization(config)
-    runtime = MinimalRuntimeContext(config)
+    runtime = build_runtime_context(config)
+    test_pool_initialization(runtime)
     pool = PostgresConnectionPool(runtime)
 
     try:
