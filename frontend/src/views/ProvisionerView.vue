@@ -259,7 +259,7 @@ async function deleteTask(id: number) {
 function buildDefaultTags(): string {
   const regionTag = REGION_TAGS[region.value] ?? region.value
   return JSON.stringify(
-    { protocol: protocolType.value.toLowerCase(), region: regionTag, asset: assetType.value },
+    [`protocol:${protocolType.value.toLowerCase()}`, `region:${regionTag}`, `asset:${assetType.value}`],
     null,
     2
   )
