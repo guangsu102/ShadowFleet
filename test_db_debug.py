@@ -35,6 +35,9 @@ def test_minimal_update(connection_kwargs: dict) -> None:
     row = cur.fetchone()
     node_id = row[0]
     print(f"Got node_id={node_id}, type={type(node_id)}")
+    print(f"  cur.description: {cur.description}")
+    print(f"  cur._result: {cur._result}")
+    print(f"  cur._prefetch: {cur._prefetch}")
 
     # Step 2: Check if updated_at column exists
     cur.execute(
