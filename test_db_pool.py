@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -100,7 +100,7 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
     pool.putconn(conn)
 
     # Now test the actual problematic pattern with a fresh connection from the pool
-    utcnow = datetime.now(timezone.utc)
+    utcnow = datetime.utcnow()
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
@@ -174,7 +174,7 @@ def test_connection_manager_pattern(connection_kwargs: dict) -> None:
             return
         node_id = row[0]
 
-    utcnow = datetime.now(timezone.utc)
+    utcnow = datetime.utcnow()
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
@@ -227,7 +227,7 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
     conn2.autocommit = False
     cur2 = conn2.cursor()
 
-    utcnow = datetime.now(timezone.utc)
+    utcnow = datetime.utcnow()
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s

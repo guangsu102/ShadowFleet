@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -132,7 +132,7 @@ def test_update_node_host(pool: PostgresConnectionPool) -> None:
             print(f"Found node id={node_id}")
 
     # Test the exact pattern that was failing
-    utcnow = datetime.now(timezone.utc)
+    utcnow = datetime.utcnow()
     sql = """
         UPDATE public.v2_server
         SET host = %s, updated_at = %s
