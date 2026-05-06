@@ -34,26 +34,20 @@ def test_minimal_update(connection_kwargs: dict) -> None:
     cur.execute("SELECT id FROM public.v2_server WHERE name LIKE 'sf-%' LIMIT 1")
     row = cur.fetchone()
     node_id = row[0]
-    print(f"Got node_id={node_id}, type={type(node_id)}")
+    print(f"Got node_id={node_id}, type={type(node_id)}, repr={repr(node_id)}")
     print(f"  cur.description: {cur.description}")
-    print(f"  cur._result: {cur._result}")
-    print(f"  cur._prefetch: {cur._prefetch}")
+    print(f"  cur.arraysize: {cur.arraysize}")
+    print(f"  conn.autocommit: {conn.autocommit}")
+    print(f"  conn.status: {conn.status}")
+    # Commit after SELECT to finalize the transaction
+    conn.commit()
 
-    # Step 2: Check if updated_at column exists
-    cur.execute(
-        "SELECT column_name, data_type FROM information_schema.columns "
-        "WHERE table_name = 'v2_server' AND column_name = 'updated_at'"
-    )
-    col_row = cur.fetchone()
-    print(f"updated_at column info: {col_row}")
-
-    # Step 3: Try UPDATE with ONLY host (no updated_at)
+    # Step 2: Try UPDATE on same cursor (reuse)
     sql1 = "UPDATE public.v2_server SET host = %s WHERE id = %s AND name LIKE 'sf-%'"
     params1 = ("test-host-only", node_id)
-    print(f"\nTest A: UPDATE without updated_at")
+    print(f"\nTest A: UPDATE without updated_at (reuse cursor after commit)")
     print(f"  SQL placeholders: 2")
-    print(f"  Params: {params1}")
-    print(f"  Params len: {len(params1)}")
+    print(f"  Params: {params1}, len={len(params1)}")
     cur.execute(sql1, params1)
     print(f"  rowcount: {cur.rowcount}")
     conn.commit()
