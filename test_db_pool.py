@@ -80,7 +80,7 @@ def test_update_with_utcnow(connection_kwargs: dict) -> None:
         print("No sf-* nodes found in xboard, creating a test node first...")
         cur.execute(
             """
-            INSERT INTO public.v2_server (name, host, port, server_port, rate, node_type, show)
+            INSERT INTO public.v2_server (name, host, port, server_port, rate, type, show)
             VALUES ('sf-test-temp', '127.0.0.1', '7001', 22, 0, 'anytls', true)
             RETURNING id
             """
@@ -212,7 +212,7 @@ def test_reproduce_original_bug(connection_kwargs: dict) -> None:
     if row is None:
         print("No sf-* nodes, creating one...")
         cur.execute(
-            "INSERT INTO public.v2_server (name, host, port, server_port, rate, node_type, show) "
+            "INSERT INTO public.v2_server (name, host, port, server_port, rate, type, show) "
             "VALUES ('sf-test-bug', '1.2.3.4', '7001', 22, 0, 'anytls', true) RETURNING id"
         )
         node_id = cur.fetchone()[0]

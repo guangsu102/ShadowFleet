@@ -16,10 +16,9 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
+from pydantic import BaseModel
 
-# Add project root to path so we can import the database module
 sys.path.insert(0, str(Path(__file__).parent))
-
 from database.connection import PostgresConnectionPool
 
 
@@ -33,33 +32,51 @@ def load_config(config_path: str | None = None) -> dict:
         return yaml.safe_load(f)
 
 
-class MockRuntimeContext:
+class MinimalAppRuntimeConfig(BaseModel):
+    request_timeout_seconds: int = 10
+    max_retries: int = 3
+    retry_backoff_seconds: float = 1.0
+
+
+class MinimalXboardConfig(BaseModel):
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str | None = None
+    ssl_mode: str = "prefer"
+
+
+class MinimalConfig(BaseModel):
+    app: MinimalAppRuntimeConfig = MinimalAppRuntimeConfig()
+    xboard: MinimalXboardConfig | None = None
+
+
+class MinimalRuntimeContext:
     """Minimal mock of RuntimeContext needed to create PostgresConnectionPool."""
 
-    def __init__(self, config: dict) -> None:
-        self.config = config
-        self.logger = MockLogger()
+    def __init__(self, cfg: dict) -> None:
+        self.config = MinimalConfig(**cfg)
+        self.logger = MinimalLogger()
         self.correlation_id = "test-correlation-id"
 
 
-class MockLogger:
+class MinimalLogger:
     def getChild(self, name: str):
-        return MockLogger()
+        return MinimalLogger()
 
+    def exception(self, msg, *args):
+        print(f"[EXCEPTION] {msg % args}")
 
-class MockConfig:
-    def __init__(self, cfg: dict) -> None:
-        self.app = cfg.get("app", {})
-        self.xboard = cfg.get("xboard")
-        self.logging = cfg.get("logging", {})
+    def info(self, msg, *args):
+        print(f"[INFO] {msg % args}")
 
 
 def test_pool_initialization(config: dict) -> None:
     """Test 1: Pool initializes correctly."""
     print("\n=== Test 1: Pool initialization ===")
-    mock_config = MockConfig(config)
-    mock_runtime = MockRuntimeContext(mock_config)
-    pool = PostgresConnectionPool(mock_runtime)
+    runtime = MinimalRuntimeContext(config)
+    pool = PostgresConnectionPool(runtime)
     print("Pool created successfully")
     pool.close()
     print("Pool closed successfully")
@@ -89,7 +106,7 @@ def test_update_node_host(pool: PostgresConnectionPool) -> None:
             print("No sf-* nodes found, creating a test node...")
             cursor.execute(
                 """
-                INSERT INTO public.v2_server (name, host, port, server_port, rate, node_type, show)
+                INSERT INTO public.v2_server (name, host, port, server_port, rate, type, show)
                 VALUES ('sf-test-pool', '1.2.3.4', '7001', 22, 0, 'anytls', true)
                 RETURNING id
                 """
@@ -178,9 +195,8 @@ def main() -> None:
     print(f"Testing against xboard at {config['xboard']['host']}:{config['xboard']['port']}")
 
     test_pool_initialization(config)
-    mock_config = MockConfig(config)
-    mock_runtime = MockRuntimeContext(mock_config)
-    pool = PostgresConnectionPool(mock_runtime)
+    runtime = MinimalRuntimeContext(config)
+    pool = PostgresConnectionPool(runtime)
 
     try:
         test_simple_query(pool)
