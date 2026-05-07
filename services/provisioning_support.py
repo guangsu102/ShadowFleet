@@ -309,13 +309,20 @@ def resolve_default_instance_spec(
             "Please specify an instance type manually."
         )
 
-    # Prefer 2GB (2核2G), then 4GB (2核4G), then closest
+    # Prefer 2GB (2核2G), then 4GB (2核4G), then closest (but at least 1GB)
     two_gb = [s for s in two_core_specs if abs(s.memory_gb - 2.0) < 0.5]
     four_gb = [s for s in two_core_specs if abs(s.memory_gb - 4.0) < 0.5]
 
     candidates = two_gb if two_gb else four_gb
     if not candidates:
-        candidates = two_core_specs
+        # Fall back to all 2 vCPU specs with at least 1GB memory
+        candidates = [s for s in two_core_specs if s.memory_gb >= 1.0]
+
+    if not candidates:
+        raise ProvisionerServiceError(
+            f"[{correlation_id}] No suitable 2 vCPU arm64 instance with >= 1GB memory in region {aws_credential.region}. "
+            "Please specify an instance type manually."
+        )
 
     best = candidates[0]
     runtime_context.logger.info(
