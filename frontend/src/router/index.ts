@@ -49,11 +49,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/SentinelView.vue'),
       },
       {
-        path: 'tasks',
-        name: 'Tasks',
-        component: () => import('@/views/TasksView.vue'),
-      },
-      {
         path: 'system',
         name: 'System',
         component: () => import('@/views/SystemView.vue'),
