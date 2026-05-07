@@ -16,8 +16,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="清理孤儿的 Allocation 记录")
     parser.add_argument(
         "--db",
-        default="/data/shadowfleet.db",
-        help=f"SQLite 数据库路径 (默认: /data/shadowfleet.db)",
+        default="/home/shadowfleet/ShadowFleet/data/shadowfleet.db",
+        help=f"SQLite 数据库路径 (默认: /home/shadowfleet/ShadowFleet/data/shadowfleet.db)",
     )
     parser.add_argument(
         "--yes",
