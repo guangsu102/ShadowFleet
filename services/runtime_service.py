@@ -37,12 +37,12 @@ class ConfigHolder:
 @dataclass(frozen=True)
 class RuntimeContext:
     config: AppConfig
-    config_holder: ConfigHolder | None = None
     logger: logging.Logger
     tg_reporter: TelegramReporter
     correlation_id: str
-    db_pool: PostgresConnectionPool | None
-    sqlite_manager: SqliteConnectionManager | None
+    db_pool: PostgresConnectionPool | None = None
+    sqlite_manager: SqliteConnectionManager | None = None
+    config_holder: ConfigHolder | None = None
     daemon_artifact_base_url: str | None = None
     daemon_ipv6: str | None = None
 
