@@ -18,7 +18,7 @@ services:
     volumes:
       - ./data/shadowfleet.db:/data/shadowfleet.db
       - ./data/logs:/app/logs
-      - ./data/config:/data/config:ro
+      - ./data/config:/data/config:rw
     ports:
       - "${API_PORT:-8000}:8000"
     restart: unless-stopped
@@ -55,7 +55,7 @@ services:
       - ./data/logs:/app/logs
       - ./data/key_pairs:/app/key_pairs
       - shadowfleet-artifacts:/var/www/shadowfleet-artifacts
-      - ./data/config:/data/config:ro
+      - ./data/config:/data/config:rw
     ports:
       - "${PHONE_HOME_PORT:-8787}:8787"
       - "${ARTIFACT_CACHE_PORT:-8080}:8080"
