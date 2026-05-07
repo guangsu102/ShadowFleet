@@ -78,23 +78,21 @@ def query_aws_instance_types(region_name: str = "ap-northeast-1",
             print(f"  ... 还有 {len(two_vcpu_instances) - 20} 个实例")
 
         print("\n" + "=" * 80)
-        print("代码会选择 (按排序 key): (vcpu, abs(memory-2.0), series_priority, name)")
+        print("最终选择逻辑: 2GB -> 4GB -> 8GB -> 1GB")
         print("=" * 80)
-        # 模拟代码逻辑
-        def sort_key(inst):
-            if inst['name'].startswith("t4g"):
-                priority = 1
-            elif inst['name'].startswith("c6g"):
-                priority = 2
-            elif inst['name'].startswith("m6g"):
-                priority = 3
-            else:
-                priority = 9
-            return (inst['vcpu'], inst['distance_to_2gb'], priority, inst['name'])
 
-        two_vcpu_instances.sort(key=sort_key)
-        best = two_vcpu_instances[0]
-        print(f"会选择: {best['name']} (vcpu={best['vcpu']}, memory={best['memory_gb']}GB)")
+        # Priority: 2GB -> 4GB -> 8GB -> 1GB (fallback)
+        two_gb = [s for s in two_vcpu_instances if abs(s['memory_gb'] - 2.0) < 0.5]
+        four_gb = [s for s in two_vcpu_instances if abs(s['memory_gb'] - 4.0) < 0.5]
+        eight_gb = [s for s in two_vcpu_instances if abs(s['memory_gb'] - 8.0) < 0.5]
+        one_gb = [s for s in two_vcpu_instances if abs(s['memory_gb'] - 1.0) < 0.5]
+
+        for tier_name, candidates in [("2GB", two_gb), ("4GB", four_gb), ("8GB", eight_gb), ("1GB", one_gb)]:
+            if candidates:
+                candidates.sort(key=lambda x: x['name'])
+                best = candidates[0]
+                print(f"[优先] 选择: {best['name']} (vcpu={best['vcpu']}, memory={best['memory_gb']}GB, tier={tier_name})")
+                break
 
     except ClientError as e:
         print(f"AWS API 错误: {e}")
