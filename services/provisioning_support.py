@@ -309,29 +309,40 @@ def resolve_default_instance_spec(
             "Please specify an instance type manually."
         )
 
-    # Prefer 2GB (2核2G), then 4GB (2核4G), then closest (but at least 1GB)
+    # Priority: 2GB -> 4GB -> 8GB -> 1GB (fallback)
     two_gb = [s for s in two_core_specs if abs(s.memory_gb - 2.0) < 0.5]
     four_gb = [s for s in two_core_specs if abs(s.memory_gb - 4.0) < 0.5]
+    eight_gb = [s for s in two_core_specs if abs(s.memory_gb - 8.0) < 0.5]
+    one_gb = [s for s in two_core_specs if abs(s.memory_gb - 1.0) < 0.5]
 
-    candidates = two_gb if two_gb else four_gb
-    if not candidates:
-        # Fall back to all 2 vCPU specs with at least 1GB memory
-        candidates = [s for s in two_core_specs if s.memory_gb >= 1.0]
-
-    if not candidates:
+    for candidates in [two_gb, four_gb, eight_gb, one_gb]:
+        if candidates:
+            best = candidates[0]
+            break
+    else:
         raise ProvisionerServiceError(
-            f"[{correlation_id}] No suitable 2 vCPU arm64 instance with >= 1GB memory in region {aws_credential.region}. "
+            f"[{correlation_id}] No suitable 2 vCPU arm64 instance in region {aws_credential.region}. "
             "Please specify an instance type manually."
         )
 
-    best = candidates[0]
+    # Determine priority tier for logging
+    if abs(best.memory_gb - 2.0) < 0.5:
+        tier = "2GB"
+    elif abs(best.memory_gb - 4.0) < 0.5:
+        tier = "4GB"
+    elif abs(best.memory_gb - 8.0) < 0.5:
+        tier = "8GB"
+    else:
+        tier = "1GB"
+
     runtime_context.logger.info(
-        "[%s] No instance_type specified, auto-resolved to %s (vcpu=%d, memory=%.1fGB, series=%s)",
+        "[%s] No instance_type specified, auto-resolved to %s (vcpu=%d, memory=%.1fGB, series=%s, tier=%s)",
         correlation_id,
         best.instance_type,
         best.vcpu,
         best.memory_gb,
         best.series_name,
+        tier,
     )
     return best.instance_type
 
