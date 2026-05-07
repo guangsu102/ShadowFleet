@@ -5,11 +5,23 @@ from pydantic import BaseModel
 
 from api.auth.dependencies import require_admin
 from api.deps import get_runtime_context
-from services.runtime_service import RuntimeContext
-from utils.config_parser import load_raw_config, save_raw_config
+from services.runtime_service import RuntimeContext, ConfigHolder
+from utils.config_parser import load_raw_config, save_raw_config, load_config
 
 
 router = APIRouter(prefix="/api/v1/config")
+
+
+def _reload_config_in_holder(ctx: RuntimeContext) -> bool:
+    """Reload config from disk and update the ConfigHolder. Returns True on success."""
+    if ctx.config_holder is None:
+        return False
+    try:
+        new_config = load_config()
+        ctx.config_holder.update_config(new_config)
+        return True
+    except Exception:
+        return False
 
 
 class ConfigResponse(BaseModel):
@@ -111,7 +123,10 @@ async def update_fleet_matrix(
     raw = load_raw_config()
     raw["fleet_matrix"] = request.fleet_matrix
     save_raw_config(None, raw)
-    return {"status": "ok", "message": "Fleet matrix updated. Restart the daemon to apply."}
+    reloaded = _reload_config_in_holder(ctx)
+    if reloaded:
+        return {"status": "ok", "message": "Fleet matrix updated and hot-reloaded."}
+    return {"status": "ok", "message": "Fleet matrix updated. Restart the daemon to apply changes."}
 
 
 @router.put("/sentinel")
@@ -140,6 +155,9 @@ async def update_sentinel(
         if value is not None:
             app[key] = value
     save_raw_config(None, raw)
+    reloaded = _reload_config_in_holder(ctx)
+    if reloaded:
+        return {"status": "ok", "message": "Sentinel settings updated and hot-reloaded."}
     return {"status": "ok", "message": "Sentinel settings updated. Restart the daemon to apply."}
 
 
@@ -163,6 +181,9 @@ async def update_fleet_scheduler(
         if value is not None:
             scheduler[key] = value
     save_raw_config(None, raw)
+    reloaded = _reload_config_in_holder(ctx)
+    if reloaded:
+        return {"status": "ok", "message": "Fleet scheduler settings updated and hot-reloaded."}
     return {"status": "ok", "message": "Fleet scheduler settings updated. Restart the daemon to apply."}
 
 
@@ -201,6 +222,9 @@ async def update_app(
         if value is not None:
             app[key] = value
     save_raw_config(None, raw)
+    reloaded = _reload_config_in_holder(ctx)
+    if reloaded:
+        return {"status": "ok", "message": "Application settings updated and hot-reloaded."}
     return {"status": "ok", "message": "Application settings updated. Restart the daemon to apply."}
 
 
@@ -217,7 +241,10 @@ async def update_logging(
     if request.log_retention_days is not None:
         logging_cfg["log_retention_days"] = request.log_retention_days
     save_raw_config(None, raw)
-    return {"status": "ok", "message": "Logging settings updated."}
+    reloaded = _reload_config_in_holder(ctx)
+    if reloaded:
+        return {"status": "ok", "message": "Logging settings updated and hot-reloaded."}
+    return {"status": "ok", "message": "Logging settings updated. Restart the daemon to apply."}
 
 
 @router.post("/validate")

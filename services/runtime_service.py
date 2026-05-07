@@ -3,19 +3,41 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import Lock
 
 from database.connection import PostgresConnectionPool
 from database.sqlite_connection import SqliteConnectionManager
 from models.config_models import AppConfig
 from models.message_models import TelegramMessage, TelegramNotificationType
-from utils.config_parser import load_config, sanitize_config_for_logging
+from utils.config_parser import load_config, save_raw_config, sanitize_config_for_logging
 from utils.logger import configure_logging, generate_correlation_id, set_correlation_id, set_event_type
 from utils.tg_reporter import TelegramReporter
+
+
+class ConfigHolder:
+    """
+    Mutable container for AppConfig that supports hot-reload.
+    Services can hold a reference to this holder and always get fresh config.
+    """
+
+    def __init__(self, config: AppConfig) -> None:
+        self._config = config
+        self._lock = Lock()
+
+    @property
+    def config(self) -> AppConfig:
+        return self._config
+
+    def update_config(self, config: AppConfig) -> None:
+        """Atomically replace the config with a new version."""
+        with self._lock:
+            self._config = config
 
 
 @dataclass(frozen=True)
 class RuntimeContext:
     config: AppConfig
+    config_holder: ConfigHolder | None = None
     logger: logging.Logger
     tg_reporter: TelegramReporter
     correlation_id: str
@@ -76,8 +98,12 @@ def build_runtime_context(config_path: str | Path | None = None) -> RuntimeConte
         sanitize_config_for_logging(config),
     )
 
+    # Create mutable config holder for hot-reload support
+    config_holder = ConfigHolder(config)
+
     runtime_context = RuntimeContext(
         config=config,
+        config_holder=config_holder,
         logger=logger,
         tg_reporter=reporter,
         correlation_id=correlation_id,

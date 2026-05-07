@@ -16,6 +16,7 @@ from services.fleet_scheduler_models import (
 )
 from services.provisioning_models import ProvisionRequest
 from services.runtime_service import RuntimeContext
+from models.config_models import AppConfig, FleetSchedulerConfig
 from utils.logger import generate_correlation_id, set_correlation_id, set_event_type
 
 
@@ -34,7 +35,6 @@ class FleetSchedulerService:
         self._asset_repo = AssetRepo(runtime_context)
         self._asset_selector = AssetSelectorService(runtime_context)
         self._cooldown = SchedulerCooldownTracker()
-        self._config = runtime_context.config.fleet_scheduler
         self._cycle_counter = 0
 
     def run_scheduler_cycle(self, triggered_by: str = "scheduled") -> SchedulerCycleResult:
@@ -189,8 +189,9 @@ class FleetSchedulerService:
 
         current_online = self._get_online_node_counts()
         pending_tasks = self._get_pending_task_counts()
+        current_config = self._get_current_config()
 
-        for region, protocol_map in self._runtime.config.fleet_matrix.items():
+        for region, protocol_map in current_config.fleet_matrix.items():
             if not self._is_region_enabled(region):
                 continue
 
@@ -226,7 +227,8 @@ class FleetSchedulerService:
 
     def _calculate_single_gap(self, region: str, protocol_type: str) -> RegionProtocolGap | None:
         """Calculate gap for a specific region/protocol combination."""
-        protocol_map = self._runtime.config.fleet_matrix.get(region)
+        current_config = self._get_current_config()
+        protocol_map = current_config.fleet_matrix.get(region)
         if protocol_map is None:
             return None
 
@@ -439,6 +441,19 @@ class FleetSchedulerService:
         if online_count < desired_count:
             return "warning"
         return "healthy"
+
+    @property
+    def _config(self) -> "FleetSchedulerConfig":
+        """Get current fleet scheduler config from holder (supports hot-reload)."""
+        if self._runtime.config_holder is not None:
+            return self._runtime.config_holder.config.fleet_scheduler
+        return self._runtime.config.fleet_scheduler
+
+    def _get_current_config(self) -> "AppConfig":
+        """Get the current AppConfig (supports hot-reload)."""
+        if self._runtime.config_holder is not None:
+            return self._runtime.config_holder.config
+        return self._runtime.config
 
     @property
     def _runtime_context(self) -> RuntimeContext:
