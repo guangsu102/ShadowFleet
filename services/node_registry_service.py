@@ -578,18 +578,6 @@ class NodeRegistryService:
                         message=f"Node deleted during xboard sync: not found in xboard",
                     )
                 )
-                # Release the allocation associated with this node
-                try:
-                    self._asset_repo.release_allocation_by_xboard_node_id(local_node.xboard_node_id)
-                    self._logger.info(
-                        "Released allocation for xboard_node_id=%s during xboard sync",
-                        local_node.xboard_node_id,
-                    )
-                except AssetNotFoundError:
-                    self._logger.debug(
-                        "No active allocation found for xboard_node_id=%s during sync",
-                        local_node.xboard_node_id,
-                    )
                 summary.orphan_local_deleted += 1
 
         set_event_type("node_sync_completed")

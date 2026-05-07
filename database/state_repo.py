@@ -461,19 +461,31 @@ class StateRepo:
         return [map_fleet_node_record(row) for row in rows]
 
     def mark_node_deleted(self, xboard_node_id: int, reason: str | None = None) -> None:
-        """Mark a node as deleted in local SQLite."""
-        sql = """
-            UPDATE fleet_nodes
-            SET is_deleted = 1, status = 'deleted', updated_at = ?, deleted_at = ?
-            WHERE xboard_node_id = ?
-        """
+        """Mark a node as deleted in local SQLite and release its asset allocation."""
         timestamp = utcnow_iso()
         with self._sqlite_manager.connection() as connection:
-            cursor = connection.execute(sql, (timestamp, timestamp, xboard_node_id))
+            # Mark node as deleted
+            cursor = connection.execute(
+                """
+                UPDATE fleet_nodes
+                SET is_deleted = 1, status = 'deleted', updated_at = ?, deleted_at = ?
+                WHERE xboard_node_id = ?
+                """,
+                (timestamp, timestamp, xboard_node_id),
+            )
             if cursor.rowcount == 0:
                 raise FleetNodeNotFoundError(
                     f"Fleet node not found for xboard_node_id={xboard_node_id}"
                 )
+            # Release asset allocation for this node
+            connection.execute(
+                """
+                UPDATE fleet_asset_allocations
+                SET allocation_status = 'released', updated_at = ?
+                WHERE xboard_node_id = ? AND allocation_status = 'allocated'
+                """,
+                (timestamp, xboard_node_id),
+            )
         set_event_type("sqlite_node_marked_deleted")
-        self._logger.info("Marked node deleted locally xboard_node_id=%s", xboard_node_id)
+        self._logger.info("Marked node deleted and released allocation locally xboard_node_id=%s", xboard_node_id)
 
