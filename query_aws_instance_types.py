@@ -103,13 +103,10 @@ def query_aws_instance_types(region_name: str = "ap-northeast-1",
     return True
 
 if __name__ == "__main__":
-    # 默认使用 ap-northeast-1 (东京)
-    region = sys.argv[1] if len(sys.argv) > 1 else "ap-northeast-1"
-    aws_access_key = sys.argv[2] if len(sys.argv) > 2 else None
-    aws_secret_key = sys.argv[3] if len(sys.argv) > 3 else None
-
-    if not aws_access_key or not aws_secret_key:
-        print("提示: 可以传入 AWS credentials: python query_aws_instance_types.py <region> <access_key> <secret_key>")
-        print("或者配置 AWS 环境变量/配置文件")
+    # 使用环境变量或命令行参数
+    import os
+    region = os.environ.get("AWS_REGION", "ap-northeast-1")
+    aws_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    aws_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 
     query_aws_instance_types(region, aws_access_key, aws_secret_key)
