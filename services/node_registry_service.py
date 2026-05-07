@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from database.asset_models import AssetNotFoundError
+from database.asset_repo import AssetRepo
 from database.state_repo import (
     FleetNodeCreateRequest,
     FleetNodeEventCreateRequest,
@@ -39,6 +41,7 @@ class NodeRegistryService:
         self._logger = runtime_context.logger.getChild("services.node_registry")
         self._xboard_repo = XboardRepo(runtime_context)
         self._state_repo = StateRepo(runtime_context)
+        self._asset_repo = AssetRepo(runtime_context)
 
     def register_node(self, request: RegisterNodeRequest) -> RegisterNodeResult:
         validate_register_request(request)
@@ -417,6 +420,18 @@ class NodeRegistryService:
                     payload={"status_reason": status_reason},
                 )
             )
+            # Release the allocation associated with this node
+            try:
+                self._asset_repo.release_allocation_by_xboard_node_id(xboard_node_id)
+                self._logger.info(
+                    "Released allocation for xboard_node_id=%s after node deletion",
+                    xboard_node_id,
+                )
+            except AssetNotFoundError:
+                self._logger.debug(
+                    "No active allocation found for xboard_node_id=%s",
+                    xboard_node_id,
+                )
             set_event_type("node_delete_completed")
             self._logger.info("Completed node delete orchestration xboard_node_id=%s", xboard_node_id)
             return NodeStateChangeResult(
@@ -448,6 +463,18 @@ class NodeRegistryService:
                         payload={"status_reason": status_reason or "xboard_node_already_absent"},
                     )
                 )
+                # Release the allocation associated with this node
+                try:
+                    self._asset_repo.release_allocation_by_xboard_node_id(xboard_node_id)
+                    self._logger.info(
+                        "Released allocation for xboard_node_id=%s after node deletion",
+                        xboard_node_id,
+                    )
+                except AssetNotFoundError:
+                    self._logger.debug(
+                        "No active allocation found for xboard_node_id=%s",
+                        xboard_node_id,
+                    )
             except Exception:
                 set_event_type("node_delete_local_finalize_failed")
                 self._logger.exception(
@@ -551,6 +578,18 @@ class NodeRegistryService:
                         message=f"Node deleted during xboard sync: not found in xboard",
                     )
                 )
+                # Release the allocation associated with this node
+                try:
+                    self._asset_repo.release_allocation_by_xboard_node_id(local_node.xboard_node_id)
+                    self._logger.info(
+                        "Released allocation for xboard_node_id=%s during xboard sync",
+                        local_node.xboard_node_id,
+                    )
+                except AssetNotFoundError:
+                    self._logger.debug(
+                        "No active allocation found for xboard_node_id=%s during sync",
+                        local_node.xboard_node_id,
+                    )
                 summary.orphan_local_deleted += 1
 
         set_event_type("node_sync_completed")
