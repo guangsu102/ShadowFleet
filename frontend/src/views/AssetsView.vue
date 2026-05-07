@@ -183,7 +183,7 @@ async function fetchAssets() {
 // ── AWS Registration Form ──────────────────────────────────────────────────────
 const awsForm = ref({
   asset_name: '',
-  region: 'us-east-1',
+  region: 'ap-northeast-1',
   account_total_vcpu: 8,
   aws_access_key: '',
   aws_secret_key: '',
@@ -201,9 +201,16 @@ const awsForm = ref({
 })
 
 const awsRegions: SelectOption[] = [
-  'us-east-1','us-west-1','us-west-2','eu-west-1','eu-west-2',
-  'eu-central-1','ap-northeast-1','ap-southeast-1','ap-southeast-2',
-].map(r => ({ label: r, value: r }))
+  { label: '美东 (us-east-1)', value: 'us-east-1' },
+  { label: '美西 (us-west-1)', value: 'us-west-1' },
+  { label: '美西2 (us-west-2)', value: 'us-west-2' },
+  { label: '伦敦 (eu-west-1)', value: 'eu-west-1' },
+  { label: '巴黎 (eu-west-2)', value: 'eu-west-2' },
+  { label: '法兰克福 (eu-central-1)', value: 'eu-central-1' },
+  { label: '东京 (ap-northeast-1)', value: 'ap-northeast-1' },
+  { label: '新加坡 (ap-southeast-1)', value: 'ap-southeast-1' },
+  { label: '悉尼 (ap-southeast-2)', value: 'ap-southeast-2' },
+]
 
 const awsProtocolOptions: SelectOption[] = [
   { label: 'AnyTLS', value: 'AnyTLS' },
@@ -238,7 +245,7 @@ const submittingAws = ref(false)
 
 function resetAwsForm() {
   awsForm.value = {
-    asset_name: '', region: 'us-east-1', account_total_vcpu: 8,
+    asset_name: '', region: 'ap-northeast-1', account_total_vcpu: 8,
     aws_access_key: '', aws_secret_key: '', aws_account_id: '',
     remarks: '', protocol_types: ['AnyTLS'], target_count: 1,
     priority: 100, allow_cdn_proxy: false, auto_create_sg: false,

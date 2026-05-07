@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 from services.monitor import MonitorService
 from services.manual_operation_service import ManualOperationService
+from services.fleet_scheduler_service import FleetSchedulerService
 from services.provisioning_task_service import ProvisioningTaskService
 from services.runtime_service import RuntimeContext, build_runtime_context, get_daemon_public_ipv6
 from utils.logger import set_correlation_id, set_event_type
@@ -503,7 +505,9 @@ def _check_host_bindable(host: str, port: int) -> bool:
     try:
         family = socket.AF_INET6 if ":" in host else socket.AF_INET
         with socket.socket(family, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # SO_REUSEADDR behavior differs on Windows; skip on Windows to avoid potential issues
+            if sys.platform != "win32":
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((host, port))
             return True
     except (OSError, socket.gaierror):
@@ -731,7 +735,6 @@ def _start_artifact_cache_server(
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    ipv6 = get_daemon_public_ipv6()
     logger.info(
         "Artifact cache HTTP server started port=%s cache_dir=%s ipv6=%s",
         app_config.artifact_cache_listen_port,
@@ -850,6 +853,47 @@ def _run_sentinel_worker(
             stop_event.wait(app_config.daemon_failure_backoff_seconds)
 
 
+def _run_scheduler_worker(
+    runtime_context: RuntimeContext,
+    *,
+    stop_event: threading.Event,
+) -> None:
+    app_config = runtime_context.config.app
+    scheduler_config = runtime_context.config.fleet_scheduler
+    logger = runtime_context.logger.getChild("daemon.scheduler")
+
+    if not scheduler_config.enabled:
+        logger.info("Fleet scheduler disabled by configuration")
+        return
+
+    scheduler_service = FleetSchedulerService(runtime_context)
+    set_event_type("daemon_scheduler_worker_started")
+    logger.info("Fleet scheduler worker started poll_interval=%.1fs", scheduler_config.poll_interval_seconds)
+
+    while not stop_event.is_set():
+        try:
+            result = scheduler_service.run_scheduler_cycle(triggered_by="scheduled")
+            set_correlation_id(runtime_context.correlation_id)
+
+            if result.tasks_submitted > 0:
+                set_event_type("daemon_scheduler_tasks_submitted")
+                logger.info(
+                    "Scheduler cycle completed cycle_id=%s gaps=%d tasks_submitted=%d alerts=%d",
+                    result.cycle_id,
+                    result.gaps_analyzed,
+                    result.tasks_submitted,
+                    result.alerts_triggered,
+                )
+
+            stop_event.wait(scheduler_config.poll_interval_seconds)
+
+        except Exception as exc:
+            set_correlation_id(runtime_context.correlation_id)
+            set_event_type("daemon_scheduler_cycle_failed")
+            logger.exception("Scheduler worker cycle failed")
+            stop_event.wait(app_config.daemon_failure_backoff_seconds)
+
+
 def _run_manual_operation_worker(
     runtime_context: RuntimeContext,
     *,
@@ -951,12 +995,22 @@ def main() -> None:
         daemon=True,
         name="shadowfleet-manual-operation-worker",
     )
+    scheduler_thread = threading.Thread(
+        target=_run_scheduler_worker,
+        kwargs={
+            "runtime_context": runtime_context,
+            "stop_event": stop_event,
+        },
+        daemon=True,
+        name="shadowfleet-scheduler-worker",
+    )
 
     set_event_type("daemon_started")
     logger.info("ShadowFleet daemon started")
     provisioning_thread.start()
     sentinel_thread.start()
     manual_operation_thread.start()
+    scheduler_thread.start()
 
     def _sigterm_handler(signum: int, frame: object) -> None:
         set_correlation_id(runtime_context.correlation_id)
@@ -974,6 +1028,8 @@ def main() -> None:
                 raise RuntimeError("Sentinel worker thread exited unexpectedly")
             if not manual_operation_thread.is_alive():
                 raise RuntimeError("Manual operation worker thread exited unexpectedly")
+            if not scheduler_thread.is_alive():
+                raise RuntimeError("Scheduler worker thread exited unexpectedly")
             time.sleep(1.0)
     except KeyboardInterrupt:
         set_correlation_id(runtime_context.correlation_id)
@@ -995,6 +1051,7 @@ def main() -> None:
             provisioning_thread.join(timeout=5.0)
             sentinel_thread.join(timeout=5.0)
             manual_operation_thread.join(timeout=5.0)
+            scheduler_thread.join(timeout=5.0)
         finally:
             _shutdown_servers(ready_callback_server, artifact_cache_server)
 

@@ -38,21 +38,33 @@ const message = useMessage()
 const PROTOCOLS = ['AnyTLS', 'Trojan', 'vless', 'vmess', 'Hysteria2']
 const REGION_MAP: Record<string, string> = {
   'ap-northeast-1': '东京',
-  'ap-northeast-3': '大阪',
   'ap-northeast-2': '韩国',
+  'ap-northeast-3': '大阪',
   'ap-east-1': '香港',
-  'us-west-1': '洛杉矶',
   'ap-southeast-1': '新加坡',
+  'ap-southeast-2': '悉尼',
+  'us-west-1': '洛杉矶',
+  'us-west-2': '美西2',
+  'us-east-1': '美东',
+  'eu-west-1': '伦敦',
+  'eu-west-2': '巴黎',
+  'eu-central-1': '法兰克福',
 }
 const REGIONS = Object.keys(REGION_MAP)
 
 const REGION_TAGS: Record<string, string> = {
   'ap-northeast-1': 'jp-tokyo',
-  'ap-northeast-3': 'jp-osaka',
   'ap-northeast-2': 'kr-seoul',
+  'ap-northeast-3': 'jp-osaka',
   'ap-east-1': 'hk-hongkong',
-  'us-west-1': 'us-losangeles',
   'ap-southeast-1': 'sg-singapore',
+  'ap-southeast-2': 'au-sydney',
+  'us-west-1': 'us-losangeles',
+  'us-west-2': 'us-west-2',
+  'us-east-1': 'us-east-1',
+  'eu-west-1': 'uk-london',
+  'eu-west-2': 'fr-paris',
+  'eu-central-1': 'de-frankfurt',
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -269,6 +281,11 @@ function buildDefaultTags(): string {
 function openNewTaskModal() {
   tagsJson.value = buildDefaultTags()
   showNewTaskModal.value = true
+}
+
+function closeModal() {
+  showNewTaskModal.value = false
+  resetForm()
 }
 
 function resetForm() {
@@ -744,7 +761,7 @@ export default { name: 'ProvisionerView' }
           <NButton type="primary" :loading="submitting" @click="handleSubmit">
             提交任务
           </NButton>
-          <NButton :disabled="submitting" @click="showNewTaskModal = false; resetForm()">取消</NButton>
+          <NButton :disabled="submitting" @click="closeModal">取消</NButton>
         </NSpace>
       </NSpin>
     </NModal>

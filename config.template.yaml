@@ -139,3 +139,20 @@ fleet_matrix:
     AnyTLS:
       desired_count: 2
       min_alert_threshold: 1
+
+# -----------------------------------------------------------------------------
+# Fleet Scheduler 舰队自动调度器配置
+# 自动补充缺失节点，保持 fleet_matrix 中配置的期望数量
+# -----------------------------------------------------------------------------
+fleet_scheduler:
+  enabled: true
+  # 调度检查间隔（秒）
+  poll_interval_seconds: 30
+  # 同一 (区域, 协议) 组合提交后的冷却时间（秒）
+  cooldown_seconds: 60
+  # 每个调度周期最多提交多少个补充任务
+  max_tasks_per_cycle: 5
+  # 启用调度的区域列表（["*"] 表示所有区域）
+  enabled_regions: ["*"]
+  # 启用调度的协议列表（["*"] 表示所有协议）
+  enabled_protocols: ["*"]

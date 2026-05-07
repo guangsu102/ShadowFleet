@@ -590,22 +590,85 @@ export const zhMessages: Messages = {
     selectDeleteRegion: '选择要删除的区域',
     deleteSelectedRegion: '删除选中区域',
     appRuntimeConfig: '应用运行时配置',
+
+    // Sentinel 设置
     sentinelSettings: 'Sentinel 监控设置',
     enableSentinel: '启用 Sentinel',
+    sentinelProbeMode: '探针模式',
+    sentinelPollIntervalSecs: '轮询间隔（秒）',
+    sentinelProbeTimeoutSecs: '探针超时（秒）',
+    sentinelSuspiciousLookback: '可疑回溯时间（分钟）',
+    sentinelZeroUplinkWindow: '零上行窗口（分钟）',
+    sentinelSaved: 'Sentinel 配置已保存',
+
+    // Fleet Scheduler 设置
+    fleetSchedulerSettings: '舰队自动调度器 (Fleet Scheduler)',
+    fleetSchedulerDesc: '自动监控并补充缺失的节点，保持 fleet_matrix 中配置的期望数量。当账号被封或节点下线导致数量不足时，自动提交 Provisioning 任务创建新节点。',
+    enableScheduler: '启用调度器',
+    schedulerPollIntervalDesc: '调度器检查间隔（秒），每隔此时间检查一次缺口',
+    schedulerCooldown: '冷却时间（秒）',
+    schedulerCooldownDesc: '同一区域/协议组合提交任务后的等待时间，防止过度调度',
+    schedulerMaxTasks: '每周期最大任务数',
+    schedulerMaxTasksDesc: '每个调度周期最多提交的任务数量，避免资源抢占',
+    schedulerEnabledRegions: '启用调度的区域',
+    schedulerEnabledRegionsDesc: '留空或选择 * 表示所有区域',
+    schedulerEnabledProtocols: '启用调度的协议',
+    schedulerEnabledProtocolsDesc: '留空或选择 * 表示所有协议',
+    schedulerAlertTitle: '调度触发条件',
+    schedulerAlertContent: '调度器会持续监控 fleet_matrix 中的配置，当在线节点数低于期望数时自动补充。账号被封后也会立即触发紧急补充。',
+    schedulerSaved: 'Fleet Scheduler 配置已保存',
+
+    // 其他设置
     pollInterval: '轮询间隔（秒）',
     confirmCycles: '确认周期数',
     healCooldown: '自愈冷却时间（秒）',
     minCnProbe: '最小国内探针数',
     probeSuccessThreshold: '探测成功率阈值（0–1）',
+    sentinelAllowAutoHealHy2: '允许自动自愈 Hysteria2',
+
+    // Daemon 设置
+    daemonSettings: 'Daemon 守护进程设置',
+    daemonIdlePoll: '空闲轮询间隔（秒）',
+    daemonFailureBackoff: '失败退避时间（秒）',
+    daemonStaleRecovery: '任务恢复间隔（秒）',
+    daemonTaskTimeout: '任务超时时间（秒）',
+    daemonRetryDelay: '重试延迟（秒）',
     saveAppConfig: '保存应用配置',
-    sentinelSaved: 'Sentinel 配置已保存',
-    dangerZone: '危险操作',
-    dangerArea: '危险操作区',
-    dangerWarning: '以下操作不可逆，请谨慎操作',
-    confirmBeforeAction: '执行前请确认操作后果',
-    resetFleetMatrix: '重置 Fleet Matrix',
-    resetFleetMatrixDesc: '清空整个 fleet_matrix 配置（删除所有区域）',
-    resetFleetMatrixBtn: '重置 Fleet Matrix',
+
+    // Phone-Home 设置
+    phoneHomeSettings: 'Phone-Home 内网穿透设置',
+    phoneHomeEnabled: 'Phone-Home 基地址',
+    phoneHomeListenHost: '监听地址',
+    phoneHomeListenPort: '监听端口',
+    phoneHomeReadyTimeout: '就绪超时（秒）',
+    phoneHomePollInterval: '轮询间隔（秒）',
+    phoneHomeSaved: 'Phone-Home 配置已保存',
+
+    // Artifact Cache 设置
+    artifactCacheSettings: 'Artifact 缓存设置',
+    artifactCacheListenPort: '监听端口',
+    artifactCacheBaseUrl: '基地址（可选）',
+    artifactCacheBaseUrlHint: '留空则自动检测本机 IPv6',
+    artifactCacheSaved: 'Artifact Cache 配置已保存',
+
+    // Probe Server 设置
+    probeServerSettings: 'Probe Server 探测服务器设置',
+    probeServerEnabled: '启用 Probe Server',
+    probePollInterval: '轮询间隔（秒）',
+    probeHeartbeatTimeout: '心跳超时（秒）',
+    probeServerSaved: 'Probe Server 配置已保存',
+
+    // 日志设置
+    loggingSettings: '日志设置',
+    logLevel: '日志级别',
+    logRetentionDays: '日志保留天数',
+    loggingSaved: '日志配置已保存',
+
+    // 通用
+    saveFailed: '保存失败',
+    deleteFailed: '删除失败',
+    resetFailed: '重置失败',
+    restoreFailed: '恢复默认配置失败',
     restoreDefaults: '恢复默认配置',
     restoreDefaultsDesc: '恢复出厂默认配置',
     restoreDefaultsBtn: '恢复默认配置',
@@ -614,13 +677,18 @@ export const zhMessages: Messages = {
     regionSaved: '区域保存成功',
     regionDeleted: '区域已删除',
     configReset: '配置已恢复默认值',
-    saveFailed: '保存失败',
-    deleteFailed: '删除失败',
-    resetFailed: '重置失败',
-    restoreFailed: '恢复默认配置失败',
     inputOrSelectRegion: '请输入新区域名称或选择已有区域进行编辑',
     inputNewRegion: '请输入或选择要保存的区域',
     loading: '加载配置…',
+
+    // 危险操作
+    dangerZone: '危险操作',
+    dangerArea: '危险操作区',
+    dangerWarning: '以下操作不可逆，请谨慎操作',
+    confirmBeforeAction: '执行前请确认操作后果',
+    resetFleetMatrix: '重置 Fleet Matrix',
+    resetFleetMatrixDesc: '清空整个 fleet_matrix 配置（删除所有区域）',
+    resetFleetMatrixBtn: '重置 Fleet Matrix',
   },
 
   provisioner: {
@@ -1360,6 +1428,23 @@ export const enMessages = {
     sentinelZeroUplinkWindow: 'Zero Uplink Window (minutes)',
     sentinelProbeMode: 'Probe Mode',
     sentinelAllowAutoHealHy2: 'Allow Auto-Heal HY2 Nodes',
+
+    // Fleet Scheduler
+    fleetSchedulerSettings: 'Fleet Auto-Scheduler',
+    fleetSchedulerDesc: 'Automatically monitors and replenishes missing nodes to match the desired count configured in fleet_matrix. When an account is banned or nodes go offline, automatically submits Provisioning tasks to create new nodes.',
+    enableScheduler: 'Enable Scheduler',
+    schedulerPollIntervalDesc: 'Scheduler check interval (seconds)',
+    schedulerCooldown: 'Cooldown (seconds)',
+    schedulerCooldownDesc: 'Wait time after submitting tasks for the same region/protocol combo',
+    schedulerMaxTasks: 'Max Tasks Per Cycle',
+    schedulerMaxTasksDesc: 'Maximum tasks submitted per scheduling cycle',
+    schedulerEnabledRegions: 'Enabled Regions',
+    schedulerEnabledRegionsDesc: 'Leave empty or select * for all regions',
+    schedulerEnabledProtocols: 'Enabled Protocols',
+    schedulerEnabledProtocolsDesc: 'Leave empty or select * for all protocols',
+    schedulerAlertTitle: 'Scheduling Trigger Conditions',
+    schedulerAlertContent: 'Scheduler continuously monitors fleet_matrix config and automatically replenishes when online nodes fall below desired count. Also immediately triggers emergency replenishment after account abandonment.',
+    schedulerSaved: 'Fleet Scheduler config saved',
 
     // Logging
     loggingSettings: 'Logging Configuration',

@@ -437,6 +437,7 @@ export interface ConfigResponse {
   aws_proxy: Record<string, unknown>
   xboard: Record<string, unknown> | null
   fleet_matrix: Record<string, unknown>
+  fleet_scheduler: Record<string, unknown>
 }
 
 export interface FleetMatrixUpdateRequest {
@@ -484,6 +485,15 @@ export interface AppUpdateRequest {
 export interface LoggingUpdateRequest {
   level?: string | null
   log_retention_days?: number | null
+}
+
+export interface FleetSchedulerUpdateRequest {
+  enabled?: boolean | null
+  poll_interval_seconds?: number | null
+  cooldown_seconds?: number | null
+  max_tasks_per_cycle?: number | null
+  enabled_regions?: string[] | null
+  enabled_protocols?: string[] | null
 }
 
 export interface ConfigValidateRequest {

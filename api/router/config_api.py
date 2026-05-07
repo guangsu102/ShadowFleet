@@ -20,6 +20,7 @@ class ConfigResponse(BaseModel):
     aws_proxy: dict
     xboard: dict | None
     fleet_matrix: dict
+    fleet_scheduler: dict
 
 
 class FleetMatrixUpdateRequest(BaseModel):
@@ -39,6 +40,15 @@ class SentinelUpdateRequest(BaseModel):
     sentinel_probe_min_cn_probe_count: int | None = None
     sentinel_probe_required_success_ratio: float | None = None
     sentinel_probe_allow_auto_heal_hy2: bool | None = None
+
+
+class FleetSchedulerUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    poll_interval_seconds: float | None = None
+    cooldown_seconds: float | None = None
+    max_tasks_per_cycle: int | None = None
+    enabled_regions: list[str] | None = None
+    enabled_protocols: list[str] | None = None
 
 
 class AppUpdateRequest(BaseModel):
@@ -88,6 +98,7 @@ async def get_config(
         aws_proxy=raw.get("aws_proxy", {}),
         xboard=raw.get("xboard"),
         fleet_matrix=raw.get("fleet_matrix", {}),
+        fleet_scheduler=raw.get("fleet_scheduler", {}),
     )
 
 
@@ -130,6 +141,29 @@ async def update_sentinel(
             app[key] = value
     save_raw_config(None, raw)
     return {"status": "ok", "message": "Sentinel settings updated. Restart the daemon to apply."}
+
+
+@router.put("/fleet-scheduler")
+async def update_fleet_scheduler(
+    request: FleetSchedulerUpdateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_admin),
+) -> dict:
+    raw = load_raw_config()
+    scheduler = raw.setdefault("fleet_scheduler", {})
+    fields = {
+        "enabled": request.enabled,
+        "poll_interval_seconds": request.poll_interval_seconds,
+        "cooldown_seconds": request.cooldown_seconds,
+        "max_tasks_per_cycle": request.max_tasks_per_cycle,
+        "enabled_regions": request.enabled_regions,
+        "enabled_protocols": request.enabled_protocols,
+    }
+    for key, value in fields.items():
+        if value is not None:
+            scheduler[key] = value
+    save_raw_config(None, raw)
+    return {"status": "ok", "message": "Fleet scheduler settings updated. Restart the daemon to apply."}
 
 
 @router.put("/app")

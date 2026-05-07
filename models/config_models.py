@@ -401,6 +401,32 @@ class FleetProtocolConfig(BaseModel):
         return self
 
 
+class FleetSchedulerConfig(BaseModel):
+    """Fleet Auto-Scheduler configuration for automatic node replenishment."""
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    poll_interval_seconds: float = 30.0
+    cooldown_seconds: float = 60.0
+    max_tasks_per_cycle: int = 5
+    enabled_regions: list[str] = Field(default_factory=lambda: ["*"])
+    enabled_protocols: list[str] = Field(default_factory=lambda: ["*"])
+
+    @field_validator("poll_interval_seconds", "cooldown_seconds")
+    @classmethod
+    def validate_positive_interval(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("must be greater than 0")
+        return v
+
+    @field_validator("max_tasks_per_cycle")
+    @classmethod
+    def validate_max_tasks(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("max_tasks_per_cycle must be at least 1")
+        return v
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -411,3 +437,4 @@ class AppConfig(BaseModel):
     aws_proxy: AwsProxyConfig = Field(default_factory=AwsProxyConfig)
     xboard: XboardDatabaseConfig | None = None
     fleet_matrix: dict[str, dict[str, FleetProtocolConfig]] = Field(default_factory=dict)
+    fleet_scheduler: FleetSchedulerConfig = Field(default_factory=FleetSchedulerConfig)

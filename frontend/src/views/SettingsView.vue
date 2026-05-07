@@ -25,6 +25,7 @@ import type {
   SentinelUpdateRequest,
   AppUpdateRequest,
   LoggingUpdateRequest,
+  FleetSchedulerUpdateRequest,
 } from '@/types/api'
 
 const { t } = useI18n()
@@ -34,28 +35,22 @@ const { t } = useI18n()
 // ---------------------------------------------------------------------------
 const PROTOCOLS = ['AnyTLS', 'Trojan', 'vless', 'vmess', 'Hysteria2']
 
-function fleetDesired(region: string | null, protocol: string) {
-  return computed({
-    get: () => (region ? fleetMatrixForm.value[region]?.[protocol]?.desired_count ?? 0 : 0),
-    set: (v: number) => {
-      if (!region) return
-      if (!fleetMatrixForm.value[region]) fleetMatrixForm.value[region] = {}
-      if (!fleetMatrixForm.value[region][protocol]) fleetMatrixForm.value[region][protocol] = { desired_count: 0, min_alert_threshold: 0 }
-      fleetMatrixForm.value[region][protocol].desired_count = v
-    },
-  })
+// Region map with Chinese names (consistent with AssetsView and ProvisionerView)
+const REGION_MAP: Record<string, string> = {
+  'ap-northeast-1': '东京',
+  'ap-northeast-2': '韩国',
+  'ap-northeast-3': '大阪',
+  'ap-east-1': '香港',
+  'ap-southeast-1': '新加坡',
+  'ap-southeast-2': '悉尼',
+  'us-west-1': '洛杉矶',
+  'us-west-2': '美西2',
+  'us-east-1': '美东',
+  'eu-west-1': '伦敦',
+  'eu-west-2': '巴黎',
+  'eu-central-1': '法兰克福',
 }
-function fleetThreshold(region: string | null, protocol: string) {
-  return computed({
-    get: () => (region ? fleetMatrixForm.value[region]?.[protocol]?.min_alert_threshold ?? 0 : 0),
-    set: (v: number) => {
-      if (!region) return
-      if (!fleetMatrixForm.value[region]) fleetMatrixForm.value[region] = {}
-      if (!fleetMatrixForm.value[region][protocol]) fleetMatrixForm.value[region][protocol] = { desired_count: 0, min_alert_threshold: 0 }
-      fleetMatrixForm.value[region][protocol].min_alert_threshold = v
-    },
-  })
-}
+const ALL_REGIONS = Object.keys(REGION_MAP)
 
 // ---------------------------------------------------------------------------
 // State
@@ -69,6 +64,7 @@ const config = ref<ConfigResponse | null>(null)
 const savingFleetMatrix = ref(false)
 const savingApp = ref(false)
 const savingSentinel = ref(false)
+const savingFleetScheduler = ref(false)
 const savingLogging = ref(false)
 const resettingFleetMatrix = ref(false)
 
@@ -76,12 +72,45 @@ const resettingFleetMatrix = ref(false)
 // Fleet Matrix
 // ---------------------------------------------------------------------------
 const newRegionName = ref('')
-const selectedRegion = ref<string | null>(null)
+const selectedRegion = ref<string | null>('ap-northeast-1')
 const fleetMatrixForm = ref<Record<string, Record<string, { desired_count: number; min_alert_threshold: number }>>>({})
 
+// Fleet Matrix 编辑辅助函数 - 直接操作 form 数据，避免 computed 包装问题
+function getFleetDesired(region: string | null, protocol: string): number {
+  if (!region) return 0
+  return fleetMatrixForm.value[region]?.[protocol]?.desired_count ?? 0
+}
+
+function setFleetDesired(region: string | null, protocol: string, value: number | null) {
+  if (!region) return
+  if (!fleetMatrixForm.value[region]) fleetMatrixForm.value[region] = {}
+  if (!fleetMatrixForm.value[region][protocol]) {
+    fleetMatrixForm.value[region][protocol] = { desired_count: 0, min_alert_threshold: 0 }
+  }
+  fleetMatrixForm.value[region][protocol].desired_count = value ?? 0
+}
+
+function getFleetThreshold(region: string | null, protocol: string): number {
+  if (!region) return 0
+  return fleetMatrixForm.value[region]?.[protocol]?.min_alert_threshold ?? 0
+}
+
+function setFleetThreshold(region: string | null, protocol: string, value: number | null) {
+  if (!region) return
+  if (!fleetMatrixForm.value[region]) fleetMatrixForm.value[region] = {}
+  if (!fleetMatrixForm.value[region][protocol]) {
+    fleetMatrixForm.value[region][protocol] = { desired_count: 0, min_alert_threshold: 0 }
+  }
+  fleetMatrixForm.value[region][protocol].min_alert_threshold = value ?? 0
+}
+
 const regionOptions = computed<{ label: string; value: string }[]>(() => {
-  const regions = config.value ? Object.keys(config.value.fleet_matrix ?? {}) : []
-  return regions.map((r) => ({ label: r, value: r }))
+  const existingRegions = config.value ? Object.keys(config.value.fleet_matrix ?? {}) : []
+  const allRegionKeys = [...new Set([...ALL_REGIONS, ...existingRegions])]
+  return allRegionKeys.map((r) => {
+    const displayName = REGION_MAP[r] || r
+    return { label: `${displayName} (${r})`, value: r }
+  })
 })
 
 const activeRegion = computed<string | null>(() => {
@@ -238,6 +267,41 @@ function buildSentinelForm() {
 }
 
 // ---------------------------------------------------------------------------
+// Fleet Scheduler Form
+// ---------------------------------------------------------------------------
+const schedulerEnabled = ref(true)
+const schedulerPollInterval = ref(30.0)
+const schedulerCooldown = ref(60.0)
+const schedulerMaxTasks = ref(5)
+const schedulerEnabledRegions = ref<string[]>(['*'])
+const schedulerEnabledProtocols = ref<string[]>(['*'])
+
+const regionListOptions: SelectOption[] = [
+  { label: '全部区域 (*)', value: '*' },
+  ...Object.entries(REGION_MAP).map(([code, name]) => ({ label: `${name} (${code})`, value: code })),
+]
+
+const protocolListOptions: SelectOption[] = [
+  { label: '全部协议 (*)', value: '*' },
+  { label: 'AnyTLS', value: 'AnyTLS' },
+  { label: 'Trojan', value: 'Trojan' },
+  { label: 'VLESS', value: 'vless' },
+  { label: 'VMess', value: 'vmess' },
+  { label: 'Hysteria2', value: 'Hysteria2' },
+]
+
+function buildFleetSchedulerForm() {
+  if (!config.value) return
+  const scheduler = config.value.fleet_scheduler ?? {}
+  schedulerEnabled.value = (scheduler.enabled as boolean) ?? true
+  schedulerPollInterval.value = (scheduler.poll_interval_seconds as number) ?? 30.0
+  schedulerCooldown.value = (scheduler.cooldown_seconds as number) ?? 60.0
+  schedulerMaxTasks.value = (scheduler.max_tasks_per_cycle as number) ?? 5
+  schedulerEnabledRegions.value = (scheduler.enabled_regions as string[]) ?? ['*']
+  schedulerEnabledProtocols.value = (scheduler.enabled_protocols as string[]) ?? ['*']
+}
+
+// ---------------------------------------------------------------------------
 // Logging Form
 // ---------------------------------------------------------------------------
 const logLevel = ref('INFO')
@@ -274,6 +338,7 @@ async function fetchConfig() {
     buildProbeServerForm()
     buildSentinelForm()
     buildLoggingForm()
+    buildFleetSchedulerForm()
   } catch (e: unknown) {
     const axiosErr = e as { response?: { data?: { error?: string } }; message?: string }
     error.value = axiosErr.response?.data?.error || axiosErr.message || t('settings.loadFailed')
@@ -390,6 +455,28 @@ async function saveSentinel() {
   }
 }
 
+async function saveFleetScheduler() {
+  savingFleetScheduler.value = true
+  try {
+    const body: FleetSchedulerUpdateRequest = {
+      enabled: schedulerEnabled.value,
+      poll_interval_seconds: schedulerPollInterval.value,
+      cooldown_seconds: schedulerCooldown.value,
+      max_tasks_per_cycle: schedulerMaxTasks.value,
+      enabled_regions: schedulerEnabledRegions.value,
+      enabled_protocols: schedulerEnabledProtocols.value,
+    }
+    await apiClient.put<FleetSchedulerUpdateRequest, never>('/config/fleet-scheduler', body)
+    message.success(t('settings.schedulerSaved'))
+    await fetchConfig()
+  } catch (e: unknown) {
+    const axiosErr = e as { response?: { data?: { error?: string } }; message?: string }
+    message.error(axiosErr.response?.data?.error || axiosErr.message || t('settings.saveFailed'))
+  } finally {
+    savingFleetScheduler.value = false
+  }
+}
+
 async function saveLogging() {
   savingLogging.value = true
   try {
@@ -457,13 +544,13 @@ onMounted(() => { fetchConfig() })
             <NTag size="small" type="info">{{ protocol }}</NTag>
             <div>
               <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.desiredCount') }}</NText>
-              <NInputNumber :model-value="fleetDesired(activeRegion, protocol).value" :min="0" style="width: 100%"
-                @update:value="(v: number | null) => { if (activeRegion) fleetDesired(activeRegion, protocol).value = v ?? 0 }" />
+              <NInputNumber :model-value="getFleetDesired(activeRegion, protocol)" :min="0" style="width: 100%"
+                @update:value="(v: number | null) => setFleetDesired(activeRegion, protocol, v)" />
             </div>
             <div>
               <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.alertThreshold') }}</NText>
-              <NInputNumber :model-value="fleetThreshold(activeRegion, protocol).value" :min="0" style="width: 100%"
-                @update:value="(v: number | null) => { if (activeRegion) fleetThreshold(activeRegion, protocol).value = v ?? 0 }" />
+              <NInputNumber :model-value="getFleetThreshold(activeRegion, protocol)" :min="0" style="width: 100%"
+                @update:value="(v: number | null) => setFleetThreshold(activeRegion, protocol, v)" />
             </div>
             <div />
           </div>
@@ -624,6 +711,64 @@ onMounted(() => { fetchConfig() })
           </div>
         </div>
         <NButton type="primary" :loading="savingSentinel" style="margin-top: 16px" @click="saveSentinel">{{ t('settings.sentinelSaved') }}</NButton>
+      </NCard>
+
+      <!-- ══ 6.5 Fleet Scheduler ══════════════════════════════════════════════ -->
+      <NCard :title="t('settings.fleetSchedulerSettings')" style="margin-bottom: 16px">
+        <NText depth="3" style="font-size: 13px; display:block; margin-bottom: 16px">{{ t('settings.fleetSchedulerDesc') }}</NText>
+
+        <div style="display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: end; margin-bottom: 16px">
+          <div>
+            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.enableScheduler') }}</NText>
+            <NSwitch v-model:value="schedulerEnabled" />
+          </div>
+          <div>
+            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.schedulerPollIntervalDesc') }}</NText>
+            <NInputNumber v-model:value="schedulerPollInterval" :min="1" :step="5" style="width: 100%" />
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 16px">
+          <div>
+            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.schedulerCooldown') }}</NText>
+            <NInputNumber v-model:value="schedulerCooldown" :min="1" :step="5" style="width: 100%" />
+            <NText depth="3" style="font-size: 11px; display:block; margin-top: 2px">{{ t('settings.schedulerCooldownDesc') }}</NText>
+          </div>
+          <div>
+            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.schedulerMaxTasks') }}</NText>
+            <NInputNumber v-model:value="schedulerMaxTasks" :min="1" :max="20" style="width: 100%" />
+            <NText depth="3" style="font-size: 11px; display:block; margin-top: 2px">{{ t('settings.schedulerMaxTasksDesc') }}</NText>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px">
+          <div>
+            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.schedulerEnabledRegions') }}</NText>
+            <NSelect
+              v-model:value="schedulerEnabledRegions"
+              :options="regionListOptions"
+              multiple
+              style="width: 100%"
+            />
+            <NText depth="3" style="font-size: 11px; display:block; margin-top: 2px">{{ t('settings.schedulerEnabledRegionsDesc') }}</NText>
+          </div>
+          <div>
+            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.schedulerEnabledProtocols') }}</NText>
+            <NSelect
+              v-model:value="schedulerEnabledProtocols"
+              :options="protocolListOptions"
+              multiple
+              style="width: 100%"
+            />
+            <NText depth="3" style="font-size: 11px; display:block; margin-top: 2px">{{ t('settings.schedulerEnabledProtocolsDesc') }}</NText>
+          </div>
+        </div>
+
+        <NAlert type="info" :title="t('settings.schedulerAlertTitle')" style="margin-bottom: 16px">
+          <NText depth="3">{{ t('settings.schedulerAlertContent') }}</NText>
+        </NAlert>
+
+        <NButton type="primary" :loading="savingFleetScheduler" @click="saveFleetScheduler">{{ t('settings.schedulerSaved') }}</NButton>
       </NCard>
 
       <!-- ══ 7. Logging ═════════════════════════════════════════════════════════ -->

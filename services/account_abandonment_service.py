@@ -4,8 +4,10 @@ from dataclasses import dataclass
 
 from database.asset_models import AssetNotFoundError
 from database.asset_repo import AssetEventCreateRequest, AssetRepo
+from database.state_models import FleetNodeRecord
 from database.state_repo import FleetNodeEventCreateRequest, StateRepo
 from services.account_abandonment_notifier import notify_account_abandoned
+from services.fleet_scheduler_service import FleetSchedulerService
 from services.node_registry_service import NodeRegistryService, NodeRegistryServiceError
 from services.runtime_service import RuntimeContext
 from utils.logger import set_event_type
@@ -29,6 +31,13 @@ class AccountAbandonmentService:
         self._asset_repo = AssetRepo(runtime_context)
         self._state_repo = StateRepo(runtime_context)
         self._node_registry = NodeRegistryService(runtime_context)
+        self._scheduler: FleetSchedulerService | None = None
+
+    @property
+    def _scheduler_service(self) -> FleetSchedulerService:
+        if self._scheduler is None:
+            self._scheduler = FleetSchedulerService(self._runtime_context)
+        return self._scheduler
 
     def abandon_account(
         self,
@@ -154,8 +163,71 @@ class AccountAbandonmentService:
             error_message=error_message,
             deleted_node_count=deleted_node_count,
         )
+
+        self._trigger_emergency_replenishment(
+            deleted_nodes=nodes,
+            region=assets[0].region,
+            deleted_count=deleted_node_count,
+        )
+
         return AccountAbandonmentResult(
             aws_account_id=normalized_account_id,
             deleted_node_count=deleted_node_count,
             asset_count=len(assets),
         )
+
+    def _trigger_emergency_replenishment(
+        self,
+        deleted_nodes: list[FleetNodeRecord],
+        region: str | None,
+        deleted_count: int,
+    ) -> None:
+        """Trigger emergency replenishment after account abandonment."""
+        if not self._runtime_context.config.fleet_scheduler.enabled:
+            self._logger.info(
+                "Fleet scheduler disabled, skipping emergency replenishment"
+            )
+            return
+
+        self._logger.info(
+            "Triggering emergency replenishment for %d deleted nodes in region=%s",
+            len(deleted_nodes),
+            region,
+        )
+
+        protocol_counts: dict[str, int] = {}
+        for node in deleted_nodes:
+            protocol = getattr(node, "node_type", None)
+            if protocol:
+                protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
+
+        total_submitted = 0
+        for protocol, count in protocol_counts.items():
+            if region is None:
+                self._logger.warning(
+                    "Cannot trigger replenishment for protocol=%s: region is unknown",
+                    protocol,
+                )
+                continue
+
+            task_ids = self._scheduler_service.fill_gap_for_region_protocol(
+                region=region,
+                protocol_type=protocol,
+                count=count,
+                reason=f"abandonment_replenishment:{deleted_count}",
+            )
+            total_submitted += len(task_ids)
+            if task_ids:
+                self._logger.info(
+                    "Submitted %d replenishment tasks for %s/%s",
+                    len(task_ids),
+                    region,
+                    protocol,
+                )
+
+        if total_submitted > 0:
+            self._logger.warning(
+                "Emergency replenishment triggered: %d tasks submitted for %d protocols",
+                total_submitted,
+                len(protocol_counts),
+            )
