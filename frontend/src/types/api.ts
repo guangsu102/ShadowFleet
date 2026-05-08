@@ -426,6 +426,15 @@ export interface DetectionRecordResponse {
   reason: string | null
   probe_provider: string | null
   created_at: string
+  // Detailed probe information
+  probe_status: string | null
+  probe_failure_stage: string | null
+  probe_latency_ms: number | null
+  probe_success_region_count: number | null
+  probe_failed_region_count: number | null
+  probe_resolved_ip: string | null
+  measurement_id: string | null
+  selected_probe_ids: string[]
 }
 
 export interface MonitorSummaryStats {

@@ -60,6 +60,15 @@ class DetectionRecordResponse(BaseModel):
     reason: str | None = None
     probe_provider: str | None = None
     created_at: str = ""
+    # Detailed probe information
+    probe_status: str | None = None
+    probe_failure_stage: str | None = None
+    probe_latency_ms: int | None = None
+    probe_success_region_count: int | None = None
+    probe_failed_region_count: int | None = None
+    probe_resolved_ip: str | None = None
+    measurement_id: str | None = None
+    selected_probe_ids: list[str] = Field(default_factory=list)
 
 
 class MonitorSummaryStats(BaseModel):
@@ -253,11 +262,20 @@ async def list_detections(
         xboard_node_id = r.get("xboard_node_id", 0)
         node_record = state_repo.get_node_by_xboard_node_id(xboard_node_id)
 
-        # Extract traffic data from payload_json
+        # Extract traffic and probe data from payload_json
         payload = r.get("payload_json")
         uplink_bytes = None
         downlink_bytes = None
         total_bytes = None
+        probe_status = None
+        probe_failure_stage = None
+        probe_latency_ms = None
+        probe_success_region_count = None
+        probe_failed_region_count = None
+        probe_resolved_ip = None
+        measurement_id = None
+        selected_probe_ids: list[str] = []
+
         if payload:
             import json as _json
             try:
@@ -265,6 +283,22 @@ async def list_detections(
                 uplink_bytes = p.get("uplink_bytes")
                 downlink_bytes = p.get("downlink_bytes")
                 total_bytes = p.get("total_bytes")
+
+                # Extract probe details from control_plane_result
+                control_plane = p.get("control_plane_result")
+                if control_plane and isinstance(control_plane, dict):
+                    probe_status = control_plane.get("status")
+                    probe_failure_stage = control_plane.get("failure_stage")
+                    probe_latency_ms = control_plane.get("latency_ms")
+                    probe_success_region_count = control_plane.get("success_region_count")
+                    probe_failed_region_count = control_plane.get("failed_region_count")
+                    probe_resolved_ip = control_plane.get("resolved_ip")
+
+                # Extract measurement info
+                measurement_id = p.get("measurement_id")
+                selected_probe_ids = p.get("selected_probe_ids", [])
+                if not isinstance(selected_probe_ids, list):
+                    selected_probe_ids = []
             except Exception:
                 pass
 
@@ -285,6 +319,14 @@ async def list_detections(
                 reason=r.get("reason"),
                 probe_provider=r.get("probe_provider"),
                 created_at=r.get("created_at", ""),
+                probe_status=probe_status,
+                probe_failure_stage=probe_failure_stage,
+                probe_latency_ms=probe_latency_ms,
+                probe_success_region_count=probe_success_region_count,
+                probe_failed_region_count=probe_failed_region_count,
+                probe_resolved_ip=probe_resolved_ip,
+                measurement_id=measurement_id,
+                selected_probe_ids=selected_probe_ids,
             )
         )
     return results

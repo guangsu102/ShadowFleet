@@ -59,6 +59,23 @@ const detectionStatusFilter = ref<string>('全部')
 const cycleLimit = ref<number>(100)
 const confirmationHealingFilter = ref<string>('全部')
 
+// Expanded rows for detection details
+const expandedDetectionIds = ref<Set<number>>(new Set())
+
+function toggleDetectionExpand(id: number) {
+  if (expandedDetectionIds.value.has(id)) {
+    expandedDetectionIds.value.delete(id)
+  } else {
+    expandedDetectionIds.value.add(id)
+  }
+  // Trigger reactivity
+  expandedDetectionIds.value = new Set(expandedDetectionIds.value)
+}
+
+function isDetectionExpanded(id: number): boolean {
+  return expandedDetectionIds.value.has(id)
+}
+
 // ── Computed ─────────────────────────────────────────────────────────────────
 const latestCycle = computed(() => cycles.value[0] ?? null)
 const latestCycleRunning = computed(() => latestCycle.value?.status === 'running')
@@ -308,6 +325,11 @@ const cycleColumns = [
 ]
 
 const detectionColumns = [
+  { title: '', key: '_expand', width: 40, align: 'center' as const,
+    render: (row: DetectionRecordResponse) => h('button', {
+      onClick: (e: Event) => { e.stopPropagation(); toggleDetectionExpand(row.id) },
+      style: 'background: none; border: none; cursor: pointer; font-size: 16px; padding: 2px 6px; color: #64748b;'
+    }, isDetectionExpanded(row.id) ? '▼' : '▶') },
   { title: '#', key: '_index', width: 50, align: 'center' as const,
     render: (_: any, i: number) => h('span', { style: 'color:#94a3b8;font-size:12px;font-weight:500' }, i + 1) },
   {
@@ -336,6 +358,24 @@ const detectionColumns = [
     width: 130,
     render: (row: DetectionRecordResponse) =>
       h(NTag, { type: detectionTagType(row.detection_status), size: 'small', round: true }, { default: () => detectionTagLabel(row.detection_status) }),
+  },
+  {
+    title: '探测结果',
+    key: 'probe_status',
+    width: 110,
+    render: (row: DetectionRecordResponse) => {
+      if (!row.probe_status) return '—'
+      const probeType = row.probe_status === 'reachable' ? 'success' : row.probe_status === 'dns_failed' ? 'error' : 'warning'
+      const probeLabel = row.probe_status === 'reachable' ? '可达' : row.probe_status === 'dns_failed' ? 'DNS失败' : row.probe_status
+      return h(NTag, { type: probeType, size: 'small', round: true }, { default: () => probeLabel })
+    },
+  },
+  {
+    title: '延迟',
+    key: 'probe_latency_ms',
+    width: 80,
+    align: 'right' as const,
+    render: (row: DetectionRecordResponse) => row.probe_latency_ms !== null ? `${row.probe_latency_ms}ms` : '—',
   },
   { title: '上行流量', key: 'uplink_bytes', width: 100, align: 'right' as const, render: (row: DetectionRecordResponse) => fmtBytes(row.uplink_bytes) },
   { title: '下行流量', key: 'downlink_bytes', width: 100, align: 'right' as const, render: (row: DetectionRecordResponse) => fmtBytes(row.downlink_bytes) },
@@ -651,9 +691,29 @@ onUnmounted(() => {
                   size="small"
                   :pagination="{ pageSize: 10 }"
                   :row-key="(row: any) => row.id"
+                  :row-props="(row: DetectionRecordResponse) => ({
+                    style: 'cursor: pointer',
+                    onClick: () => toggleDetectionExpand(row.id)
+                  })"
                 >
                   <template #empty>
                     <NEmpty :description="t('monitor.noDetections')" />
+                  </template>
+                  <template #render-expand="row: DetectionRecordResponse">
+                    <div style="padding: 12px 16px; background: #f8fafc; border-radius: 8px; margin: 8px 0;">
+                      <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">探测详情</div>
+                      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px;">
+                        <div><span style="color: #64748b;">探测状态:</span> {{ row.probe_status ?? '—' }}</div>
+                        <div><span style="color: #64748b;">失败阶段:</span> {{ row.probe_failure_stage ?? '—' }}</div>
+                        <div><span style="color: #64748b;">解析IP:</span> {{ row.probe_resolved_ip ?? '—' }}</div>
+                        <div><span style="color: #64748b;">成功区域:</span> {{ row.probe_success_region_count ?? '—' }}</div>
+                        <div><span style="color: #64748b;">失败区域:</span> {{ row.probe_failed_region_count ?? '—' }}</div>
+                        <div><span style="color: #64748b;">延迟:</span> {{ row.probe_latency_ms !== null ? row.probe_latency_ms + 'ms' : '—' }}</div>
+                        <div><span style="color: #64748b;">Measurement ID:</span> {{ row.measurement_id ?? '—' }}</div>
+                        <div><span style="color: #64748b;">探针节点:</span> {{ row.selected_probe_ids?.join(', ') || '—' }}</div>
+                        <div style="grid-column: 1 / -1;"><span style="color: #64748b;">原因:</span> {{ row.reason ?? '—' }}</div>
+                      </div>
+                    </div>
                   </template>
                 </NDataTable>
               </div>
