@@ -105,6 +105,19 @@ class ProbeOrchestratorService:
             limit=limit,
         )
 
+    def count_recent_failed_cycles(
+        self,
+        *,
+        xboard_node_id: int,
+        limit: int,
+        status_filter: str | None = None,
+    ) -> int:
+        return self._measurement_service.count_recent_failed_cycles(
+            xboard_node_id=xboard_node_id,
+            limit=limit,
+            status_filter=status_filter,
+        )
+
     def _select_probe_ids(self) -> list[str]:
         probe_records = self._registry_service.list_probes()
         active_probe_ids = [probe.probe_id for probe in probe_records if probe.status == "active"]

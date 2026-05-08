@@ -90,15 +90,33 @@ class MonitorService:
                         "probe_result_count": measurement_summary.probe_result_count,
                     },
                 )
-                if measurement_summary.final_status != "confirmed_blocked_by_gfw":
+
+                # Determine if we should trigger healing based on mode and final_status
+                should_heal = measurement_summary.final_status == "confirmed_blocked_by_gfw"
+                if not should_heal and self._runtime_context.config.app.sentinel_probe_mode == "local_active_probe":
+                    should_heal = measurement_summary.final_status == "origin_fault"
+
+                if not should_heal:
                     continue
 
                 confirmed_count += 1
                 confirm_cycles = self._runtime_context.config.app.sentinel_probe_confirm_cycles
-                confirmed_cycles = self._probe_orchestrator.count_recent_confirmed_blocked_cycles(
-                    xboard_node_id=candidate.xboard_node_id,
-                    limit=confirm_cycles,
-                )
+                if (
+                    self._runtime_context.config.app.sentinel_probe_mode == "local_active_probe"
+                    and measurement_summary.final_status == "origin_fault"
+                ):
+                    # local_active_probe 模式：统计 origin_fault 周期数
+                    confirmed_cycles = self._probe_orchestrator.count_recent_failed_cycles(
+                        xboard_node_id=candidate.xboard_node_id,
+                        limit=confirm_cycles,
+                        status_filter="origin_fault",
+                    )
+                else:
+                    # cn_probe_mesh 模式：统计 confirmed_blocked_by_gfw 周期数
+                    confirmed_cycles = self._probe_orchestrator.count_recent_confirmed_blocked_cycles(
+                        xboard_node_id=candidate.xboard_node_id,
+                        limit=confirm_cycles,
+                    )
                 if confirmed_cycles < confirm_cycles:
                     node_record = self._state_repo.get_node_by_xboard_node_id(candidate.xboard_node_id)
                     if node_record is None:
@@ -123,10 +141,16 @@ class MonitorService:
                     )
                     continue
                 try:
+                    heal_reason = (
+                        "sentinel_local_origin_fault"
+                        if self._runtime_context.config.app.sentinel_probe_mode == "local_active_probe"
+                        and measurement_summary.final_status == "origin_fault"
+                        else "sentinel_cn_probe_confirmed_blocked"
+                    )
                     self._healer_service.heal_node(
                         HealRequest(
                             xboard_node_id=candidate.xboard_node_id,
-                            reason="sentinel_cn_probe_confirmed_blocked",
+                            reason=heal_reason,
                             source="sentinel",
                             measurement_payload={
                                 "measurement_id": measurement_summary.measurement_id,

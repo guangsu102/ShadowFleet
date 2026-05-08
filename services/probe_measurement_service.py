@@ -114,18 +114,28 @@ class ProbeMeasurementService:
     ) -> list[ProbeMeasurementRecord]:
         return self._repo.list_recent_measurements_for_node(xboard_node_id=xboard_node_id, limit=limit)
 
+    def count_recent_failed_cycles(
+        self,
+        xboard_node_id: int,
+        limit: int,
+        status_filter: str | None = None,
+    ) -> int:
+        """Count recent cycles that match the given status (or confirmed_blocked_by_gfw if not specified)."""
+        recent_measurements = self._repo.list_recent_measurements_for_node(xboard_node_id=xboard_node_id, limit=limit)
+        target_status = status_filter if status_filter else "confirmed_blocked_by_gfw"
+        failed_cycle_count = 0
+        for record in recent_measurements:
+            if record.final_status != target_status:
+                break
+            failed_cycle_count += 1
+        return failed_cycle_count
+
     def count_recent_confirmed_blocked_cycles(
         self,
         xboard_node_id: int,
         limit: int,
     ) -> int:
-        recent_measurements = self.list_recent_measurements_for_node(xboard_node_id, limit=limit)
-        confirmed_cycle_count = 0
-        for record in recent_measurements:
-            if record.final_status != "confirmed_blocked_by_gfw":
-                break
-            confirmed_cycle_count += 1
-        return confirmed_cycle_count
+        return self.count_recent_failed_cycles(xboard_node_id, limit, status_filter="confirmed_blocked_by_gfw")
 
     def finalize_measurement(
         self,
