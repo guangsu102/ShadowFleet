@@ -129,24 +129,40 @@ const filteredDetections = computed(() => {
 
 interface ConfirmedNodeRow {
   node_id: number
+  node_name: string | null
+  region: string | null
+  protocol_type: string | null
   confirm_count: number
   latest_cycle: number
   triggered_healing: 'Yes' | 'No'
 }
 
 const confirmedNodeRows = computed<ConfirmedNodeRow[]>(() => {
-  const groups: Record<number, { count: number; latest_cycle: number }> = {}
+  const groups: Record<number, { count: number; latest_cycle: number; node_name: string | null; region: string | null; protocol_type: string | null }> = {}
   for (const d of confirmedBlockedDetections.value) {
     if (!groups[d.xboard_node_id]) {
-      groups[d.xboard_node_id] = { count: 0, latest_cycle: d.cycle_id }
+      groups[d.xboard_node_id] = {
+        count: 0,
+        latest_cycle: d.cycle_id,
+        node_name: d.node_name,
+        region: d.region,
+        protocol_type: d.protocol_type,
+      }
     }
     groups[d.xboard_node_id].count++
     if (d.cycle_id > groups[d.xboard_node_id].latest_cycle) {
       groups[d.xboard_node_id].latest_cycle = d.cycle_id
+      // Update node info from the latest detection record
+      groups[d.xboard_node_id].node_name = d.node_name
+      groups[d.xboard_node_id].region = d.region
+      groups[d.xboard_node_id].protocol_type = d.protocol_type
     }
   }
   return Object.entries(groups).map(([nodeId, g]) => ({
     node_id: Number(nodeId),
+    node_name: g.node_name,
+    region: g.region,
+    protocol_type: g.protocol_type,
     confirm_count: g.count,
     latest_cycle: g.latest_cycle,
     triggered_healing: g.count >= 2 ? 'Yes' : 'No',
@@ -203,6 +219,22 @@ function detectionTagLabel(status: string): string {
 
 function healingTagType(val: 'Yes' | 'No'): 'success' | 'error' {
   return val === 'Yes' ? 'success' : 'error'
+}
+
+function fmtBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+function nodeStatusType(status: string | null): 'success' | 'error' | 'info' | 'warning' | 'default' {
+  if (status === 'online') return 'success'
+  if (status === 'offline' || status === 'failed') return 'error'
+  if (status === 'healing') return 'warning'
+  if (status === 'provisioning') return 'info'
+  return 'default'
 }
 
 // ── Data Fetching ─────────────────────────────────────────────────────────────
@@ -278,7 +310,25 @@ const cycleColumns = [
 const detectionColumns = [
   { title: '#', key: '_index', width: 50, align: 'center' as const,
     render: (_: any, i: number) => h('span', { style: 'color:#94a3b8;font-size:12px;font-weight:500' }, i + 1) },
-  { title: t('monitor.nodeIdShort'), key: 'xboard_node_id', align: 'center' as const, width: 80 },
+  {
+    title: t('monitor.nodeName') || '节点名称',
+    key: 'node_name',
+    width: 140,
+    ellipsis: { tooltip: true },
+    render: (row: DetectionRecordResponse) => row.node_name
+      ? h('a', { href: `/fleet?node=${row.xboard_node_id}`, style: 'color: #2080f0; text-decoration: none; font-weight: 500' }, row.node_name)
+      : `Node #${row.xboard_node_id}`,
+  },
+  { title: t('monitor.region') || '区域', key: 'region', width: 100, render: (row: DetectionRecordResponse) => row.region ?? '—' },
+  { title: '协议', key: 'protocol_type', width: 80, render: (row: DetectionRecordResponse) => row.protocol_type ?? '—' },
+  {
+    title: '节点状态',
+    key: 'status',
+    width: 90,
+    render: (row: DetectionRecordResponse) => row.status
+      ? h(NTag, { type: nodeStatusType(row.status), size: 'small', round: true }, { default: () => row.status })
+      : '—',
+  },
   { title: t('monitor.detectionType'), key: 'detection_type', width: 130, ellipsis: { tooltip: true } },
   {
     title: t('monitor.detectionStatus'),
@@ -287,15 +337,27 @@ const detectionColumns = [
     render: (row: DetectionRecordResponse) =>
       h(NTag, { type: detectionTagType(row.detection_status), size: 'small', round: true }, { default: () => detectionTagLabel(row.detection_status) }),
   },
+  { title: '上行流量', key: 'uplink_bytes', width: 100, align: 'right' as const, render: (row: DetectionRecordResponse) => fmtBytes(row.uplink_bytes) },
+  { title: '下行流量', key: 'downlink_bytes', width: 100, align: 'right' as const, render: (row: DetectionRecordResponse) => fmtBytes(row.downlink_bytes) },
+  { title: '总流量', key: 'total_bytes', width: 100, align: 'right' as const, render: (row: DetectionRecordResponse) => fmtBytes(row.total_bytes) },
   { title: t('monitor.reason'), key: 'reason', ellipsis: { tooltip: true } },
-  { title: t('monitor.probeProvider'), key: 'probe_provider', width: 130, ellipsis: { tooltip: true } },
   { title: t('monitor.createdAt'), key: 'created_at', width: 170, render: (row: DetectionRecordResponse) => fmtTs(row.created_at) },
 ]
 
 const confirmedNodeColumns = [
   { title: '#', key: '_index', width: 50, align: 'center' as const,
     render: (_: any, i: number) => h('span', { style: 'color:#94a3b8;font-size:12px;font-weight:500' }, i + 1) },
-  { title: t('monitor.nodeId'), key: 'node_id', align: 'center' as const, width: 80 },
+  {
+    title: t('monitor.nodeName') || '节点名称',
+    key: 'node_name',
+    width: 150,
+    ellipsis: { tooltip: true },
+    render: (row: ConfirmedNodeRow) => row.node_name
+      ? h('a', { href: `/fleet?node=${row.node_id}`, style: 'color: #2080f0; text-decoration: none; font-weight: 500' }, row.node_name)
+      : `Node #${row.node_id}`,
+  },
+  { title: t('monitor.region') || '区域', key: 'region', width: 100, render: (row: ConfirmedNodeRow) => row.region ?? '—' },
+  { title: '协议', key: 'protocol_type', width: 80, render: (row: ConfirmedNodeRow) => row.protocol_type ?? '—' },
   { title: t('monitor.confirmCount'), key: 'confirm_count', align: 'center' as const, width: 110 },
   { title: t('monitor.latestCycle'), key: 'latest_cycle', align: 'center' as const, width: 110 },
   {

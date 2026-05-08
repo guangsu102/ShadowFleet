@@ -48,6 +48,13 @@ class DetectionRecordResponse(BaseModel):
     id: int
     cycle_id: int
     xboard_node_id: int
+    node_name: str | None = None
+    region: str | None = None
+    protocol_type: str | None = None
+    status: str | None = None
+    uplink_bytes: int | None = None
+    downlink_bytes: int | None = None
+    total_bytes: int | None = None
     detection_type: str
     detection_status: str
     reason: str | None = None
@@ -228,7 +235,10 @@ async def list_detections(
     detection_status: str | None = None,
     limit: int = 100,
 ) -> list[DetectionRecordResponse]:
+    from database.state_repo import StateRepo
     repo = MonitorRepo(ctx)
+    state_repo = StateRepo(ctx)
+
     if cycle_id is not None:
         records = repo.list_detections_by_cycle(cycle_id)
     elif node_id is not None:
@@ -237,13 +247,44 @@ async def list_detections(
         records = []
     if detection_status is not None:
         records = [r for r in records if r.get("detection_status") == detection_status]
-    return [
-        DetectionRecordResponse(
-            id=i, cycle_id=r.get("cycle_id", 0), xboard_node_id=r.get("xboard_node_id", 0),
-            detection_type=r.get("detection_type", ""),
-            detection_status=r.get("detection_status", ""),
-            reason=r.get("reason"), probe_provider=r.get("probe_provider"),
-            created_at=r.get("created_at", ""),
+
+    results = []
+    for i, r in enumerate(records, 1):
+        xboard_node_id = r.get("xboard_node_id", 0)
+        node_record = state_repo.get_node_by_xboard_node_id(xboard_node_id)
+
+        # Extract traffic data from payload_json
+        payload = r.get("payload_json")
+        uplink_bytes = None
+        downlink_bytes = None
+        total_bytes = None
+        if payload:
+            import json as _json
+            try:
+                p = _json.loads(payload) if isinstance(payload, str) else payload
+                uplink_bytes = p.get("uplink_bytes")
+                downlink_bytes = p.get("downlink_bytes")
+                total_bytes = p.get("total_bytes")
+            except Exception:
+                pass
+
+        results.append(
+            DetectionRecordResponse(
+                id=i,
+                cycle_id=r.get("cycle_id", 0),
+                xboard_node_id=xboard_node_id,
+                node_name=node_record.node_name if node_record else None,
+                region=node_record.region if node_record else None,
+                protocol_type=node_record.node_type if node_record else None,
+                status=node_record.status if node_record else None,
+                uplink_bytes=uplink_bytes,
+                downlink_bytes=downlink_bytes,
+                total_bytes=total_bytes,
+                detection_type=r.get("detection_type", ""),
+                detection_status=r.get("detection_status", ""),
+                reason=r.get("reason"),
+                probe_provider=r.get("probe_provider"),
+                created_at=r.get("created_at", ""),
+            )
         )
-        for i, r in enumerate(records, 1)
-    ]
+    return results

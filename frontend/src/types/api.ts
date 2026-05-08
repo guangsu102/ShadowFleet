@@ -414,6 +414,13 @@ export interface DetectionRecordResponse {
   id: number
   cycle_id: number
   xboard_node_id: number
+  node_name: string | null
+  region: string | null
+  protocol_type: string | null
+  status: string | null
+  uplink_bytes: number | null
+  downlink_bytes: number | null
+  total_bytes: number | null
   detection_type: string
   detection_status: string
   reason: string | null
