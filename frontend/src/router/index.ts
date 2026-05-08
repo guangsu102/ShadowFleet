@@ -72,8 +72,14 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
+
+  // Wait for auth store to finish initializing (fetchMe call on app start)
+  if (!auth.initialized && auth.accessToken) {
+    await auth.fetchMe()
+  }
+
   if (!to.meta.public && !auth.isAuthenticated) {
     return { name: 'Login', query: { redirect: to.fullPath } }
   }

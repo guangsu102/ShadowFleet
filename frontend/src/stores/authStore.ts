@@ -12,6 +12,7 @@ export const useAuthStore = defineStore('auth', () => {
   const refreshToken = ref<string | null>(localStorage.getItem('refresh_token'))
   const currentUser = ref<CurrentUser | null>(null)
   const correlationId = ref<string | null>(null)
+  const initialized = ref(false)
 
   const isAuthenticated = computed(() => !!accessToken.value)
   const isAdmin = computed(() => currentUser.value?.role === 'admin')
@@ -27,6 +28,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshToken.value = data.refresh_token
     localStorage.setItem('access_token', data.access_token)
     localStorage.setItem('refresh_token', data.refresh_token)
+    initialized.value = true
     await fetchMe()
   }
 
@@ -42,9 +44,18 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function fetchMe() {
-    if (!accessToken.value) return
-    const { data } = await apiClient.get<CurrentUser>('/auth/me')
-    currentUser.value = data
+    if (!accessToken.value) {
+      initialized.value = true
+      return
+    }
+    try {
+      const { data } = await apiClient.get<CurrentUser>('/auth/me')
+      currentUser.value = data
+    } catch {
+      // Token may be expired; let the axios interceptor handle refresh
+    } finally {
+      initialized.value = true
+    }
   }
 
   function logout() {
@@ -52,6 +63,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshToken.value = null
     currentUser.value = null
     correlationId.value = null
+    initialized.value = false
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
   }
@@ -61,6 +73,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshToken,
     currentUser,
     correlationId,
+    initialized,
     isAuthenticated,
     isAdmin,
     isOperator,

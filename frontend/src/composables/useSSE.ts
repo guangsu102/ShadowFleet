@@ -103,8 +103,25 @@ export function useSSE(options: UseSSEOptions = {}) {
       source.close()
     }
 
-    const url = '/api/v1/events/stream'
+    // EventSource does not support custom HTTP headers (e.g. Authorization).
+    // Pass the JWT token via query parameter so the backend can validate it.
+    const url = `/api/v1/events/stream?token=${encodeURIComponent(auth.accessToken)}`
     source = new EventSource(url)
+
+    source.addEventListener('auth:error', () => {
+      // Token rejected by the server. Log out and redirect to login.
+      connected.value = false
+      clearTimers()
+      auth.logout()
+      window.location.href = '/login'
+    })
+
+    source.addEventListener('close', () => {
+      if (source) {
+        source.close()
+        source = null
+      }
+    })
 
     source.onopen = () => {
       connected.value = true
@@ -114,14 +131,16 @@ export function useSSE(options: UseSSEOptions = {}) {
 
     source.onmessage = (event) => handleMessage(event)
 
-    source.onerror = (err) => {
+    source.onerror = () => {
       connected.value = false
-      clearTimers()
+      // Note: EventSource.onerror does not expose HTTP status codes.
+      // Auth errors are handled via the 'auth:error' SSE event above.
+      // For other errors, clear the source and let reconnect logic retry.
       if (source) {
         source.close()
         source = null
       }
-      onError?.(err)
+      onError?.(new Event('error'))
       scheduleReconnect()
     }
   }

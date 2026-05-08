@@ -66,14 +66,20 @@ class XboardSentinelClient:
         if not isinstance(samples, list):
             raise XboardSentinelClientError("Xboard minute-stats response.samples must be a list")
 
+        # Use root-level values from API response, fall back to request params
+        payload_server_id = payload.get("server_id")
+        resolved_server_id = int(payload_server_id) if payload_server_id is not None else server_id
+        payload_server_type = payload.get("server_type")
+        resolved_server_type = str(payload_server_type) if payload_server_type is not None else server_type
+
         records: list[XboardSentinelMinuteStat] = []
         for sample in samples:
             if not isinstance(sample, dict):
                 raise XboardSentinelClientError("Xboard minute-stats sample must be an object")
             records.append(
                 XboardSentinelMinuteStat(
-                    server_id=int(sample["server_id"]),
-                    server_type=str(sample["server_type"]),
+                    server_id=resolved_server_id,
+                    server_type=resolved_server_type,
                     uplink_bytes=int(sample["uplink_bytes"]),
                     downlink_bytes=int(sample["downlink_bytes"]),
                     total_bytes=int(sample["total_bytes"]),
