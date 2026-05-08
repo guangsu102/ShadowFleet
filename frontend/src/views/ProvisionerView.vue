@@ -427,6 +427,14 @@ const columns = [
   { title: 'ID', key: 'id', align: 'center' as const, width: 70 },
   { title: '任务类型', key: 'task_type', render: (row: TaskResponse) => taskTypeLabel(row.task_type) },
   {
+    title: '节点名称', key: 'node_name', width: 150,
+    render: (row: TaskResponse) => row.node_name
+      ? h('a', { href: `/fleet?node=${row.xboard_node_id}`, style: 'color: #2080f0; text-decoration: none' }, row.node_name)
+      : '—',
+  },
+  { title: '区域', key: 'region', width: 120, render: (row: TaskResponse) => row.region ?? '—' },
+  { title: '协议', key: 'protocol_type', width: 80, render: (row: TaskResponse) => row.protocol_type ?? '—' },
+  {
     title: '状态', key: 'status', align: 'center' as const, width: 100,
     render: (row: TaskResponse) => h(NTag, { type: statusTagType(row.status), size: 'small' }, { default: () => row.status }),
   },

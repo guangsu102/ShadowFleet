@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, h } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   NDataTable,
   NTag,
@@ -349,10 +350,17 @@ const { connect, disconnect, connected: sseConnected } = useSSE({
   onNodeStatusChanged: () => fetchSnapshot(),
 })
 
+const route = useRoute()
+
 onMounted(() => {
   fetchSnapshot()
   refreshTimer = setInterval(fetchSnapshot, 30_000)
   connect()
+  // Auto-select node from query parameter (e.g. /fleet?node=123)
+  const nodeParam = route.query.node
+  if (nodeParam && !isNaN(Number(nodeParam))) {
+    selectedNodeId.value = Number(nodeParam)
+  }
 })
 
 onUnmounted(() => {

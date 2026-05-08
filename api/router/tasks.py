@@ -66,6 +66,11 @@ class TaskResponse(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     last_error: str | None = None
+    node_name: str | None = None
+    region: str | None = None
+    protocol_type: str | None = None
+    asset_type: str | None = None
+    xboard_node_id: int | None = None
 
 
 class SubmitResult(BaseModel):
@@ -75,6 +80,7 @@ class SubmitResult(BaseModel):
 
 
 def _to_response(record) -> TaskResponse:
+    payload = record.request_payload or {}
     return TaskResponse(
         id=record.id, task_type=record.task_type, status=record.status,
         correlation_id=record.correlation_id, attempt_count=record.attempt_count,
@@ -83,6 +89,11 @@ def _to_response(record) -> TaskResponse:
         started_at=getattr(record, "started_at", None),
         finished_at=getattr(record, "finished_at", None),
         last_error=getattr(record, "last_error", None),
+        node_name=payload.get("node_name"),
+        region=payload.get("region"),
+        protocol_type=payload.get("protocol_type"),
+        asset_type=payload.get("asset_type"),
+        xboard_node_id=payload.get("xboard_node_id"),
     )
 
 

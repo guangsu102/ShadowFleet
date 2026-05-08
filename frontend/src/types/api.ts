@@ -359,6 +359,11 @@ export interface TaskResponse {
   started_at: string | null
   finished_at: string | null
   last_error: string | null
+  node_name: string | null
+  region: string | null
+  protocol_type: string | null
+  asset_type: string | null
+  xboard_node_id: number | null
 }
 
 export interface SubmitResult {
