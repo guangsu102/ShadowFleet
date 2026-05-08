@@ -52,6 +52,7 @@ class SentinelUpdateRequest(BaseModel):
     sentinel_probe_min_cn_probe_count: int | None = None
     sentinel_probe_required_success_ratio: float | None = None
     sentinel_probe_allow_auto_heal_hy2: bool | None = None
+    sentinel_probe_zero_traffic_nodes: bool | None = None
 
 
 class FleetSchedulerUpdateRequest(BaseModel):
@@ -150,6 +151,7 @@ async def update_sentinel(
         "sentinel_probe_min_cn_probe_count": request.sentinel_probe_min_cn_probe_count,
         "sentinel_probe_required_success_ratio": request.sentinel_probe_required_success_ratio,
         "sentinel_probe_allow_auto_heal_hy2": request.sentinel_probe_allow_auto_heal_hy2,
+        "sentinel_probe_zero_traffic_nodes": request.sentinel_probe_zero_traffic_nodes,
     }
     for key, value in sentinel_fields.items():
         if value is not None:

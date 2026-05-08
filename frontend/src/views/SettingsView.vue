@@ -244,6 +244,7 @@ const sentinelConfirmCycles = ref(2)
 const sentinelMinCnProbe = ref(2)
 const sentinelSuccessRatio = ref(0.5)
 const sentinelAllowAutoHealHy2 = ref(false)
+const sentinelProbeZeroTrafficNodes = ref(false)
 
 const sentinelProbeModeOptions: SelectOption[] = [
   { label: 'local_active_probe', value: 'local_active_probe' },
@@ -264,6 +265,7 @@ function buildSentinelForm() {
   sentinelMinCnProbe.value = (app.sentinel_probe_min_cn_probe_count as number) ?? 2
   sentinelSuccessRatio.value = (app.sentinel_probe_required_success_ratio as number) ?? 0.5
   sentinelAllowAutoHealHy2.value = (app.sentinel_probe_allow_auto_heal_hy2 as boolean) ?? false
+  sentinelProbeZeroTrafficNodes.value = (app.sentinel_probe_zero_traffic_nodes as boolean) ?? false
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +445,7 @@ async function saveSentinel() {
       sentinel_probe_min_cn_probe_count: sentinelMinCnProbe.value,
       sentinel_probe_required_success_ratio: sentinelSuccessRatio.value,
       sentinel_probe_allow_auto_heal_hy2: sentinelAllowAutoHealHy2.value,
+      sentinel_probe_zero_traffic_nodes: sentinelProbeZeroTrafficNodes.value,
     }
     await apiClient.put<SentinelUpdateRequest, never>('/config/sentinel', body)
     message.success(t('settings.sentinelSaved'))
@@ -708,6 +711,10 @@ onMounted(() => { fetchConfig() })
           <div style="display: flex; align-items: center; padding-bottom: 8px; gap: 8px">
             <NSwitch v-model:value="sentinelAllowAutoHealHy2" />
             <NText depth="3" style="font-size: 13px">{{ t('settings.sentinelAllowAutoHealHy2') }}</NText>
+          </div>
+          <div style="display: flex; align-items: center; padding-bottom: 8px; gap: 8px">
+            <NSwitch v-model:value="sentinelProbeZeroTrafficNodes" />
+            <NText depth="3" style="font-size: 13px">{{ t('settings.sentinelProbeZeroTrafficNodes') }}</NText>
           </div>
         </div>
         <NButton type="primary" :loading="savingSentinel" style="margin-top: 16px" @click="saveSentinel">{{ t('settings.sentinelSaved') }}</NButton>

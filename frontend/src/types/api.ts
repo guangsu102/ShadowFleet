@@ -478,6 +478,7 @@ export interface SentinelUpdateRequest {
   sentinel_probe_min_cn_probe_count?: number | null
   sentinel_probe_required_success_ratio?: number | null
   sentinel_probe_allow_auto_heal_hy2?: boolean | null
+  sentinel_probe_zero_traffic_nodes?: boolean | null
 }
 
 export interface AppUpdateRequest {

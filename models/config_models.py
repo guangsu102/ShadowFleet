@@ -30,6 +30,7 @@ class AppRuntimeConfig(BaseModel):
     sentinel_probe_retry_cooldown_seconds: float = 300.0
     sentinel_suspicious_lookback_minutes: int = 60
     sentinel_zero_uplink_window_minutes: int = 3
+    sentinel_probe_zero_traffic_nodes: bool = False  # 是否探测历史无流量的节点
     sentinel_probe_provider: str = "local_active_probe"
     sentinel_probe_api_base_url: str | None = None
     sentinel_probe_api_token: str | None = None

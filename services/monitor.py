@@ -249,6 +249,7 @@ class MonitorService:
                 recent_total_positive=recent_total_positive,
                 recent_zero_uplink_count=recent_zero_uplink_count,
                 expected_zero_window_minutes=zero_window_minutes,
+                probe_zero_traffic_nodes=config.sentinel_probe_zero_traffic_nodes,
             ):
                 continue
 

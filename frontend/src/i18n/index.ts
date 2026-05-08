@@ -625,6 +625,7 @@ export const zhMessages: Messages = {
     minCnProbe: '最小国内探针数',
     probeSuccessThreshold: '探测成功率阈值（0–1）',
     sentinelAllowAutoHealHy2: '允许自动自愈 Hysteria2',
+    sentinelProbeZeroTrafficNodes: '探测历史无流量节点',
 
     // Daemon 设置
     daemonSettings: 'Daemon 守护进程设置',
@@ -1428,6 +1429,7 @@ export const enMessages = {
     sentinelZeroUplinkWindow: 'Zero Uplink Window (minutes)',
     sentinelProbeMode: 'Probe Mode',
     sentinelAllowAutoHealHy2: 'Allow Auto-Heal HY2 Nodes',
+    sentinelProbeZeroTrafficNodes: 'Probe Zero-Traffic Nodes',
 
     // Fleet Scheduler
     fleetSchedulerSettings: 'Fleet Auto-Scheduler',

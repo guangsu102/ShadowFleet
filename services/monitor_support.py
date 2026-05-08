@@ -41,7 +41,12 @@ def should_flag_zero_uplink(
     recent_total_positive: bool,
     recent_zero_uplink_count: int,
     expected_zero_window_minutes: int,
+    probe_zero_traffic_nodes: bool = False,
 ) -> bool:
+    # 如果启用探测无流量节点，则即使历史无流量也标记
+    if probe_zero_traffic_nodes and recent_zero_uplink_count >= expected_zero_window_minutes:
+        return True
+    # 默认行为：必须有历史流量且最近窗口上行归零
     return recent_total_positive and recent_zero_uplink_count >= expected_zero_window_minutes
 
 
