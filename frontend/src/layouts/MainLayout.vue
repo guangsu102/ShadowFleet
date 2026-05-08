@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu, NButton, NText, NSpace, NIcon, NSelect } from 'naive-ui'
+import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu, NButton, NText, NSpace, NSelect } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
 import { useAuthStore } from '@/stores/authStore'
 import { useI18n } from '@/composables/useI18n'
