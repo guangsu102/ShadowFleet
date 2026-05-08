@@ -265,6 +265,13 @@ class MonitorService:
 
             candidate = to_monitor_candidate(node_record, xboard_runtime)
             candidates.append(candidate)
+
+            # Calculate aggregate traffic from the last N minutes
+            recent_samples = stats[-zero_window_minutes:] if len(stats) >= zero_window_minutes else stats
+            total_uplink = sum(s.uplink_bytes for s in recent_samples)
+            total_downlink = sum(s.downlink_bytes for s in recent_samples)
+            total_bytes = sum(s.total_bytes for s in recent_samples)
+
             self._record_detection(
                 cycle_id=cycle_id,
                 candidate=candidate,
@@ -275,6 +282,10 @@ class MonitorService:
                     "recent_total_positive": recent_total_positive,
                     "recent_zero_uplink_count": recent_zero_uplink_count,
                     "zero_window_minutes": zero_window_minutes,
+                    "uplink_bytes": total_uplink,
+                    "downlink_bytes": total_downlink,
+                    "total_bytes": total_bytes,
+                    "sample_count": len(recent_samples),
                 },
             )
             self._state_repo.create_event(
