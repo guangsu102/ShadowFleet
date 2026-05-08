@@ -15,6 +15,7 @@ import {
   NFormItem,
   NInput,
   NPopconfirm,
+  NTooltip,
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
@@ -297,6 +298,15 @@ function statusTagType(status: string): 'success' | 'error' | 'warning' | 'info'
   }
 }
 
+function xboardStatusTagType(status: string | null): 'success' | 'warning' | 'error' | 'info' | 'default' {
+  switch (status) {
+    case 'online': return 'success'
+    case 'hidden': return 'warning'
+    case 'offline': return 'error'
+    default: return 'info'
+  }
+}
+
 // ── Table Columns ────────────────────────────────────────────────────────────
 const nodeTableColumns = [
   { title: t('fleet.nodeName'), key: 'node_name', ellipsis: { tooltip: true } },
@@ -308,6 +318,29 @@ const nodeTableColumns = [
     key: 'status',
     render: (row: FleetNodeDashboardRowResponse) =>
       h(NTag, { type: statusTagType(row.status), size: 'small' }, { default: () => row.status }),
+  },
+  {
+    title: 'Xboard',
+    key: 'xboard_status',
+    width: 110,
+    align: 'center' as const,
+    render: (row: FleetNodeDashboardRowResponse) => {
+      if (!row.xboard_status) {
+        return h('span', { style: { color: '#94a3b8', fontSize: '12px' } }, '—')
+      }
+      const tooltipContent = [
+        `状态: ${row.xboard_status}`,
+        `Show: ${row.xboard_show ? '是' : '否'}`,
+        row.xboard_updated_at ? `同步时间: ${fmtTs(row.xboard_updated_at)}` : '',
+      ].filter(Boolean).join(' | ')
+      return h(NTooltip, { trigger: 'hover' }, {
+        trigger: () => h(NTag, {
+          type: xboardStatusTagType(row.xboard_status),
+          size: 'small',
+        }, { default: () => row.xboard_status }),
+        default: () => h('span', { style: { fontSize: '12px' } }, tooltipContent),
+      })
+    },
   },
   { title: t('fleet.lastHealed'), key: 'last_healed_at', render: (row: FleetNodeDashboardRowResponse) => fmtTs(row.last_healed_at) },
   {

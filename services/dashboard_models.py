@@ -83,6 +83,9 @@ class FleetNodeDashboardRow:
     last_healed_at: str | None
     updated_at: str
     last_error: str | None
+    xboard_status: str | None
+    xboard_show: bool | None
+    xboard_updated_at: str | None
 
 
 @dataclass(frozen=True)

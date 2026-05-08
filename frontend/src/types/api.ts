@@ -124,6 +124,9 @@ export interface FleetNodeDashboardRowResponse {
   last_healed_at: string | null
   updated_at: string
   last_error: string | null
+  xboard_status: string | null
+  xboard_show: boolean | null
+  xboard_updated_at: string | null
 }
 
 export interface MonitorCycleSummaryResponse {

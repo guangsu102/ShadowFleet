@@ -76,6 +76,9 @@ class FleetNodeRecord:
     offline_at: str | None
     deleted_at: str | None
     last_healed_at: str | None
+    xboard_status: str | None
+    xboard_show: bool | None
+    xboard_updated_at: str | None
 
 
 @dataclass(frozen=True)

@@ -232,7 +232,10 @@ class DashboardService:
                     aws_account_id,
                     last_healed_at,
                     updated_at,
-                    last_error
+                    last_error,
+                    xboard_status,
+                    xboard_show,
+                    xboard_updated_at
                 FROM fleet_nodes
                 WHERE is_deleted = 0
                 ORDER BY updated_at DESC, id DESC
@@ -302,6 +305,9 @@ class DashboardService:
             last_healed_at=row["last_healed_at"],
             updated_at=str(row["updated_at"]),
             last_error=row["last_error"],
+            xboard_status=row["xboard_status"],
+            xboard_show=row["xboard_show"],
+            xboard_updated_at=row["xboard_updated_at"],
         )
 
     @staticmethod

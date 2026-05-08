@@ -151,6 +151,11 @@ class SqliteConnectionManager:
                     ON fleet_nodes (xboard_node_id)
                     WHERE is_deleted = 0;
             """),
+            ("add_xboard_status_fields", """
+                ALTER TABLE fleet_nodes ADD COLUMN xboard_status TEXT;
+                ALTER TABLE fleet_nodes ADD COLUMN xboard_show INTEGER;
+                ALTER TABLE fleet_nodes ADD COLUMN xboard_updated_at TEXT;
+            """),
         ]
         applied = connection.execute(
             "SELECT name FROM schema_migrations"

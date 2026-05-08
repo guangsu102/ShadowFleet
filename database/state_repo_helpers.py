@@ -42,6 +42,9 @@ def map_fleet_node_record(row: sqlite3.Row) -> FleetNodeRecord:
         offline_at=row["offline_at"],
         deleted_at=row["deleted_at"],
         last_healed_at=row["last_healed_at"],
+        xboard_status=row["xboard_status"],
+        xboard_show=row["xboard_show"],
+        xboard_updated_at=row["xboard_updated_at"],
     )
 
 

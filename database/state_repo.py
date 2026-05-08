@@ -489,3 +489,26 @@ class StateRepo:
         set_event_type("sqlite_node_marked_deleted")
         self._logger.info("Marked node deleted and released allocation locally xboard_node_id=%s", xboard_node_id)
 
+    def update_node_xboard_status(
+        self,
+        xboard_node_id: int,
+        xboard_status: str | None,
+        xboard_show: bool | None,
+        xboard_updated_at: str | None,
+    ) -> None:
+        """Update Xboard node status synchronization fields."""
+        updates: dict[str, object] = {
+            "xboard_status": xboard_status,
+            "xboard_show": xboard_show,
+            "xboard_updated_at": xboard_updated_at,
+            "updated_at": utcnow_iso(),
+        }
+        self._update_node_fields(xboard_node_id=xboard_node_id, updates=updates)
+        set_event_type("sqlite_node_xboard_status_updated")
+        self._logger.info(
+            "Updated Xboard status for xboard_node_id=%s status=%s show=%s",
+            xboard_node_id,
+            xboard_status,
+            xboard_show,
+        )
+

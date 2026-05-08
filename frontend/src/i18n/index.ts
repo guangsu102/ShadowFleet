@@ -288,6 +288,11 @@ export const zhMessages: Messages = {
     healing: '自愈中',
     failed: '失败',
     anomaly: '异常',
+    xboardStatus: 'Xboard 状态',
+    xboardOnline: 'Xboard 在线',
+    xboardHidden: 'Xboard 隐藏',
+    xboardOffline: 'Xboard 离线',
+    xboardSyncTime: '最后同步',
   },
 
   tasks: {
@@ -1067,6 +1072,11 @@ export const enMessages = {
     healing: 'Healing',
     failed: 'Failed',
     anomaly: 'Anomaly',
+    xboardStatus: 'Xboard Status',
+    xboardOnline: 'Xboard Online',
+    xboardHidden: 'Xboard Hidden',
+    xboardOffline: 'Xboard Offline',
+    xboardSyncTime: 'Last Sync',
   },
 
   tasks: {

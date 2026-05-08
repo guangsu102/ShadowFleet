@@ -17,6 +17,7 @@ from services.manual_operation_service import ManualOperationService
 from services.fleet_scheduler_service import FleetSchedulerService
 from services.provisioning_task_service import ProvisioningTaskService
 from services.runtime_service import RuntimeContext, build_runtime_context, get_daemon_public_ipv6
+from services.xboard_sync_service import XboardSyncService
 from utils.logger import set_correlation_id, set_event_type
 import logging
 from utils.template_models import GITHUB_ARTIFACT_MANIFEST
@@ -894,6 +895,50 @@ def _run_scheduler_worker(
             stop_event.wait(app_config.daemon_failure_backoff_seconds)
 
 
+def _run_xboard_sync_worker(
+    runtime_context: RuntimeContext,
+    *,
+    stop_event: threading.Event,
+) -> None:
+    logger = runtime_context.logger.getChild("daemon.xboard_sync")
+    set_event_type("daemon_xboard_sync_worker_started")
+    logger.info("Xboard sync worker started")
+
+    # Initial sync on startup
+    try:
+        sync_service = XboardSyncService(runtime_context)
+        success_count, failed_count = sync_service.sync_all_nodes()
+        logger.info(
+            "Initial Xboard sync completed success=%s failed=%s",
+            success_count,
+            failed_count,
+        )
+    except Exception:
+        logger.exception("Initial Xboard sync failed")
+
+    while not stop_event.is_set():
+        try:
+            stop_event.wait(60.0)  # Sync every 60 seconds
+
+            if stop_event.is_set():
+                break
+
+            try:
+                sync_service = XboardSyncService(runtime_context)
+                success_count, failed_count = sync_service.sync_all_nodes()
+                logger.info(
+                    "Periodic Xboard sync completed success=%s failed=%s",
+                    success_count,
+                    failed_count,
+                )
+            except Exception:
+                logger.exception("Periodic Xboard sync failed")
+
+        except Exception:
+            logger.exception("Xboard sync worker cycle failed")
+            stop_event.wait(30.0)  # Retry in 30 seconds on error
+
+
 def _run_manual_operation_worker(
     runtime_context: RuntimeContext,
     *,
@@ -1004,6 +1049,15 @@ def main() -> None:
         daemon=True,
         name="shadowfleet-scheduler-worker",
     )
+    xboard_sync_thread = threading.Thread(
+        target=_run_xboard_sync_worker,
+        kwargs={
+            "runtime_context": runtime_context,
+            "stop_event": stop_event,
+        },
+        daemon=True,
+        name="shadowfleet-xboard-sync-worker",
+    )
 
     set_event_type("daemon_started")
     logger.info("ShadowFleet daemon started")
@@ -1011,6 +1065,7 @@ def main() -> None:
     sentinel_thread.start()
     manual_operation_thread.start()
     scheduler_thread.start()
+    xboard_sync_thread.start()
 
     def _sigterm_handler(signum: int, frame: object) -> None:
         set_correlation_id(runtime_context.correlation_id)
@@ -1030,6 +1085,8 @@ def main() -> None:
                 raise RuntimeError("Manual operation worker thread exited unexpectedly")
             if not scheduler_thread.is_alive():
                 raise RuntimeError("Scheduler worker thread exited unexpectedly")
+            if not xboard_sync_thread.is_alive():
+                raise RuntimeError("Xboard sync worker thread exited unexpectedly")
             time.sleep(1.0)
     except KeyboardInterrupt:
         set_correlation_id(runtime_context.correlation_id)
@@ -1052,6 +1109,7 @@ def main() -> None:
             sentinel_thread.join(timeout=5.0)
             manual_operation_thread.join(timeout=5.0)
             scheduler_thread.join(timeout=5.0)
+            xboard_sync_thread.join(timeout=5.0)
         finally:
             _shutdown_servers(ready_callback_server, artifact_cache_server)
 
