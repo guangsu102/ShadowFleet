@@ -135,6 +135,8 @@ class SyncResultResponse(BaseModel):
     created: int
     orphan_local_deleted: int
     already_synced: int
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 @router.post("/sync", response_model=SyncResultResponse)
@@ -144,4 +146,15 @@ async def sync_nodes(
 ) -> SyncResultResponse:
     from services.node_registry_service import NodeRegistryService
     result = NodeRegistryService(ctx).sync_with_xboard()
+
+    # Xboard unavailable: return success with skipped flag
+    if result.get("created") == -1:
+        return SyncResultResponse(
+            created=0,
+            orphan_local_deleted=0,
+            already_synced=0,
+            skipped=True,
+            skip_reason="Xboard 不可用，跳过同步",
+        )
+
     return SyncResultResponse(**result)

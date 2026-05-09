@@ -9,7 +9,7 @@ from database.state_repo import (
     StateRepo,
     StateRepoError,
 )
-from database.xboard_repo import XboardNodeCreateRequest, XboardNodeNotFoundError, XboardRepo
+from database.xboard_repo import XboardNodeCreateRequest, XboardNodeNotFoundError, XboardRepo, XboardRepoError
 from services.node_registry_helpers import (
     compensate_registration_failure,
     require_registered_node,
@@ -509,6 +509,7 @@ class NodeRegistryService:
         - Both have same node_name → no action (already synced)
 
         Returns summary: {created, orphan_local_deleted, already_synced}
+        Returns summary with -1 values if xboard is unavailable.
         """
         from dataclasses import dataclass
 
@@ -520,7 +521,20 @@ class NodeRegistryService:
 
         summary = SyncSummary()
 
-        xboard_nodes = self._xboard_repo.list_all_shadowfleet_nodes()
+        try:
+            xboard_nodes = self._xboard_repo.list_all_shadowfleet_nodes()
+        except XboardRepoError as exc:
+            self._logger.warning(
+                "Xboard unavailable during sync, skipping synchronization: %s",
+                exc,
+            )
+            set_event_type("node_sync_skipped_xboard_unavailable")
+            return {
+                "created": -1,
+                "orphan_local_deleted": -1,
+                "already_synced": -1,
+            }
+
         local_nodes = self._state_repo.list_active_nodes()
 
         xboard_names_stripped = {self._strip_sf_prefix(n.node_name) for n in xboard_nodes}

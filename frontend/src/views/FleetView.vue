@@ -237,11 +237,23 @@ async function deleteNode(xboardNodeId: number) {
 }
 
 // ── Sync with Xboard ────────────────────────────────────────────────────────────
+interface SyncResult {
+  created: number
+  orphan_local_deleted: number
+  already_synced: number
+  skipped?: boolean
+  skip_reason?: string | null
+}
+
 async function syncWithXboard() {
   syncing.value = true
   try {
-    const { data } = await apiClient.post<{ created: number; orphan_local_deleted: number; already_synced: number }>('/nodes/sync')
-    message.success(`同步完成：新建 ${data.created}，删除本地孤立节点 ${data.orphan_local_deleted}，已同步 ${data.already_synced}`)
+    const { data } = await apiClient.post<SyncResult>('/nodes/sync')
+    if (data.skipped) {
+      message.warning(data.skip_reason || '同步已跳过')
+    } else {
+      message.success(`同步完成：新建 ${data.created}，删除本地孤立节点 ${data.orphan_local_deleted}，已同步 ${data.already_synced}`)
+    }
     await fetchSnapshot()
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
