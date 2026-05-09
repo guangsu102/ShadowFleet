@@ -110,7 +110,7 @@ const regionOptions = computed<{ label: string; value: string }[]>(() => {
   return allRegionKeys.map((r) => {
     const displayName = REGION_MAP[r] || r
     return { label: `${displayName} (${r})`, value: r }
-  })
+  }).filter(opt => !existingRegions.includes(opt.value))
 })
 
 const activeRegion = computed<string | null>(() => {
