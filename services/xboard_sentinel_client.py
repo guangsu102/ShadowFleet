@@ -5,7 +5,12 @@ from typing import Any
 
 import requests
 
-from services.monitor_models import XboardSentinelMinuteStat, XboardSentinelNodeRuntime
+from services.monitor_models import (
+    XboardServerList,
+    XboardServerListItem,
+    XboardSentinelMinuteStat,
+    XboardSentinelNodeRuntime,
+)
 from services.runtime_service import RuntimeContext
 from utils.logger import set_event_type
 from utils.resilience import execute_with_backoff
@@ -110,6 +115,43 @@ class XboardSentinelClient:
             server_port=int(payload["server_port"]),
             show=bool(payload["show"]),
         )
+
+    def get_server_list(self) -> XboardServerList:
+        """
+        Get all ShadowFleet nodes with online status from Xboard.
+        Requires Bearer token authentication (xboard_sentinel_api_key).
+        """
+        payload = self._request(
+            method="GET",
+            endpoint="/api/v1/shadowfleet/server-list",
+        )
+        if not isinstance(payload, dict):
+            raise XboardSentinelClientError("Xboard server-list response must be a JSON object")
+
+        servers_data = payload.get("servers")
+        if not isinstance(servers_data, list):
+            raise XboardSentinelClientError("Xboard server-list response.servers must be a list")
+
+        servers: list[XboardServerListItem] = []
+        for item in servers_data:
+            if not isinstance(item, dict):
+                raise XboardSentinelClientError("Xboard server-list item must be an object")
+            servers.append(
+                XboardServerListItem(
+                    id=int(item["id"]),
+                    name=str(item["name"]),
+                    type=str(item["type"]),
+                    host=str(item["host"]),
+                    port=str(item["port"]),
+                    server_port=int(item["server_port"]),
+                    show=bool(item["show"]),
+                    last_check_at=int(item["last_check_at"]) if item.get("last_check_at") is not None else None,
+                    last_push_at=int(item["last_push_at"]) if item.get("last_push_at") is not None else None,
+                    is_online=int(item["is_online"]),
+                    available_status=str(item["available_status"]),
+                )
+            )
+        return XboardServerList(servers=servers)
 
     def _request(
         self,

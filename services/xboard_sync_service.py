@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from database.state_repo import StateRepo
-from database.xboard_repo import XboardRepo
 from services.runtime_service import RuntimeContext
+from services.xboard_sentinel_client import XboardSentinelClient
 from utils.logger import set_event_type
 
 
@@ -19,25 +19,31 @@ class XboardSyncService:
         self._runtime_context = runtime_context
         self._logger = runtime_context.logger.getChild("services.xboard_sync_service")
         self._state_repo = StateRepo(runtime_context)
-        self._xboard_repo = XboardRepo(runtime_context)
+        self._sentinel_client = XboardSentinelClient(runtime_context)
 
     def sync_all_nodes(self) -> tuple[int, int]:
         """
-        Synchronize Xboard status for all active nodes from PostgreSQL.
+        Synchronize Xboard status for all active nodes from Xboard API.
         Returns (success_count, failed_count).
         """
-        nodes = self._state_repo.list_active_nodes()
+        try:
+            server_list = self._sentinel_client.get_server_list()
+        except Exception:
+            self._logger.exception("Failed to fetch server list from Xboard")
+            set_event_type("xboard_sync_failed")
+            return 0, 0
+
         success_count = 0
         failed_count = 0
 
-        for node in nodes:
+        for server in server_list.servers:
             try:
-                self._sync_single_node(node.xboard_node_id, node.node_type)
+                self._sync_single_node(server)
                 success_count += 1
             except Exception:
                 self._logger.exception(
-                    "Failed to sync Xboard status for xboard_node_id=%s",
-                    node.xboard_node_id,
+                    "Failed to sync Xboard status for server id=%s",
+                    server.id,
                 )
                 failed_count += 1
 
@@ -49,33 +55,25 @@ class XboardSyncService:
         set_event_type("xboard_sync_completed")
         return success_count, failed_count
 
-    def _sync_single_node(self, xboard_node_id: int, node_type: str) -> None:
-        """Synchronize a single node's Xboard status by querying PostgreSQL directly."""
-        try:
-            runtime = self._xboard_repo.get_node_runtime(xboard_node_id)
+    def _sync_single_node(self, server) -> None:
+        """Synchronize a single node's Xboard status from server list."""
+        # Map Xboard status to ShadowFleet status
+        # is_online: 1 = online, 0 = offline
+        # available_status: string describing the status
+        xboard_status = "online" if server.is_online == 1 else "offline"
+        if not server.show:
+            xboard_status = "hidden"
 
-            xboard_status = "online" if runtime.show else "hidden"
-            self._state_repo.update_node_xboard_status(
-                xboard_node_id=xboard_node_id,
-                xboard_status=xboard_status,
-                xboard_show=runtime.show,
-                xboard_updated_at=_utcnow_iso(),
-            )
-            self._logger.debug(
-                "Synced Xboard status for xboard_node_id=%s status=%s show=%s",
-                xboard_node_id,
-                xboard_status,
-                runtime.show,
-            )
-        except Exception as exc:
-            self._logger.warning(
-                "Failed to get Xboard runtime for xboard_node_id=%s: %s",
-                xboard_node_id,
-                exc,
-            )
-            self._state_repo.update_node_xboard_status(
-                xboard_node_id=xboard_node_id,
-                xboard_status="offline",
-                xboard_show=None,
-                xboard_updated_at=_utcnow_iso(),
-            )
+        self._state_repo.update_node_xboard_status(
+            xboard_node_id=server.id,
+            xboard_status=xboard_status,
+            xboard_show=server.show,
+            xboard_updated_at=_utcnow_iso(),
+        )
+        self._logger.debug(
+            "Synced Xboard status for server id=%s status=%s show=%s is_online=%s",
+            server.id,
+            xboard_status,
+            server.show,
+            server.is_online,
+        )

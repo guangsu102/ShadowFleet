@@ -58,6 +58,27 @@ class XboardSentinelNodeRuntime:
 
 
 @dataclass(frozen=True)
+class XboardServerListItem:
+    """ShadowFleet node info from Xboard server-list API."""
+    id: int
+    name: str
+    type: str
+    host: str
+    port: str
+    server_port: int
+    show: bool
+    last_check_at: int | None
+    last_push_at: int | None
+    is_online: int
+    available_status: str
+
+
+@dataclass(frozen=True)
+class XboardServerList:
+    servers: list[XboardServerListItem]
+
+
+@dataclass(frozen=True)
 class ProbeResult:
     provider: str
     status: ProbeStatus
