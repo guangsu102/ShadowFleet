@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from database.asset_models import AssetNotFoundError
 from database.asset_repo import AssetRepo
 from database.state_repo import (
     FleetNodeCreateRequest,
@@ -421,15 +420,10 @@ class NodeRegistryService:
                 )
             )
             # Release the allocation associated with this node
-            try:
-                self._asset_repo.release_allocation_by_xboard_node_id(xboard_node_id)
+            released = self._asset_repo.release_allocation_by_xboard_node_id(xboard_node_id)
+            if released:
                 self._logger.info(
                     "Released allocation for xboard_node_id=%s after node deletion",
-                    xboard_node_id,
-                )
-            except AssetNotFoundError:
-                self._logger.debug(
-                    "No active allocation found for xboard_node_id=%s",
                     xboard_node_id,
                 )
             set_event_type("node_delete_completed")
@@ -464,15 +458,10 @@ class NodeRegistryService:
                     )
                 )
                 # Release the allocation associated with this node
-                try:
-                    self._asset_repo.release_allocation_by_xboard_node_id(xboard_node_id)
+                released = self._asset_repo.release_allocation_by_xboard_node_id(xboard_node_id)
+                if released:
                     self._logger.info(
                         "Released allocation for xboard_node_id=%s after node deletion",
-                        xboard_node_id,
-                    )
-                except AssetNotFoundError:
-                    self._logger.debug(
-                        "No active allocation found for xboard_node_id=%s",
                         xboard_node_id,
                     )
             except Exception:

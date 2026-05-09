@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from database.asset_models import AssetNotFoundError
 from database.asset_repo import AssetRepo
 from database.manual_operation_task_repo import (
     ManualOperationTaskCreateRequest,
@@ -151,10 +150,7 @@ class ManualOperationService:
             xboard_node_id=task_record.xboard_node_id,
             status_reason=status_reason,
         )
-        try:
-            self._asset_repo.release_allocation_by_xboard_node_id(task_record.xboard_node_id)
-        except AssetNotFoundError:
-            pass
+        released = self._asset_repo.release_allocation_by_xboard_node_id(task_record.xboard_node_id)
         return {
             "xboard_node_id": result.xboard_node_id,
             "status": result.status,

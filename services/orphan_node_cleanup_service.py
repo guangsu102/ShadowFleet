@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from database.asset_models import AssetNotFoundError
 from database.asset_repo import AssetRepo
 from database.state_models import FleetNodeRecord
 from database.state_repo import FleetNodeEventCreateRequest, StateRepo
@@ -170,15 +169,10 @@ class OrphanNodeCleanupService:
 
     def _release_asset_allocation(self, xboard_node_id: int) -> None:
         """Release asset allocation for the node."""
-        try:
-            self._asset_repo.release_allocation_by_xboard_node_id(xboard_node_id)
+        released = self._asset_repo.release_allocation_by_xboard_node_id(xboard_node_id)
+        if released:
             self._logger.info(
                 "Released asset allocation for xboard_node_id=%s",
-                xboard_node_id,
-            )
-        except AssetNotFoundError:
-            self._logger.debug(
-                "No active allocation found for xboard_node_id=%s",
                 xboard_node_id,
             )
 

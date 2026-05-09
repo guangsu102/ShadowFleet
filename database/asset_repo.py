@@ -379,7 +379,13 @@ class AssetRepo:
         self,
         xboard_node_id: int,
         allocation_status: AllocationStatus = "released",
-    ) -> None:
+    ) -> bool:
+        """
+        Release asset allocation for a node by xboard_node_id.
+
+        Returns True if an allocation was released, False if no active allocation found.
+        Does NOT raise AssetNotFoundError - callers should check return value if needed.
+        """
         with self._sqlite_manager.connection() as connection:
             cursor = connection.execute(
                 """
@@ -390,12 +396,16 @@ class AssetRepo:
                 (allocation_status, utcnow_iso(), xboard_node_id),
             )
             if cursor.rowcount == 0:
-                raise AssetNotFoundError(
-                    f"Active allocation not found for xboard_node_id={xboard_node_id}"
+                set_event_type("sqlite_asset_allocation_not_found")
+                self._logger.debug(
+                    "No active allocation found for xboard_node_id=%s",
+                    xboard_node_id,
                 )
+                return False
 
         set_event_type("sqlite_asset_allocation_released")
         self._logger.info("Released asset allocation for xboard_node_id=%s", xboard_node_id)
+        return True
 
     def update_asset_status(self, asset_id: int, status: str) -> None:
         if not status or not status.strip():

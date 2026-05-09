@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from database.asset_models import AssetNotFoundError
 from database.asset_repo import AssetEventCreateRequest, AssetRepo
 from database.state_models import FleetNodeRecord
 from database.state_repo import FleetNodeEventCreateRequest, StateRepo
@@ -130,9 +129,8 @@ class AccountAbandonmentService:
                 )
                 continue
 
-            try:
-                self._asset_repo.release_allocation_by_xboard_node_id(node_record.xboard_node_id)
-            except AssetNotFoundError:
+            released = self._asset_repo.release_allocation_by_xboard_node_id(node_record.xboard_node_id)
+            if not released:
                 self._logger.warning(
                     "No active allocation found during account abandonment xboard_node_id=%s",
                     node_record.xboard_node_id,
