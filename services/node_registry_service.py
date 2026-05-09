@@ -570,6 +570,14 @@ class NodeRegistryService:
                                 message="Node restored during xboard sync: found in xboard",
                             )
                         )
+                        # Also restore the asset allocation for this node
+                        restored_allocs = self._asset_repo.restore_allocation_by_xboard_node_id(node.node_id)
+                        if restored_allocs > 0:
+                            self._logger.info(
+                                "Restored %s allocation(s) for xboard_node_id=%s",
+                                restored_allocs,
+                                node.node_id,
+                            )
                         summary.restored += 1
                     else:
                         self._logger.warning(

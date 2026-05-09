@@ -672,3 +672,29 @@ class AssetRepo:
             server_port,
         )
 
+    def restore_allocation_by_xboard_node_id(self, xboard_node_id: int) -> int:
+        """
+        Restore a released allocation back to allocated status.
+        Called when a node is restored during Xboard sync.
+        Returns the number of allocations restored.
+        """
+        with self._sqlite_manager.connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE fleet_asset_allocations
+                SET allocation_status = 'allocated', updated_at = ?
+                WHERE xboard_node_id = ? AND allocation_status = 'released'
+                """,
+                (utcnow_iso(), xboard_node_id),
+            )
+            restored_count = cursor.rowcount
+
+        if restored_count > 0:
+            set_event_type("sqlite_asset_allocation_restored")
+            self._logger.info(
+                "Restored %s allocation(s) for xboard_node_id=%s",
+                restored_count,
+                xboard_node_id,
+            )
+        return restored_count
+
