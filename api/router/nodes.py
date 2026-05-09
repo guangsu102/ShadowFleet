@@ -39,6 +39,9 @@ class NodeResponse(BaseModel):
     last_healed_at: str | None = None
     updated_at: str = ""
     last_error: str | None = None
+    xboard_status: str | None = None
+    xboard_show: bool | None = None
+    xboard_updated_at: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -56,6 +59,8 @@ def _to_response(row: FleetNodeDashboardRow) -> NodeResponse:
         domain_name=row.domain_name, ipv6_address=row.ipv6_address,
         aws_account_id=row.aws_account_id, last_healed_at=row.last_healed_at,
         updated_at=row.updated_at, last_error=row.last_error,
+        xboard_status=row.xboard_status, xboard_show=row.xboard_show,
+        xboard_updated_at=row.xboard_updated_at,
     )
 
 

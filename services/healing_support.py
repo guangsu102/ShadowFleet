@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 
 from database.state_models import FleetOperationLockRequest
 from database.state_repo import FleetNodeRecord
-from services.healing_models import AwsAccountBannedError, HealRequest, HealerServiceError, ManualReviewRequiredError
+from services.healing_models import AwsAccountBannedError, HealRequest, HealerServiceError, InstanceNotFoundError, ManualReviewRequiredError
 
 AWS_HEALABLE_PROTOCOLS = {"AnyTLS", "Trojan", "vless", "vmess"}
 SELF_HOSTED_PROXY_PROTOCOLS = {"Trojan", "vless", "vmess"}
@@ -105,6 +105,19 @@ def get_duration_ms(started_monotonic: float) -> int:
 
 
 def classify_aws_client_error(error: BaseException, aws_account_id: str | None) -> BaseException:
+    # Handle InstanceNotFoundError (ValueError from EC2 client)
+    if isinstance(error, ValueError):
+        error_message = str(error).strip()
+        if "Instance not found" in error_message:
+            # Extract instance_id from error message: "Instance not found: i-xxxxx"
+            instance_id = None
+            if ": " in error_message:
+                instance_id = error_message.split(": ", 1)[1].strip()
+            return InstanceNotFoundError(
+                instance_id=instance_id or "unknown",
+                aws_account_id=aws_account_id,
+            )
+
     if not isinstance(error, ClientError) or aws_account_id is None:
         return error
     error_code = error.response.get("Error", {}).get("Code", "Unknown")

@@ -6,7 +6,7 @@ from database.asset_repo import AssetRepo
 from services.account_abandonment_service import AccountAbandonmentService
 from services.healing_aws_flow import heal_aws_node
 from services.healing_failure_handler import handle_healing_failure
-from services.healing_models import AwsAccountBannedError, HealRequest, HealResult, HealerServiceError
+from services.healing_models import AwsAccountBannedError, HealRequest, HealResult, HealerServiceError, InstanceNotFoundError
 from services.healing_self_hosted_flow import heal_self_hosted_node
 from services.healing_support import (
     build_heal_lock,

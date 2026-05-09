@@ -58,3 +58,19 @@ class AwsAccountBannedError(HealerServiceError):
         super().__init__(message)
         self.aws_account_id = aws_account_id
         self.error_code = error_code
+
+
+class InstanceNotFoundError(HealerServiceError):
+    def __init__(
+        self,
+        instance_id: str,
+        aws_region: str | None = None,
+        aws_account_id: str | None = None,
+    ) -> None:
+        message = f"Instance not found: {instance_id}"
+        if aws_region:
+            message += f" (region={aws_region})"
+        super().__init__(message)
+        self.instance_id = instance_id
+        self.aws_region = aws_region
+        self.aws_account_id = aws_account_id

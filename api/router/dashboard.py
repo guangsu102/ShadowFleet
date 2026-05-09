@@ -86,6 +86,9 @@ class FleetNodeDashboardRowResponse(BaseModel):
     last_healed_at: str | None = None
     updated_at: str = ""
     last_error: str | None = None
+    xboard_status: str | None = None
+    xboard_show: bool | None = None
+    xboard_updated_at: str | None = None
 
 
 class MonitorCycleSummaryResponse(BaseModel):
@@ -179,6 +182,8 @@ def _snapshot_to_response(s: DashboardSnapshot) -> DashboardSnapshotResponse:
                 domain_name=r.domain_name, ipv6_address=r.ipv6_address,
                 aws_account_id=r.aws_account_id, last_healed_at=r.last_healed_at,
                 updated_at=r.updated_at, last_error=r.last_error,
+                xboard_status=r.xboard_status, xboard_show=r.xboard_show,
+                xboard_updated_at=r.xboard_updated_at,
             )
             for r in s.node_rows
         ],
