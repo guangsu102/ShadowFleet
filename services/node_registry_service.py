@@ -551,14 +551,14 @@ class NodeRegistryService:
                 # Check if there's a deleted node with the same xboard_node_id
                 deleted_node = self._state_repo.get_deleted_node_by_xboard_id(node.node_id)
                 if deleted_node is not None:
-                    # Restore the deleted node
+                    # Restore the deleted node - set status to online since Xboard has this node
                     self._logger.info(
                         "Found deleted node for xboard id=%s name=%s, restoring: id=%s",
                         node.node_id,
                         node.node_name,
                         deleted_node.id,
                     )
-                    if self._state_repo.restore_deleted_node(node.node_id):
+                    if self._state_repo.restore_deleted_node(node.node_id, status="online"):
                         self._state_repo.create_event(
                             FleetNodeEventCreateRequest(
                                 node_id=deleted_node.id,
@@ -566,7 +566,7 @@ class NodeRegistryService:
                                 event_type="node_sync_restored",
                                 correlation_id=self._runtime_context.correlation_id,
                                 from_status="deleted",
-                                to_status="offline",
+                                to_status="online",
                                 message="Node restored during xboard sync: found in xboard",
                             )
                         )
@@ -577,7 +577,8 @@ class NodeRegistryService:
                             node.node_id,
                         )
                 else:
-                    # No existing record at all, create new one
+                    # No existing record at all, create new one with online status
+                    # Since Xboard has this node, v2bx callback must have succeeded
                     self._logger.info(
                         "Found xboard node without local record, creating new: id=%s name=%s type=%s",
                         node.node_id,
@@ -590,7 +591,7 @@ class NodeRegistryService:
                                 xboard_node_id=node.node_id,
                                 node_name=name_stripped,
                                 node_type=node.node_type,
-                                status="offline",
+                                status="online",
                                 status_reason="sync: created from xboard",
                             )
                         )

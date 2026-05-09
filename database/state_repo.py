@@ -489,9 +489,10 @@ class StateRepo:
         set_event_type("sqlite_node_marked_deleted")
         self._logger.info("Marked node deleted and released allocation locally xboard_node_id=%s", xboard_node_id)
 
-    def restore_deleted_node(self, xboard_node_id: int) -> bool:
+    def restore_deleted_node(self, xboard_node_id: int, status: FleetNodeStatus = "online") -> bool:
         """
         Restore a deleted node to active state.
+        By default sets status to 'online' since the node exists in Xboard.
         Returns True if node was restored, False if node was not found or not deleted.
         """
         timestamp = utcnow_iso()
@@ -499,14 +500,14 @@ class StateRepo:
             cursor = connection.execute(
                 """
                 UPDATE fleet_nodes
-                SET is_deleted = 0, status = 'offline', updated_at = ?, deleted_at = NULL
+                SET is_deleted = 0, status = ?, updated_at = ?, deleted_at = NULL
                 WHERE xboard_node_id = ? AND is_deleted = 1
                 """,
-                (timestamp, xboard_node_id),
+                (status, timestamp, xboard_node_id),
             )
             if cursor.rowcount > 0:
                 set_event_type("sqlite_node_restored")
-                self._logger.info("Restored deleted node to active state xboard_node_id=%s", xboard_node_id)
+                self._logger.info("Restored deleted node to active state xboard_node_id=%s status=%s", xboard_node_id, status)
                 return True
             return False
 
