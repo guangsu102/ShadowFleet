@@ -40,7 +40,6 @@ def heal_aws_node(
             access_key=asset_record.aws_access_key,
             secret_key=asset_record.aws_secret_key,
             region=node_record.aws_region,
-            status=asset_record.status,
         ),
     )
     old_ipv6_address, new_ipv6_address = ec2_client.rotate_instance_ipv6(
