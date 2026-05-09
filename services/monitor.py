@@ -217,7 +217,14 @@ class MonitorService:
         zero_window_minutes = config.sentinel_zero_uplink_window_minutes
         candidates: list[MonitorCandidate] = []
 
-        for node_record in self._state_repo.list_monitorable_nodes():
+        monitorable_nodes = self._state_repo.list_monitorable_nodes()
+        self._logger.info(
+            "collect_suspicious_nodes: found %d monitorable nodes, probe_zero_traffic_nodes=%s",
+            len(monitorable_nodes),
+            config.sentinel_probe_zero_traffic_nodes,
+        )
+
+        for node_record in monitorable_nodes:
             if is_in_heal_cooldown(
                 node_record,
                 now_utc=now_utc,
@@ -238,6 +245,11 @@ class MonitorService:
                 raise
 
             if not stats:
+                self._logger.debug(
+                    "No stats for node %s (xboard_node_id=%d)",
+                    node_record.node_name,
+                    node_record.xboard_node_id,
+                )
                 continue
             recent_total_positive = any(sample.total_bytes > 0 for sample in stats)
             recent_zero_uplink_count = sum(
@@ -251,6 +263,15 @@ class MonitorService:
                 expected_zero_window_minutes=zero_window_minutes,
                 probe_zero_traffic_nodes=config.sentinel_probe_zero_traffic_nodes,
             ):
+                self._logger.debug(
+                    "Skipping node %s (xboard_node_id=%d): recent_total_positive=%s, recent_zero_uplink_count=%d, expected=%d, probe_zero_traffic=%s",
+                    node_record.node_name,
+                    node_record.xboard_node_id,
+                    recent_total_positive,
+                    recent_zero_uplink_count,
+                    zero_window_minutes,
+                    config.sentinel_probe_zero_traffic_nodes,
+                )
                 continue
 
             try:

@@ -69,6 +69,7 @@ class XboardServerMinuteStatRecord:
 @dataclass(frozen=True)
 class XboardNodeRuntimeRecord:
     node_id: int
+    node_name: str
     node_type: str
     host: str
     port: str
@@ -281,6 +282,7 @@ class XboardRepo:
         sql = """
             SELECT
                 id,
+                name,
                 type,
                 host,
                 port,
@@ -298,11 +300,12 @@ class XboardRepo:
                 raise XboardNodeNotFoundError(f"Xboard node not found: node_id={node_id}")
             return XboardNodeRuntimeRecord(
                 node_id=int(row[0]),
-                node_type=str(row[1]),
-                host=str(row[2]),
-                port=str(row[3]),
-                server_port=int(row[4]),
-                show=bool(row[5]),
+                node_name=str(row[1]),
+                node_type=str(row[2]),
+                host=str(row[3]),
+                port=str(row[4]),
+                server_port=int(row[5]),
+                show=bool(row[6]),
             )
 
         try:
@@ -417,6 +420,7 @@ class XboardRepo:
         sql = """
             SELECT
                 id,
+                name,
                 type,
                 host,
                 port,
@@ -434,11 +438,12 @@ class XboardRepo:
             return [
                 XboardNodeRuntimeRecord(
                     node_id=int(row[0]),
-                    node_type=str(row[1]),
-                    host=str(row[2]),
-                    port=str(row[3]),
-                    server_port=int(row[4]),
-                    show=bool(row[5]),
+                    node_name=str(row[1]),
+                    node_type=str(row[2]),
+                    host=str(row[3]),
+                    port=str(row[4]),
+                    server_port=int(row[5]),
+                    show=bool(row[6]),
                 )
                 for row in rows
             ]
