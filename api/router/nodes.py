@@ -133,6 +133,7 @@ async def delete_node(
 
 class SyncResultResponse(BaseModel):
     created: int
+    restored: int = 0
     orphan_local_deleted: int
     already_synced: int
     skipped: bool = False
@@ -151,6 +152,7 @@ async def sync_nodes(
     if result.get("created") == -1:
         return SyncResultResponse(
             created=0,
+            restored=0,
             orphan_local_deleted=0,
             already_synced=0,
             skipped=True,

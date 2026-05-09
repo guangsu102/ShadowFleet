@@ -489,6 +489,36 @@ class StateRepo:
         set_event_type("sqlite_node_marked_deleted")
         self._logger.info("Marked node deleted and released allocation locally xboard_node_id=%s", xboard_node_id)
 
+    def restore_deleted_node(self, xboard_node_id: int) -> bool:
+        """
+        Restore a deleted node to active state.
+        Returns True if node was restored, False if node was not found or not deleted.
+        """
+        timestamp = utcnow_iso()
+        with self._sqlite_manager.connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE fleet_nodes
+                SET is_deleted = 0, status = 'offline', updated_at = ?, deleted_at = NULL
+                WHERE xboard_node_id = ? AND is_deleted = 1
+                """,
+                (timestamp, xboard_node_id),
+            )
+            if cursor.rowcount > 0:
+                set_event_type("sqlite_node_restored")
+                self._logger.info("Restored deleted node to active state xboard_node_id=%s", xboard_node_id)
+                return True
+            return False
+
+    def get_deleted_node_by_xboard_id(self, xboard_node_id: int) -> FleetNodeRecord | None:
+        """Get a deleted node by xboard_node_id (including deleted nodes)."""
+        sql = "SELECT * FROM fleet_nodes WHERE xboard_node_id = ? AND is_deleted = 1"
+        with self._sqlite_manager.connection() as connection:
+            row = connection.execute(sql, (xboard_node_id,)).fetchone()
+        if row is None:
+            return None
+        return map_fleet_node_record(row)
+
     def update_node_xboard_status(
         self,
         xboard_node_id: int,
