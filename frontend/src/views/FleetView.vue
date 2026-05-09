@@ -320,7 +320,7 @@ const nodeTableColumns = [
       h(NTag, { type: statusTagType(row.status), size: 'small' }, { default: () => row.status }),
   },
   {
-    title: 'Xboard',
+    title: 'Xboard 节点状态',
     key: 'xboard_status',
     width: 110,
     align: 'center' as const,

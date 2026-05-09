@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from database.state_repo import StateRepo
+from database.xboard_repo import XboardRepo
 from services.runtime_service import RuntimeContext
-from services.xboard_sentinel_client import XboardSentinelClient
 from utils.logger import set_event_type
 
 
@@ -19,10 +19,11 @@ class XboardSyncService:
         self._runtime_context = runtime_context
         self._logger = runtime_context.logger.getChild("services.xboard_sync_service")
         self._state_repo = StateRepo(runtime_context)
+        self._xboard_repo = XboardRepo(runtime_context)
 
     def sync_all_nodes(self) -> tuple[int, int]:
         """
-        Synchronize Xboard status for all active nodes.
+        Synchronize Xboard status for all active nodes from PostgreSQL.
         Returns (success_count, failed_count).
         """
         nodes = self._state_repo.list_active_nodes()
@@ -49,13 +50,9 @@ class XboardSyncService:
         return success_count, failed_count
 
     def _sync_single_node(self, xboard_node_id: int, node_type: str) -> None:
-        """Synchronize a single node's Xboard status."""
+        """Synchronize a single node's Xboard status by querying PostgreSQL directly."""
         try:
-            sentinel = XboardSentinelClient(self._runtime_context)
-            runtime = sentinel.get_server_runtime(
-                server_id=xboard_node_id,
-                server_type=node_type,
-            )
+            runtime = self._xboard_repo.get_node_runtime(xboard_node_id)
 
             xboard_status = "online" if runtime.show else "hidden"
             self._state_repo.update_node_xboard_status(
