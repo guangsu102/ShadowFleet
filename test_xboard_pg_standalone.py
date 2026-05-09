@@ -38,27 +38,27 @@ def main():
         return
 
     # Get Xboard database config
-    xboard_db = config.get("xboard", {}).get("database", {})
-    if not xboard_db:
-        print("\n    ✗ Error: 'xboard.database' not found in config.yaml")
+    xboard_config = config.get("xboard", {})
+    if not xboard_config:
+        print("\n    ✗ Error: 'xboard' not found in config.yaml")
         print("    Please check your config.yaml structure")
         return
 
     print(f"\n[2] Database config:")
-    print(f"    - host: {xboard_db.get('host', 'NOT SET')}")
-    print(f"    - port: {xboard_db.get('port', 'NOT SET')}")
-    print(f"    - database: {xboard_db.get('database', 'NOT SET')}")
-    print(f"    - username: {xboard_db.get('username', 'NOT SET')}")
+    print(f"    - host: {xboard_config.get('host', 'NOT SET')}")
+    print(f"    - port: {xboard_config.get('port', 'NOT SET')}")
+    print(f"    - database: {xboard_config.get('database', 'NOT SET')}")
+    print(f"    - username: {xboard_config.get('user', 'NOT SET')}")
 
     # Connect to PostgreSQL
     print("\n[3] Connecting to PostgreSQL...")
     try:
         conn = psycopg2.connect(
-            host=xboard_db.get("host"),
-            port=xboard_db.get("port"),
-            database=xboard_db.get("database"),
-            user=xboard_db.get("username"),
-            password=xboard_db.get("password"),
+            host=xboard_config.get("host"),
+            port=xboard_config.get("port"),
+            database=xboard_config.get("database"),
+            user=xboard_config.get("user"),
+            password=xboard_config.get("password"),
         )
         print("    ✓ Connected successfully")
     except Exception as exc:
