@@ -67,24 +67,27 @@ def main():
 
     cursor = conn.cursor()
 
-    # Query nodes
-    print("\n[4] Querying ShadowFleet nodes...")
+    # Query nodes (ShadowFleet nodes have name prefixed with "sf-")
+    print("\n[4] Querying ShadowFleet nodes from public.v2_server...")
     query = """
         SELECT
-            node_id,
-            node_name,
-            node_type,
+            id,
+            name,
+            type,
             host,
+            port,
+            server_port,
             show
-        FROM shadowfleet.nodes
-        ORDER BY node_id DESC
+        FROM public.v2_server
+        WHERE name LIKE 'sf-%'
+        ORDER BY id DESC
         LIMIT 20
     """
 
     try:
         cursor.execute(query)
         nodes = cursor.fetchall()
-        print(f"    ✓ Found {len(nodes)} nodes (showing top 20)")
+        print(f"    ✓ Found {len(nodes)} ShadowFleet nodes (showing top 20)")
     except Exception as exc:
         print(f"    ✗ Query failed: {exc}")
         conn.close()
@@ -92,34 +95,27 @@ def main():
 
     # Display results
     print("\n[5] Node Details:")
-    print("-" * 70)
-    print(f"{'ID':<6} {'Name':<28} {'Type':<10} {'Host':<18} {'Status':<8}")
-    print("-" * 70)
+    print("-" * 80)
+    print(f"{'ID':<6} {'Name':<30} {'Type':<12} {'Host':<18} {'Port':<6} {'Status':<8}")
+    print("-" * 80)
 
     for node in nodes:
-        node_id, node_name, node_type, host, show = node
+        node_id, name, node_type, host, port, server_port, show = node
         status = "online" if show else "hidden"
-        print(f"{node_id:<6} {node_name[:27]:<28} {node_type:<10} {host[:17]:<18} {status:<8}")
+        print(f"{node_id:<6} {name:<30} {node_type:<12} {host:<18} {server_port:<6} {status:<8}")
 
     print("-" * 70)
 
     # Test get_node_runtime equivalent
     if nodes:
-        print(f"\n[6] Testing runtime query for node_id={nodes[0][0]}...")
-        runtime_query = """
-            SELECT show FROM shadowfleet.node_runtime WHERE node_id = %s
-        """
-        try:
-            cursor.execute(runtime_query, (nodes[0][0],))
-            result = cursor.fetchone()
-            if result:
-                print(f"    ✓ Success!")
-                print(f"    - show: {result[0]} ({'可见' if result[0] else '隐藏'})")
-                print(f"    - xboard_status: {'online' if result[0] else 'hidden'}")
-            else:
-                print(f"    ✗ No runtime record found for node_id={nodes[0][0]}")
-        except Exception as exc:
-            print(f"    ✗ Failed: {exc}")
+        print(f"\n[6] Testing get_node_runtime for node_id={nodes[0][0]}...")
+        print(f"    ✓ Record found:")
+        print(f"    - id: {nodes[0][0]}")
+        print(f"    - name: {nodes[0][1]}")
+        print(f"    - type: {nodes[0][2]}")
+        print(f"    - host: {nodes[0][3]}:{nodes[0][5]}")
+        print(f"    - show: {nodes[0][6]} ({'可见' if nodes[0][6] else '隐藏'})")
+        print(f"    - xboard_status: {'online' if nodes[0][6] else 'hidden'}")
 
     cursor.close()
     conn.close()
