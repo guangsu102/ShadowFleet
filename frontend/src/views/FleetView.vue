@@ -48,6 +48,8 @@ const formForceStrategy = ref<string | null>(null)
 const submitting = ref(false)
 const syncing = ref(false)
 const deletingNodeId = ref<number | null>(null)
+const selectedNodeIds = ref<number[]>([])
+const batchDeleting = ref(false)
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -236,6 +238,27 @@ async function deleteNode(xboardNodeId: number) {
   }
 }
 
+// ── Batch Delete Nodes ──────────────────────────────────────────────────────────
+async function batchDeleteNodes() {
+  if (selectedNodeIds.value.length === 0) {
+    message.warning('请先选择要删除的节点')
+    return
+  }
+  batchDeleting.value = true
+  try {
+    const deletePromises = selectedNodeIds.value.map(id => apiClient.delete(`/nodes/${id}`))
+    await Promise.all(deletePromises)
+    message.success(`已删除 ${selectedNodeIds.value.length} 个节点`)
+    selectedNodeIds.value = []
+    await fetchSnapshot()
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
+    message.error(axiosErr.response?.data?.error || axiosErr.response?.data?.message || axiosErr.message || '批量删除失败')
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 // ── Sync with Xboard ────────────────────────────────────────────────────────────
 interface SyncResult {
   created: number
@@ -320,7 +343,11 @@ function xboardStatusTagType(status: string | null): 'success' | 'warning' | 'er
 }
 
 // ── Table Columns ────────────────────────────────────────────────────────────
-const nodeTableColumns = [
+const nodeTableColumns = computed(() => [
+  {
+    type: 'selection' as const,
+    disabled: (row: FleetNodeDashboardRowResponse) => row.status === 'deleted',
+  },
   { title: t('fleet.nodeName'), key: 'node_name', ellipsis: { tooltip: true } },
   { title: t('fleet.protocol'), key: 'protocol_type' },
   { title: t('fleet.assetType'), key: 'asset_type' },
@@ -377,7 +404,7 @@ const nodeTableColumns = [
         default: () => `确认删除节点 ${row.node_name}？`,
       }) : null,
   },
-]
+])
 
 const eventsColumns = [
   { title: t('fleet.eventId'), key: 'event_id', align: 'center' as const },
@@ -561,6 +588,17 @@ onUnmounted(() => {
               <IconNode />
             </div>
             <span class="fleet-section-title">{{ t('fleet.nodes') }}</span>
+            <div v-if="selectedNodeIds.length > 0" class="fleet-batch-actions">
+              <span class="fleet-batch-count">已选择 {{ selectedNodeIds.length }} 个节点</span>
+              <NPopconfirm @positive-click="batchDeleteNodes">
+                <template #trigger>
+                  <NButton type="error" size="small" :loading="batchDeleting">
+                    批量删除
+                  </NButton>
+                </template>
+                确认删除选中的 {{ selectedNodeIds.length }} 个节点？
+              </NPopconfirm>
+            </div>
           </div>
           <div class="fleet-table-wrap">
             <NDataTable
@@ -571,6 +609,7 @@ onUnmounted(() => {
               size="small"
               :pagination="{ pageSize: 15 }"
               :row-key="(row: any) => row.xboard_node_id"
+              v-model:checked-row-keys="selectedNodeIds"
             />
           </div>
         </div>
@@ -1003,6 +1042,23 @@ onUnmounted(() => {
   margin-left: auto;
   font-size: 12px;
   color: #64748b;
+}
+
+/* ── Batch Actions ─────────────────────────────────────────────────────────── */
+.fleet-batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.fleet-batch-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6366f1;
+  padding: 4px 12px;
+  background: #eef2ff;
+  border-radius: 6px;
 }
 
 /* ── Filter Row ────────────────────────────────────────────────────────────── */

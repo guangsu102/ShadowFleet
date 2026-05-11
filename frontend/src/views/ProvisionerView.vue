@@ -99,6 +99,8 @@ const selectedTask = ref<TaskResponse | null>(null)
 const detailLoading = ref(false)
 const retryingTaskId = ref<number | null>(null)
 const deletingTaskId = ref<number | null>(null)
+const selectedTaskIds = ref<number[]>([])
+const batchDeleting = ref(false)
 
 // ── Form ──────────────────────────────────────────────────────────────────────
 const protocolType = ref('AnyTLS')
@@ -278,6 +280,28 @@ async function deleteTask(id: number) {
     message.error(axiosErr.response?.data?.error || axiosErr.message || '删除失败')
   } finally {
     deletingTaskId.value = null
+  }
+}
+
+// ── Batch Delete Tasks ──────────────────────────────────────────────────────────
+async function batchDeleteTasks() {
+  if (selectedTaskIds.value.length === 0) {
+    message.warning('请先选择要删除的任务')
+    return
+  }
+  batchDeleting.value = true
+  try {
+    const deletePromises = selectedTaskIds.value.map(id => apiClient.delete(`/tasks/${id}`))
+    await Promise.all(deletePromises)
+    message.success(`已删除 ${selectedTaskIds.value.length} 个任务`)
+    selectedTaskIds.value = []
+    await fetchTasks()
+    await fetchStats()
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
+    message.error(axiosErr.response?.data?.error || axiosErr.response?.data?.message || axiosErr.message || '批量删除失败')
+  } finally {
+    batchDeleting.value = false
   }
 }
 
@@ -467,6 +491,10 @@ function taskTypeLabel(tt: string): string {
 
 // ── Table Columns ─────────────────────────────────────────────────────────────
 const columns = [
+  {
+    type: 'selection' as const,
+    disabled: (row: TaskResponse) => row.status === 'running',
+  },
   { title: 'ID', key: 'id', align: 'center' as const, width: 70 },
   { title: '任务类型', key: 'task_type', render: (row: TaskResponse) => taskTypeLabel(row.task_type) },
   {
@@ -585,13 +613,28 @@ export default { name: 'ProvisionerView' }
 
     <!-- ── Filter Bar ────────────────────────────────────────────────────────── -->
     <NCard style="margin-bottom: 16px">
-      <NSpace>
-        <NSelect v-model:value="filterStatus" :options="statusOptions" placeholder="按状态筛选"
-          clearable style="width: 140px" @update:value="onFiltersChanged" />
-        <NSelect v-model:value="filterTaskType" :options="taskTypeOptions" placeholder="按类型筛选"
-          clearable style="width: 160px" @update:value="onFiltersChanged" />
-        <NSelect v-model:value="filterLimit" :options="limitOptions" placeholder="显示条数"
-          style="width: 100px" @update:value="onFiltersChanged" />
+      <NSpace align="center" justify="space-between">
+        <NSpace>
+          <NSelect v-model:value="filterStatus" :options="statusOptions" placeholder="按状态筛选"
+            clearable style="width: 140px" @update:value="onFiltersChanged" />
+          <NSelect v-model:value="filterTaskType" :options="taskTypeOptions" placeholder="按类型筛选"
+            clearable style="width: 160px" @update:value="onFiltersChanged" />
+          <NSelect v-model:value="filterLimit" :options="limitOptions" placeholder="显示条数"
+            style="width: 100px" @update:value="onFiltersChanged" />
+        </NSpace>
+        <NSpace v-if="selectedTaskIds.length > 0">
+          <NText style="font-size: 13px; font-weight: 600; color: #6366f1">
+            已选择 {{ selectedTaskIds.length }} 个任务
+          </NText>
+          <NPopconfirm @positive-click="batchDeleteTasks">
+            <template #trigger>
+              <NButton type="error" size="small" :loading="batchDeleting">
+                批量删除
+              </NButton>
+            </template>
+            确认删除选中的 {{ selectedTaskIds.length }} 个任务？
+          </NPopconfirm>
+        </NSpace>
       </NSpace>
     </NCard>
 
@@ -607,6 +650,7 @@ export default { name: 'ProvisionerView' }
           :row-key="(row: TaskResponse) => row.id"
           :pagination="false"
           :loading="loading"
+          v-model:checked-row-keys="selectedTaskIds"
           @click-row="(row: TaskResponse) => openDetail(row)"
           style="cursor: pointer"
         />

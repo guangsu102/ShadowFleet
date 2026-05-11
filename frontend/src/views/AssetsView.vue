@@ -67,6 +67,8 @@ const dialog = useDialog()
 const assets = ref<AssetResponse[]>([])
 const loading = ref(true)
 const errorMsg = ref<string | null>(null)
+const selectedAssetIds = ref<number[]>([])
+const batchDeleting = ref(false)
 
 // ── Modal ──────────────────────────────────────────────────────────────────────
 const showModal = ref(false)
@@ -108,6 +110,36 @@ async function doDelete(asset: AssetResponse) {
   }
 }
 
+// ── Batch Delete Assets ────────────────────────────────────────────────────────
+async function batchDeleteAssets() {
+  if (selectedAssetIds.value.length === 0) {
+    message.warning('请先选择要删除的资产')
+    return
+  }
+
+  dialog.warning({
+    title: '确认批量删除',
+    content: `确定要删除选中的 ${selectedAssetIds.value.length} 个资产吗？此操作不可恢复。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      batchDeleting.value = true
+      try {
+        const deletePromises = selectedAssetIds.value.map(id => apiClient.delete(`/assets/${id}`))
+        await Promise.all(deletePromises)
+        message.success(`已删除 ${selectedAssetIds.value.length} 个资产`)
+        selectedAssetIds.value = []
+        await fetchAssets()
+      } catch (err: unknown) {
+        const e = err as { response?: { data?: { error?: string; message?: string } } }
+        message.error(e.response?.data?.error || e.response?.data?.message || '批量删除失败')
+      } finally {
+        batchDeleting.value = false
+      }
+    },
+  })
+}
+
 // ── Computed: filtered assets ─────────────────────────────────────────────────
 const awsAssets  = computed(() => assets.value.filter(a => a.asset_type === 'aws'))
 const selfAssets = computed(() => assets.value.filter(a => a.asset_type === 'self_hosted'))
@@ -115,6 +147,9 @@ const selfAssets = computed(() => assets.value.filter(a => a.asset_type === 'sel
 // ── Table columns ──────────────────────────────────────────────────────────────
 function buildColumns(onDelete: (asset: AssetResponse) => void): DataTableColumns<AssetResponse> {
   return [
+    {
+      type: 'selection' as const,
+    },
     { title: 'Asset ID', key: 'asset_id', width: 90, align: 'center' },
     { title: 'Name', key: 'asset_name', ellipsis: { tooltip: true } },
     {
@@ -480,14 +515,19 @@ onMounted(fetchAssets)
         <p class="page-subtitle">管理 AWS 账号与自建资产，统一调度节点配额与协议</p>
       </div>
       <div class="header-right">
-        <NButton type="primary" size="large" @click="openModal('aws')">
-          <template #icon>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor">
-              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-            </svg>
-          </template>
-          新增资产
-        </NButton>
+        <NSpace>
+          <NButton v-if="selectedAssetIds.length > 0" type="error" size="large" :loading="batchDeleting" @click="batchDeleteAssets">
+            批量删除 ({{ selectedAssetIds.length }})
+          </NButton>
+          <NButton type="primary" size="large" @click="openModal('aws')">
+            <template #icon>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor">
+                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+              </svg>
+            </template>
+            新增资产
+          </NButton>
+        </NSpace>
       </div>
     </div>
 
@@ -549,6 +589,7 @@ onMounted(fetchAssets)
           size="small"
           :pagination="{ pageSize: 15 }"
           :row-key="(row: AssetResponse) => row.asset_id"
+          v-model:checked-row-keys="selectedAssetIds"
           class="assets-table"
         />
       </NSpin>
