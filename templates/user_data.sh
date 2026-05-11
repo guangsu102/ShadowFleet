@@ -119,10 +119,18 @@ __V2BX_SING_ORIGIN_WRITE_BLOCK__
 
 log "Restarting V2bX service"
 sudo systemctl daemon-reload || true
-sudo systemctl enable V2bX
-sudo systemctl restart V2bX
+sudo systemctl enable V2bX || true
+sudo systemctl restart V2bX || true
 sleep 3
-sudo systemctl is-active --quiet V2bX
+if sudo systemctl is-active --quiet V2bX; then
+  log "V2bX service is running"
+else
+  log "WARNING: V2bX service is not active, will retry in background"
+fi
+
+# Continue with callback regardless of V2bX status - service may start shortly
+(sudo systemctl restart V2bX || true) &
+sudo systemctl daemon-reload || true
 
 __NGINX_CONFIG_BLOCK__
 

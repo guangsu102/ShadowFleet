@@ -119,6 +119,14 @@ const tagsJson = ref('')
 const protocolSettingsJson = ref('')
 const rateTimeRangesJson = ref('')
 
+// Protocol-specific fields
+const sniDomain = ref('www.bilibili.com')
+const realityPrivateKey = ref('')
+const realityPublicKey = ref('')
+const realityDest = ref('www.bilibili.com')
+const allowInsecure = ref(true)
+const network = ref('grpc')
+const flow = ref('xtls-rprx-vision')
 
 // Self-hosted SSH
 const sshHost = ref('')
@@ -151,6 +159,12 @@ const paginatedTasks = computed(() => {
 })
 
 const totalFiltered = computed(() => filteredTasks.value.length)
+
+// Protocol-specific field visibility
+const showSniField = computed(() => ['AnyTLS', 'Trojan', 'vless'].includes(protocolType.value))
+const showRealityFields = computed(() => protocolType.value === 'vless')
+const showNetworkField = computed(() => ['Trojan', 'vmess', 'vless'].includes(protocolType.value))
+const showFlowField = computed(() => protocolType.value === 'vless')
 
 // ── Options ──────────────────────────────────────────────────────────────────
 const protocolOptions: SelectOption[] = PROTOCOLS.map(p => ({ label: p, value: p }))
@@ -277,6 +291,19 @@ function buildDefaultTags(): string {
   )
 }
 
+// ── Reality Key Generation ────────────────────────────────────────────────────
+async function generateRealityKeys() {
+  try {
+    const { data } = await apiClient.post<{ private_key: string; public_key: string }>('/utils/generate-reality-keys')
+    realityPrivateKey.value = data.private_key
+    realityPublicKey.value = data.public_key
+    message.success('Reality 密钥对已生成')
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: { error?: string } }; message?: string }
+    message.error(axiosErr.response?.data?.error || '生成密钥失败')
+  }
+}
+
 // ── Form Actions ──────────────────────────────────────────────────────────────
 function openNewTaskModal() {
   tagsJson.value = buildDefaultTags()
@@ -303,6 +330,14 @@ function resetForm() {
   tagsJson.value = buildDefaultTags()
   protocolSettingsJson.value = ''
   rateTimeRangesJson.value = ''
+  // Protocol-specific fields
+  sniDomain.value = 'www.bilibili.com'
+  realityPrivateKey.value = ''
+  realityPublicKey.value = ''
+  realityDest.value = 'www.bilibili.com'
+  allowInsecure.value = true
+  network.value = 'grpc'
+  flow.value = 'xtls-rprx-vision'
   // Self-hosted
   sshHost.value = ''
   sshPort.value = 22
@@ -346,6 +381,14 @@ async function handleSubmit() {
       ? (() => { try { return JSON.parse(rateTimeRangesJson.value) } catch { return undefined } })()
       : undefined,
     status_reason: statusReason.value || undefined,
+    // Protocol-specific fields
+    sni_domain: showSniField.value ? (sniDomain.value || undefined) : undefined,
+    reality_private_key: showRealityFields.value ? (realityPrivateKey.value || undefined) : undefined,
+    reality_public_key: showRealityFields.value ? (realityPublicKey.value || undefined) : undefined,
+    reality_dest: showRealityFields.value ? (realityDest.value || undefined) : undefined,
+    allow_insecure: allowInsecure.value,
+    network: showNetworkField.value ? network.value : undefined,
+    flow: showFlowField.value ? (flow.value || undefined) : undefined,
     // Self-hosted SSH
     ssh_host: assetType.value === 'self_hosted' ? (sshHost.value || undefined) : undefined,
     ssh_port: assetType.value === 'self_hosted' ? (sshPort.value || undefined) : undefined,
@@ -653,6 +696,69 @@ export default { name: 'ProvisionerView' }
               </NFormItem>
             </NGi>
           </NGrid>
+
+          <!-- 协议特定配置 -->
+          <NDivider title-placement="left">协议配置</NDivider>
+          <NGrid :cols="2" :x-gap="12">
+            <!-- SNI 域名 (AnyTLS, Trojan, VLESS) -->
+            <NGi v-if="showSniField" :span="2">
+              <NFormItem label="SNI 伪装域名">
+                <NInput v-model:value="sniDomain" placeholder="www.bilibili.com" clearable />
+              </NFormItem>
+            </NGi>
+
+            <!-- 允许不安全连接 -->
+            <NGi v-if="showSniField">
+              <NFormItem label="安全设置">
+                <NCheckbox v-model:checked="allowInsecure">
+                  允许不安全连接
+                </NCheckbox>
+              </NFormItem>
+            </NGi>
+
+            <!-- 传输协议 (Trojan, VMess, VLESS) -->
+            <NGi v-if="showNetworkField">
+              <NFormItem label="传输协议">
+                <NSelect v-model:value="network" :options="[
+                  { label: 'gRPC', value: 'grpc' },
+                  { label: 'WebSocket', value: 'ws' },
+                  { label: 'TCP', value: 'tcp' },
+                ]" />
+              </NFormItem>
+            </NGi>
+          </NGrid>
+
+          <!-- VLESS Reality 配置 -->
+          <template v-if="showRealityFields">
+            <NFormItem label="Reality 伪装站点">
+              <NInput v-model:value="realityDest" placeholder="www.bilibili.com" clearable />
+            </NFormItem>
+
+            <NFormItem label="Reality 密钥对">
+              <NSpace vertical style="width: 100%">
+                <NButton @click="generateRealityKeys" type="primary" size="small">
+                  自动生成密钥对
+                </NButton>
+                <NInput
+                  v-model:value="realityPrivateKey"
+                  placeholder="私钥 (Private Key) - 留空自动生成"
+                  clearable
+                />
+                <NInput
+                  v-model:value="realityPublicKey"
+                  placeholder="公钥 (Public Key) - 留空自动生成"
+                  clearable
+                />
+              </NSpace>
+            </NFormItem>
+
+            <NFormItem label="流控模式">
+              <NSelect v-model:value="flow" :options="[
+                { label: 'xtls-rprx-vision', value: 'xtls-rprx-vision' },
+                { label: 'xtls-rprx-vision-udp443', value: 'xtls-rprx-vision-udp443' },
+              ]" />
+            </NFormItem>
+          </template>
 
           <!-- Self-Hosted SSH 字段 -->
           <NDivider v-if="assetType === 'self_hosted'" title-placement="left">自建服务器 SSH 配置</NDivider>

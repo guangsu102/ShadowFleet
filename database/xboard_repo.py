@@ -535,3 +535,116 @@ class XboardRepo:
     @staticmethod
     def _utcnow() -> datetime:
         return datetime.utcnow()
+
+    def update_node_code(self, xboard_node_id: int, code: str) -> None:
+        """
+        更新节点的 code 字段（自定义节点 ID）
+
+        Args:
+            xboard_node_id: Xboard 节点 ID
+            code: 自定义节点 ID
+        """
+        now = self._utcnow()
+        sql = """
+            UPDATE public.v2_server
+            SET code = %s, updated_at = %s
+            WHERE id = %s
+        """
+        parameters = (code, now, xboard_node_id)
+
+        def _operation() -> None:
+            with self._db_pool.cursor() as cursor:
+                cursor.execute(sql, parameters)
+                if cursor.rowcount == 0:
+                    raise XboardNodeNotFoundError(f"Xboard node not found: id={xboard_node_id}")
+
+        try:
+            execute_with_backoff(
+                operation_name="xboard_update_node_code",
+                max_retries=self._max_retries,
+                base_delay_seconds=self._retry_backoff_seconds,
+                logger=self._logger,
+                event_type_prefix="db_query",
+                func=_operation,
+                should_retry=self._should_retry_database_error,
+            )
+        except PsycopgError as exc:
+            set_event_type("db_query_failed")
+            self._logger.exception("Failed to update node code xboard_node_id=%s", xboard_node_id)
+            raise XboardRepoError("Failed to update node code") from exc
+
+        set_event_type("db_node_code_updated")
+        self._logger.info("Updated node code: xboard_node_id=%s code=%s", xboard_node_id, code)
+
+    def get_all_group_ids(self) -> list[int]:
+        """
+        获取所有权限组 ID
+
+        Returns:
+            权限组 ID 列表
+        """
+        sql = "SELECT id FROM public.v2_server_group ORDER BY id ASC"
+
+        def _operation() -> list[int]:
+            with self._db_pool.cursor() as cursor:
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+                return [int(row[0]) for row in rows]
+
+        try:
+            group_ids = execute_with_backoff(
+                operation_name="xboard_get_all_group_ids",
+                max_retries=self._max_retries,
+                base_delay_seconds=self._retry_backoff_seconds,
+                logger=self._logger,
+                event_type_prefix="db_query",
+                func=_operation,
+                should_retry=self._should_retry_database_error,
+            )
+        except PsycopgError as exc:
+            set_event_type("db_query_failed")
+            self._logger.exception("Failed to get all group IDs")
+            raise XboardRepoError("Failed to get all group IDs") from exc
+
+        self._logger.info("Retrieved %d group IDs", len(group_ids))
+        return group_ids
+
+    def update_node_protocol_settings(self, xboard_node_id: int, protocol_settings: dict[str, JsonValue]) -> None:
+        """
+        更新节点的 protocol_settings 字段
+
+        Args:
+            xboard_node_id: Xboard 节点 ID
+            protocol_settings: 协议配置字典
+        """
+        now = self._utcnow()
+        sql = """
+            UPDATE public.v2_server
+            SET protocol_settings = %s, updated_at = %s
+            WHERE id = %s
+        """
+        parameters = (self._to_json_text(protocol_settings), now, xboard_node_id)
+
+        def _operation() -> None:
+            with self._db_pool.cursor() as cursor:
+                cursor.execute(sql, parameters)
+                if cursor.rowcount == 0:
+                    raise XboardNodeNotFoundError(f"Xboard node not found: id={xboard_node_id}")
+
+        try:
+            execute_with_backoff(
+                operation_name="xboard_update_node_protocol_settings",
+                max_retries=self._max_retries,
+                base_delay_seconds=self._retry_backoff_seconds,
+                logger=self._logger,
+                event_type_prefix="db_query",
+                func=_operation,
+                should_retry=self._should_retry_database_error,
+            )
+        except PsycopgError as exc:
+            set_event_type("db_query_failed")
+            self._logger.exception("Failed to update node protocol_settings xboard_node_id=%s", xboard_node_id)
+            raise XboardRepoError("Failed to update node protocol_settings") from exc
+
+        set_event_type("db_node_protocol_settings_updated")
+        self._logger.info("Updated node protocol_settings: xboard_node_id=%s", xboard_node_id)

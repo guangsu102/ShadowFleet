@@ -55,6 +55,14 @@ class ProvisionRequest:
     rate_time_enable: bool = False
     rate_time_ranges: list[object] | dict[str, object] | None = None
     status_reason: str | None = None
+    # Protocol-specific fields
+    sni_domain: str | None = None
+    reality_private_key: str | None = None
+    reality_public_key: str | None = None
+    reality_dest: str | None = None
+    allow_insecure: bool = True
+    network: str = "grpc"
+    flow: str | None = None
     # Self-hosted SSH fields
     ssh_host: str | None = None
     ssh_port: int | None = None

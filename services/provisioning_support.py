@@ -81,8 +81,30 @@ def select_asset(
         raise ProvisionerServiceError("Failed to select a provisioning asset") from exc
 
 
-def build_register_node_request(request: ProvisionRequest) -> RegisterNodeRequest:
+def build_register_node_request(
+    runtime_context: RuntimeContext,
+    request: ProvisionRequest,
+) -> RegisterNodeRequest:
+    """
+    构建节点注册请求，自动填充默认配置
+
+    Args:
+        runtime_context: 运行时上下文
+        request: Provision 请求
+
+    Returns:
+        节点注册请求
+    """
+    from services.node_auto_config_service import NodeAutoConfigService
+
     host = request.domain_name or request.node_name
+
+    # 自动获取所有权限组（如果用户没有指定）
+    group_ids = request.group_ids
+    if not group_ids:
+        auto_config_service = NodeAutoConfigService(runtime_context)
+        group_ids = auto_config_service.get_default_group_ids()
+
     return RegisterNodeRequest(
         node_type=request.protocol_type,
         node_name=request.node_name,
@@ -90,12 +112,12 @@ def build_register_node_request(request: ProvisionRequest) -> RegisterNodeReques
         port=request.port,
         server_port=request.server_port,
         rate=request.rate,
-        code=request.code,
+        code=request.code,  # 将在注册后自动生成
         parent_id=request.parent_id,
-        group_ids=request.group_ids,
+        group_ids=group_ids,  # 自动获取的权限组
         route_ids=request.route_ids,
         tags=request.tags,
-        protocol_settings=request.protocol_settings,
+        protocol_settings=request.protocol_settings,  # 将在注册后自动生成
         show=request.show,
         sort=request.sort,
         rate_time_enable=request.rate_time_enable,
@@ -181,19 +203,16 @@ def resolve_effective_domain_name(
             "cloudflare.root_domain is required for automatic subdomain allocation"
         )
 
-    protocol_slug = re.sub(r"[^a-z0-9]+", "-", request.protocol_type.lower()).strip("-")
-    region_slug = re.sub(
-        r"[^a-z0-9]+",
-        "-",
-        (selection_result.region or "global").lower(),
-    ).strip("-")
-    prefix_slug = re.sub(
-        r"[^a-z0-9]+",
-        "-",
-        cloudflare_config.auto_subdomain_prefix.lower(),
-    ).strip("-")
-    label = f"{prefix_slug}-{protocol_slug}-{region_slug}-{xboard_node_id}"
-    return f"{label[:63].strip('-')}.{cloudflare_config.root_domain}"
+    # 使用域名池管理器分配域名
+    from services.domain_pool_manager import DomainPoolManager
+
+    domain_manager = DomainPoolManager(runtime_context)
+    allocated_domain = domain_manager.allocate_domain(
+        protocol_type=request.protocol_type,
+        xboard_node_id=xboard_node_id
+    )
+
+    return allocated_domain
 
 
 def build_self_hosted_ssh_config(selection_result: AssetSelectionResult) -> SelfHostedSshConfig:

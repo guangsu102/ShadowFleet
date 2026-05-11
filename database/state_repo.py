@@ -543,3 +543,54 @@ class StateRepo:
             xboard_show,
         )
 
+    def list_deleted_nodes_with_domains(self, protocol_type: str | None = None) -> list[FleetNodeRecord]:
+        """
+        查询已删除且有域名的节点（用于域名复用）
+
+        Args:
+            protocol_type: 协议类型过滤，如果为 None 则返回所有协议
+
+        Returns:
+            已删除且有域名的节点列表
+        """
+        if protocol_type:
+            sql = """
+                SELECT * FROM fleet_nodes
+                WHERE status = 'deleted'
+                AND domain_name IS NOT NULL
+                AND domain_name != ''
+                AND node_type = ?
+                ORDER BY deleted_at DESC
+            """
+            params = (protocol_type,)
+        else:
+            sql = """
+                SELECT * FROM fleet_nodes
+                WHERE status = 'deleted'
+                AND domain_name IS NOT NULL
+                AND domain_name != ''
+                ORDER BY deleted_at DESC
+            """
+            params = ()
+
+        with self._sqlite_manager.connection() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [map_fleet_node_record(row) for row in rows]
+
+    def list_all_nodes_with_domains(self) -> list[FleetNodeRecord]:
+        """
+        查询所有有域名的节点（用于域名池状态查询）
+
+        Returns:
+            所有有域名的节点列表
+        """
+        sql = """
+            SELECT * FROM fleet_nodes
+            WHERE domain_name IS NOT NULL
+            AND domain_name != ''
+            ORDER BY created_at DESC
+        """
+        with self._sqlite_manager.connection() as connection:
+            rows = connection.execute(sql).fetchall()
+        return [map_fleet_node_record(row) for row in rows]
+

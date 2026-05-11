@@ -302,6 +302,9 @@ class FleetSchedulerService:
 
             node_name = self._generate_unique_node_name(gap.region, gap.protocol_type)
 
+            # 根据协议类型设置默认配置
+            protocol_defaults = self._get_protocol_defaults(gap.protocol_type)
+
             request = ProvisionRequest(
                 protocol_type=gap.protocol_type,
                 node_name=node_name,
@@ -313,6 +316,15 @@ class FleetSchedulerService:
                 require_cdn_proxy=False,
                 cert_mode="dns",
                 status_reason=f"Auto-scheduled: {reason}",
+                # 添加协议特定字段
+                sni_domain=protocol_defaults.get("sni_domain"),
+                reality_dest=protocol_defaults.get("reality_dest"),
+                allow_insecure=protocol_defaults.get("allow_insecure", True),
+                network=protocol_defaults.get("network", "grpc"),
+                flow=protocol_defaults.get("flow"),
+                # Reality 密钥留空，让 NodeAutoConfigService 自动生成
+                reality_private_key=None,
+                reality_public_key=None,
             )
 
             correlation_id = generate_correlation_id()
@@ -408,12 +420,51 @@ class FleetSchedulerService:
             "rate_time_enable": request.rate_time_enable,
             "rate_time_ranges": request.rate_time_ranges,
             "status_reason": request.status_reason,
+            # Protocol-specific fields
+            "sni_domain": request.sni_domain,
+            "reality_private_key": request.reality_private_key,
+            "reality_public_key": request.reality_public_key,
+            "reality_dest": request.reality_dest,
+            "allow_insecure": request.allow_insecure,
+            "network": request.network,
+            "flow": request.flow,
+            # SSH fields
             "ssh_host": request.ssh_host,
             "ssh_port": request.ssh_port,
             "ssh_username": request.ssh_username,
             "ssh_password": request.ssh_password,
             "ssh_private_key": request.ssh_private_key,
         }
+
+    def _get_protocol_defaults(self, protocol_type: str) -> dict[str, str | bool]:
+        """获取协议的默认配置"""
+        protocol_type_lower = protocol_type.lower()
+
+        if protocol_type_lower == "anytls":
+            return {
+                "sni_domain": "www.bilibili.com",
+                "allow_insecure": True,
+            }
+        elif protocol_type_lower == "trojan":
+            return {
+                "sni_domain": "www.bilibili.com",
+                "allow_insecure": True,
+                "network": "grpc",
+            }
+        elif protocol_type_lower == "vmess":
+            return {
+                "network": "grpc",
+            }
+        elif protocol_type_lower == "vless":
+            return {
+                "sni_domain": "www.bilibili.com",
+                "reality_dest": "www.bilibili.com",
+                "allow_insecure": True,
+                "network": "grpc",
+                "flow": "xtls-rprx-vision",
+            }
+        else:
+            return {}
 
     def _is_region_enabled(self, region: str) -> bool:
         """Check if a region is enabled for scheduling."""

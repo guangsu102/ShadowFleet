@@ -383,10 +383,16 @@ class AssetRepo:
         """
         Release asset allocation for a node by xboard_node_id.
 
+        改进：
+        1. 同时释放资产分配和端口分配
+        2. 使用事务确保原子性
+        3. 返回是否有资源被释放
+
         Returns True if an allocation was released, False if no active allocation found.
         Does NOT raise AssetNotFoundError - callers should check return value if needed.
         """
         with self._sqlite_manager.connection() as connection:
+            # 释放资产分配
             cursor = connection.execute(
                 """
                 UPDATE fleet_asset_allocations
@@ -395,7 +401,20 @@ class AssetRepo:
                 """,
                 (allocation_status, utcnow_iso(), xboard_node_id),
             )
-            if cursor.rowcount == 0:
+            asset_released = cursor.rowcount > 0
+
+            # 释放端口分配
+            cursor = connection.execute(
+                """
+                UPDATE fleet_asset_port_allocations
+                SET allocation_status = ?, updated_at = ?
+                WHERE xboard_node_id = ? AND allocation_status = 'allocated'
+                """,
+                (allocation_status, utcnow_iso(), xboard_node_id),
+            )
+            port_released = cursor.rowcount > 0
+
+            if not asset_released and not port_released:
                 set_event_type("sqlite_asset_allocation_not_found")
                 self._logger.debug(
                     "No active allocation found for xboard_node_id=%s",
@@ -404,7 +423,12 @@ class AssetRepo:
                 return False
 
         set_event_type("sqlite_asset_allocation_released")
-        self._logger.info("Released asset allocation for xboard_node_id=%s", xboard_node_id)
+        self._logger.info(
+            "Released allocations for xboard_node_id=%s (asset=%s, port=%s)",
+            xboard_node_id,
+            asset_released,
+            port_released,
+        )
         return True
 
     def update_asset_status(self, asset_id: int, status: str) -> None:
@@ -686,9 +710,15 @@ class AssetRepo:
         """
         Restore a released allocation back to allocated status.
         Called when a node is restored during Xboard sync.
+
+        改进：
+        1. 同时恢复资产分配和端口分配
+        2. 使用事务确保原子性
+
         Returns the number of allocations restored.
         """
         with self._sqlite_manager.connection() as connection:
+            # 恢复资产分配
             cursor = connection.execute(
                 """
                 UPDATE fleet_asset_allocations
@@ -697,14 +727,29 @@ class AssetRepo:
                 """,
                 (utcnow_iso(), xboard_node_id),
             )
-            restored_count = cursor.rowcount
+            asset_restored = cursor.rowcount
+
+            # 恢复端口分配
+            cursor = connection.execute(
+                """
+                UPDATE fleet_asset_port_allocations
+                SET allocation_status = 'allocated', updated_at = ?
+                WHERE xboard_node_id = ? AND allocation_status = 'released'
+                """,
+                (utcnow_iso(), xboard_node_id),
+            )
+            port_restored = cursor.rowcount
+
+            restored_count = asset_restored + port_restored
 
         if restored_count > 0:
             set_event_type("sqlite_asset_allocation_restored")
             self._logger.info(
-                "Restored %s allocation(s) for xboard_node_id=%s",
+                "Restored %s allocation(s) for xboard_node_id=%s (asset=%s, port=%s)",
                 restored_count,
                 xboard_node_id,
+                asset_restored,
+                port_restored,
             )
         return restored_count
 

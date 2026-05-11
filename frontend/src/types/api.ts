@@ -333,6 +333,15 @@ export interface ProvisionTaskCreateRequest {
   rate_time_enable?: boolean
   rate_time_ranges?: unknown[]
   status_reason?: string | null
+  // Protocol-specific fields
+  sni_domain?: string | null
+  reality_private_key?: string | null
+  reality_public_key?: string | null
+  reality_dest?: string | null
+  allow_insecure?: boolean
+  network?: string
+  flow?: string | null
+  // SSH fields
   ssh_host?: string
   ssh_port?: number
   ssh_username?: string

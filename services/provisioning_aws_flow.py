@@ -87,8 +87,21 @@ def provision_aws_node(
 
     try:
         registered_node_result = dependencies.node_registry.register_node(
-            build_register_node_request(request)
+            build_register_node_request(dependencies.runtime_context, request)
         )
+
+        # 自动配置节点（生成节点ID、配置协议参数）
+        from services.node_auto_config_service import NodeAutoConfigService
+        auto_config_service = NodeAutoConfigService(dependencies.runtime_context)
+        auto_config_service.auto_configure_node(
+            xboard_node_id=registered_node_result.xboard_node_id,
+            protocol_type=request.protocol_type,
+            protocol_settings=request.protocol_settings,
+            sni_domain=getattr(request, 'sni_domain', None),
+            reality_private_key=getattr(request, 'reality_private_key', None),
+            reality_public_key=getattr(request, 'reality_public_key', None),
+        )
+
         effective_domain_name = resolve_effective_domain_name(
             runtime_context=dependencies.runtime_context,
             request=request,

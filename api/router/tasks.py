@@ -37,6 +37,15 @@ class ProvisionTaskCreateRequest(BaseModel):
     protocol_settings: dict | None = None
     rate_time_ranges: list | None = None
     status_reason: str | None = None
+    # Protocol-specific fields
+    sni_domain: str | None = None
+    reality_private_key: str | None = None
+    reality_public_key: str | None = None
+    reality_dest: str | None = None
+    allow_insecure: bool = True
+    network: str = "grpc"
+    flow: str | None = None
+    # SSH fields
     ssh_host: str | None = None
     ssh_port: int | None = None
     ssh_username: str | None = None
@@ -158,6 +167,15 @@ async def submit_provisioning_task(
                 domain_name=request.domain_name, require_cdn_proxy=request.require_cdn_proxy,
                 cert_mode=request.cert_mode, code=request.code, parent_id=request.parent_id,
                 tags=request.tags, show=request.show,
+                # Protocol-specific fields
+                sni_domain=request.sni_domain,
+                reality_private_key=request.reality_private_key,
+                reality_public_key=request.reality_public_key,
+                reality_dest=request.reality_dest,
+                allow_insecure=request.allow_insecure,
+                network=request.network,
+                flow=request.flow,
+                # SSH fields
                 ssh_host=request.ssh_host, ssh_port=request.ssh_port,
                 ssh_username=request.ssh_username, ssh_password=request.ssh_password,
                 ssh_private_key=request.ssh_private_key,

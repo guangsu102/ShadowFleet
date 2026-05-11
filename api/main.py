@@ -12,7 +12,7 @@ from api.deps import get_runtime_context, lifespan_shutdown
 from api.auth.db import AuthUserRepo
 from api.exceptions.handlers import register_exception_handlers
 from api.middleware import RateLimitMiddleware, RequestLoggingMiddleware
-from api.router import assets, abandonment, config_api, dashboard, events, monitor, nodes, probes, tasks, xboard
+from api.router import assets, abandonment, config_api, dashboard, events, health, monitor, nodes, probes, tasks, xboard, utils
 from api.auth.router import router as auth_router
 from fastapi import APIRouter
 
@@ -62,6 +62,8 @@ def create_app() -> FastAPI:
     app.include_router(abandonment.router)
     app.include_router(xboard.router)
     app.include_router(events.router)
+    app.include_router(utils.router)
+    app.include_router(health.router)
     app.include_router(health_router)
 
     register_exception_handlers(app)

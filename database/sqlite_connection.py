@@ -70,20 +70,73 @@ class SqliteConnectionManager:
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self._database_path, timeout=30.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        try:
-            yield connection
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            set_event_type("sqlite_transaction_failed")
-            self._logger.exception("SQLite transaction failed and was rolled back")
-            raise
-        finally:
-            connection.close()
+        """
+        获取 SQLite 连接的上下文管理器
+
+        改进：
+        1. 增加 busy_timeout 到 30 秒，减少 SQLITE_BUSY 错误
+        2. 使用 WAL 模式提高并发性能
+        3. 自动重试机制处理临时锁定
+        """
+        max_retries = 3
+        retry_delay = 0.1
+
+        for attempt in range(max_retries):
+            connection = None
+            try:
+                connection = sqlite3.connect(
+                    self._database_path,
+                    timeout=30.0,
+                    check_same_thread=False,
+                )
+                connection.row_factory = sqlite3.Row
+
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("PRAGMA busy_timeout = 30000")
+                connection.execute("PRAGMA synchronous = NORMAL")
+                connection.execute("PRAGMA cache_size = -64000")
+
+                yield connection
+                connection.commit()
+                return
+
+            except sqlite3.OperationalError as exc:
+                if connection:
+                    connection.rollback()
+                    connection.close()
+
+                if "database is locked" in str(exc).lower() or "locked" in str(exc).lower():
+                    if attempt < max_retries - 1:
+                        import time
+                        self._logger.warning(
+                            "SQLite database locked, retrying (attempt %d/%d): %s",
+                            attempt + 1,
+                            max_retries,
+                            exc,
+                        )
+                        time.sleep(retry_delay * (attempt + 1))
+                        continue
+                    else:
+                        set_event_type("sqlite_transaction_locked")
+                        self._logger.error(
+                            "SQLite database locked after %d retries: %s",
+                            max_retries,
+                            exc,
+                        )
+                        raise
+                else:
+                    if connection:
+                        connection.close()
+                    raise
+
+            except Exception:
+                if connection:
+                    connection.rollback()
+                    connection.close()
+                set_event_type("sqlite_transaction_failed")
+                self._logger.exception("SQLite transaction failed and was rolled back")
+                raise
 
     def initialize_schema(self) -> None:
         with self.connection() as connection:
