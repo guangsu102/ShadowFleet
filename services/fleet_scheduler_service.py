@@ -36,6 +36,7 @@ class FleetSchedulerService:
         self._asset_selector = AssetSelectorService(runtime_context)
         self._cooldown = SchedulerCooldownTracker()
         self._cycle_counter = 0
+        self._cached_group_ids: list[int] | None = None
 
     def run_scheduler_cycle(self, triggered_by: str = "scheduled") -> SchedulerCycleResult:
         """Execute one scheduler cycle. Returns the result with gap analysis and submitted tasks."""
@@ -305,6 +306,9 @@ class FleetSchedulerService:
             # 根据协议类型设置默认配置
             protocol_defaults = self._get_protocol_defaults(gap.protocol_type)
 
+            # 自动查询所有权限组 ID
+            group_ids = self._get_all_group_ids()
+
             request = ProvisionRequest(
                 protocol_type=gap.protocol_type,
                 node_name=node_name,
@@ -325,8 +329,8 @@ class FleetSchedulerService:
                 # Reality 密钥留空，让 NodeAutoConfigService 自动生成
                 reality_private_key=None,
                 reality_public_key=None,
-                # 使用配置的默认权限组
-                group_ids=self._config.default_group_ids if self._config.default_group_ids else None,
+                # 使用自动查询的所有权限组 ID
+                group_ids=group_ids if group_ids else None,
             )
 
             correlation_id = generate_correlation_id()
@@ -467,6 +471,33 @@ class FleetSchedulerService:
             }
         else:
             return {}
+
+    def _get_all_group_ids(self) -> list[int]:
+        """查询 Xboard 数据库中的所有权限组 ID（带缓存）"""
+        if self._cached_group_ids is not None:
+            return self._cached_group_ids
+
+        group_ids = []
+        if self._runtime.db_pool is not None:
+            try:
+                with self._runtime.db_pool.connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id FROM v2_user_group ORDER BY id")
+                    rows = cursor.fetchall()
+                    group_ids = [row[0] for row in rows]
+                    self._logger.info(
+                        "Loaded %d group IDs from Xboard: %s",
+                        len(group_ids),
+                        group_ids,
+                    )
+            except Exception as e:
+                self._logger.warning(
+                    "Failed to query group IDs from Xboard: %s, using empty list",
+                    e,
+                )
+
+        self._cached_group_ids = group_ids
+        return group_ids
 
     def _is_region_enabled(self, region: str) -> bool:
         """Check if a region is enabled for scheduling."""
