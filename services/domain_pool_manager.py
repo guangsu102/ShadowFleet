@@ -26,7 +26,7 @@ class DomainPoolManager:
     def __init__(self, runtime_context: RuntimeContext) -> None:
         self._runtime_context = runtime_context
         self._logger = runtime_context.logger.getChild("services.domain_pool_manager")
-        self._base_domain = runtime_context.config.cloudflare.zone_name
+        self._base_domain = runtime_context.config.cloudflare.root_domain
 
     def allocate_domain(self, protocol_type: str, xboard_node_id: int) -> str:
         """
