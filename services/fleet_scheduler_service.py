@@ -325,6 +325,8 @@ class FleetSchedulerService:
                 # Reality 密钥留空，让 NodeAutoConfigService 自动生成
                 reality_private_key=None,
                 reality_public_key=None,
+                # 使用配置的默认权限组
+                group_ids=self._config.default_group_ids if self._config.default_group_ids else None,
             )
 
             correlation_id = generate_correlation_id()

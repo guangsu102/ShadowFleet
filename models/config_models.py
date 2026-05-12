@@ -412,6 +412,7 @@ class FleetSchedulerConfig(BaseModel):
     max_tasks_per_cycle: int = 5
     enabled_regions: list[str] = Field(default_factory=lambda: ["*"])
     enabled_protocols: list[str] = Field(default_factory=lambda: ["*"])
+    default_group_ids: list[int] = Field(default_factory=list)
 
     @field_validator("poll_interval_seconds", "cooldown_seconds")
     @classmethod
