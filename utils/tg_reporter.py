@@ -99,7 +99,18 @@ class TelegramReporter:
             try:
                 loop.run_until_complete(coroutine)
             finally:
-                loop.close()
+                try:
+                    # Cancel all pending tasks before closing the loop
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    # Wait for all tasks to complete cancellation
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+                finally:
+                    loop.close()
 
         thread = threading.Thread(target=_run_in_thread, daemon=True)
         thread.start()
