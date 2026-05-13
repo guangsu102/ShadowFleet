@@ -308,7 +308,7 @@ async def list_detections(
                 cycle_id=r.get("cycle_id", 0),
                 xboard_node_id=xboard_node_id,
                 node_name=node_record.node_name if node_record else None,
-                region=node_record.region if node_record else None,
+                region=node_record.aws_region if node_record else None,
                 protocol_type=node_record.node_type if node_record else None,
                 status=node_record.status if node_record else None,
                 uplink_bytes=uplink_bytes,
