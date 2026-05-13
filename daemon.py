@@ -865,6 +865,7 @@ def _run_scheduler_worker(
 
     if not scheduler_config.enabled:
         logger.info("Fleet scheduler disabled by configuration")
+        stop_event.wait()
         return
 
     scheduler_service = FleetSchedulerService(runtime_context)
@@ -1083,7 +1084,7 @@ def main() -> None:
                 raise RuntimeError("Sentinel worker thread exited unexpectedly")
             if not manual_operation_thread.is_alive():
                 raise RuntimeError("Manual operation worker thread exited unexpectedly")
-            if not scheduler_thread.is_alive():
+            if runtime_context.config.fleet_scheduler.enabled and not scheduler_thread.is_alive():
                 raise RuntimeError("Scheduler worker thread exited unexpectedly")
             if not xboard_sync_thread.is_alive():
                 raise RuntimeError("Xboard sync worker thread exited unexpectedly")

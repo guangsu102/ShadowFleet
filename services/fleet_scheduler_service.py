@@ -263,7 +263,13 @@ class FleetSchedulerService:
         )
 
     def _get_online_node_counts(self) -> dict[tuple[str, str], int]:
-        """Get count of online nodes grouped by (region, protocol)."""
+        """
+        Get count of online nodes grouped by (region, protocol).
+
+        IMPORTANT: Only count nodes with status='online'.
+        Nodes in 'provisioning' status are NOT counted as online capacity.
+        This prevents the scheduler from thinking capacity exists when nodes are still being created.
+        """
         counts: dict[tuple[str, str], int] = defaultdict(int)
         for node in self._state_repo.list_active_nodes():
             if node.status != "online":
@@ -274,8 +280,19 @@ class FleetSchedulerService:
         return counts
 
     def _get_pending_task_counts(self) -> dict[tuple[str, str], int]:
-        """Get count of pending provisioning tasks grouped by (region, protocol)."""
+        """
+        Get count of pending capacity grouped by (region, protocol).
+
+        CRITICAL FIX: Count both:
+        1. Provisioning tasks in 'queued' or 'running' status
+        2. Fleet nodes in 'provisioning' status (task succeeded but node not yet online)
+
+        This prevents the scheduler from creating duplicate tasks when nodes are
+        transitioning from task completion to online status.
+        """
         counts: dict[tuple[str, str], int] = defaultdict(int)
+
+        # Count provisioning tasks that are still in progress
         for task in self._task_repo.list_recent_tasks(limit=1000):
             if task.status not in ("queued", "running"):
                 continue
@@ -283,6 +300,15 @@ class FleetSchedulerService:
             region = payload.get("region", "unknown")
             protocol = payload.get("protocol_type", "unknown")
             counts[(region, protocol)] += 1
+
+        # Count nodes in provisioning status (task succeeded but node not yet online)
+        for node in self._state_repo.list_active_nodes():
+            if node.status != "provisioning":
+                continue
+            region = node.aws_region or "unknown"
+            protocol = node.node_type
+            counts[(region, protocol)] += 1
+
         return counts
 
     def _submit_provisioning_task(
