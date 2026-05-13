@@ -165,6 +165,7 @@ def provision_aws_node(
             )
         )
         ipv6_address = launch_result.ipv6_addresses[0] if launch_result.ipv6_addresses else None
+        ipv4_address = launch_result.ipv4_address
 
         if selection_result.requires_dns_record:
             dns_sync_result = sync_dns_records(
@@ -173,7 +174,7 @@ def provision_aws_node(
                 domain_name=require_non_empty(effective_domain_name, "domain_name"),
                 selection_result=selection_result,
                 require_cdn_proxy=request.require_cdn_proxy,
-                ipv4_address=None,
+                ipv4_address=ipv4_address,
                 ipv6_address=ipv6_address,
             )
             cloudflare_record_id = dns_sync_result.primary_record_id
@@ -190,6 +191,7 @@ def provision_aws_node(
             instance_type=effective_instance_type,
             cloudflare_record_id=cloudflare_record_id,
             domain_name=effective_domain_name,
+            ipv4_address=ipv4_address,
             ipv6_address=ipv6_address,
             status_reason=request.status_reason,
         )
@@ -211,6 +213,7 @@ def provision_aws_node(
                 payload={
                     "xboard_node_id": online_result.xboard_node_id,
                     "instance_id": launch_result.instance_id,
+                    "ipv4_address": ipv4_address,
                     "ipv6_address": ipv6_address,
                     "domain_name": effective_domain_name,
                     "cloudflare_record_id": cloudflare_record_id,
@@ -235,9 +238,11 @@ def provision_aws_node(
         )
         set_event_type("provisioning_completed")
         dependencies.logger.info(
-            "Completed AWS provisioning xboard_node_id=%s instance_id=%s",
+            "Completed AWS provisioning xboard_node_id=%s instance_id=%s ipv4=%s ipv6=%s",
             online_result.xboard_node_id,
             launch_result.instance_id,
+            ipv4_address,
+            ipv6_address,
         )
         return ProvisionResult(
             local_node_id=online_result.local_node_id,
@@ -251,6 +256,7 @@ def provision_aws_node(
             region=selection_result.region,
             instance_id=launch_result.instance_id,
             network_interface_id=launch_result.network_interface_id,
+            ipv4_address=ipv4_address,
             ipv6_address=ipv6_address,
             domain_name=effective_domain_name,
             cloudflare_record_id=cloudflare_record_id,

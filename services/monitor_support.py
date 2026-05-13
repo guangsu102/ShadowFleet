@@ -21,6 +21,8 @@ def to_monitor_candidate(
         server_port=xboard_runtime.server_port,
         status=node_record.status,
         last_healed_at=node_record.last_healed_at,
+        ipv4_address=node_record.ipv4_address,
+        ipv6_address=node_record.ipv6_address,
     )
 
 

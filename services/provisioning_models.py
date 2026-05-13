@@ -84,8 +84,9 @@ class ProvisionResult:
     region: str | None
     instance_id: str | None
     network_interface_id: str | None
-    ipv6_address: str | None
-    domain_name: str | None
-    cloudflare_record_id: str | None
+    ipv4_address: str | None = None
+    ipv6_address: str | None = None
+    domain_name: str | None = None
+    cloudflare_record_id: str | None = None
     cloudflare_a_record_id: str | None = None
     cloudflare_aaaa_record_id: str | None = None

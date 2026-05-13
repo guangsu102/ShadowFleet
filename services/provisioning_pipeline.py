@@ -385,6 +385,7 @@ class SyncDnsRecordsStep(ProvisioningStep):
             if context.launch_result.ipv6_addresses
             else None
         )
+        ipv4_address = context.launch_result.ipv4_address
 
         context.dns_sync_result = sync_dns_records(
             runtime_context=context.runtime_context,
@@ -392,7 +393,7 @@ class SyncDnsRecordsStep(ProvisioningStep):
             domain_name=require_non_empty(context.effective_domain_name, "domain_name"),
             selection_result=context.selection_result,
             require_cdn_proxy=context.request.require_cdn_proxy,
-            ipv4_address=None,
+            ipv4_address=ipv4_address,
             ipv6_address=ipv6_address,
         )
 
@@ -462,6 +463,7 @@ class MarkNodeOnlineStep(ProvisioningStep):
             if context.launch_result.ipv6_addresses
             else None
         )
+        ipv4_address = context.launch_result.ipv4_address
 
         context.online_result = node_registry.mark_node_online(
             xboard_node_id=context.registered_node_result.xboard_node_id,
@@ -474,6 +476,7 @@ class MarkNodeOnlineStep(ProvisioningStep):
             instance_type=context.effective_instance_type,
             cloudflare_record_id=context.cloudflare_record_id,
             domain_name=context.effective_domain_name,
+            ipv4_address=ipv4_address,
             ipv6_address=ipv6_address,
             status_reason=context.request.status_reason,
         )

@@ -34,6 +34,8 @@ class MonitorCandidate:
     server_port: int | None
     status: str
     last_healed_at: str | None
+    ipv4_address: str | None = None
+    ipv6_address: str | None = None
 
 
 @dataclass(frozen=True)

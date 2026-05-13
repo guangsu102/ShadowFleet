@@ -59,6 +59,7 @@ class Ec2InstanceLaunchResult:
     state: str
     network_interface_id: str | None
     ipv6_addresses: list[str]
+    ipv4_address: str | None = None
 
 
 def execute_ec2_call(
@@ -223,6 +224,7 @@ def build_launch_result(
     network_interfaces = instance_payload.get("NetworkInterfaces", [])
     primary_network_interface_id: str | None = None
     ipv6_addresses: list[str] = []
+    ipv4_address: str | None = None
 
     if network_interfaces:
         primary_network_interface = min(
@@ -235,6 +237,10 @@ def build_launch_result(
             for address in primary_network_interface.get("Ipv6Addresses", [])
             if address.get("Ipv6Address")
         ]
+        # Extract IPv4 address (public or private)
+        ipv4_address = primary_network_interface.get("Association", {}).get("PublicIp")
+        if not ipv4_address:
+            ipv4_address = primary_network_interface.get("PrivateIpAddress")
 
     instance_id = instance_payload.get("InstanceId")
     if not instance_id:
@@ -247,4 +253,5 @@ def build_launch_result(
         state=state,
         network_interface_id=primary_network_interface_id,
         ipv6_addresses=ipv6_addresses,
+        ipv4_address=ipv4_address,
     )

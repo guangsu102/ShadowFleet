@@ -58,6 +58,7 @@ def provision_aws_node_with_pipeline(
             if context.launch_result.ipv6_addresses
             else None
         )
+        ipv4_address = context.launch_result.ipv4_address
 
         notify_success(
             runtime_context=dependencies.runtime_context,
@@ -83,6 +84,7 @@ def provision_aws_node_with_pipeline(
             region=context.selection_result.region,
             instance_id=context.launch_result.instance_id,
             network_interface_id=context.launch_result.network_interface_id,
+            ipv4_address=ipv4_address,
             ipv6_address=ipv6_address,
             domain_name=context.effective_domain_name,
             cloudflare_record_id=context.cloudflare_record_id,

@@ -128,9 +128,24 @@ class LocalProbeExecutor:
         )
 
     def _resolve_target_host(self, candidate: MonitorCandidate) -> str:
-        for value in (candidate.domain_name, candidate.host):
-            if value is not None and value.strip():
-                return value.strip()
+        # If daemon has IPv6, prefer domain_name or host (which resolve to IPv6)
+        # If daemon only has IPv4, use IPv4 address if available
+        daemon_has_ipv6 = bool(self._runtime_context.daemon_ipv6)
+
+        if daemon_has_ipv6:
+            # Daemon has IPv6, use domain_name or host
+            for value in (candidate.domain_name, candidate.host):
+                if value is not None and value.strip():
+                    return value.strip()
+        else:
+            # Daemon only has IPv4, prefer IPv4 address
+            if candidate.ipv4_address is not None and candidate.ipv4_address.strip():
+                return candidate.ipv4_address.strip()
+            # Fallback to domain_name or host if IPv4 address not available
+            for value in (candidate.domain_name, candidate.host):
+                if value is not None and value.strip():
+                    return value.strip()
+
         raise ValueError(f"节点缺少可探测 host: xboard_node_id={candidate.xboard_node_id}")
 
     def _resolve_dns(self, target_host: str) -> str | None:
