@@ -35,7 +35,6 @@ async def lifespan_shutdown() -> None:
         if _runtime_context.db_pool is not None:
             _runtime_context.db_pool.close()
             logger.info("PostgreSQL connection pool closed.")
-        if _runtime_context.sqlite_manager is not None:
-            _runtime_context.sqlite_manager.close()
-            logger.info("SQLite connection manager closed.")
+        # SQLite connections are managed via context manager, no explicit close needed
+        logger.info("Runtime context shutdown complete.")
         _runtime_context = None
