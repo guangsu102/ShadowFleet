@@ -508,27 +508,24 @@ class FleetSchedulerService:
         if self._cached_group_ids is not None:
             return self._cached_group_ids
 
-        group_ids = []
-        if self._runtime.db_pool is not None:
-            try:
-                with self._runtime.db_pool.connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT id FROM v2_user_group ORDER BY id")
-                    rows = cursor.fetchall()
-                    group_ids = [row[0] for row in rows]
-                    self._logger.info(
-                        "Loaded %d group IDs from Xboard: %s",
-                        len(group_ids),
-                        group_ids,
-                    )
-            except Exception as e:
-                self._logger.warning(
-                    "Failed to query group IDs from Xboard: %s, using empty list",
-                    e,
-                )
-
-        self._cached_group_ids = group_ids
-        return group_ids
+        try:
+            from database.xboard_repo import XboardRepo
+            xboard_repo = XboardRepo(self._runtime)
+            group_ids = xboard_repo.get_all_group_ids()
+            self._logger.info(
+                "Loaded %d group IDs from Xboard: %s",
+                len(group_ids),
+                group_ids,
+            )
+            self._cached_group_ids = group_ids
+            return group_ids
+        except Exception as e:
+            self._logger.warning(
+                "Failed to query group IDs from Xboard: %s, using empty list",
+                e,
+            )
+            self._cached_group_ids = []
+            return []
 
     def _is_region_enabled(self, region: str) -> bool:
         """Check if a region is enabled for scheduling."""

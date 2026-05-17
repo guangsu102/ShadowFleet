@@ -100,6 +100,10 @@ def provision_aws_node(
             sni_domain=getattr(request, 'sni_domain', None),
             reality_private_key=getattr(request, 'reality_private_key', None),
             reality_public_key=getattr(request, 'reality_public_key', None),
+            reality_dest=getattr(request, 'reality_dest', None),
+            allow_insecure=getattr(request, 'allow_insecure', True),
+            network=getattr(request, 'network', 'grpc'),
+            flow=getattr(request, 'flow', None),
         )
 
         effective_domain_name = resolve_effective_domain_name(
