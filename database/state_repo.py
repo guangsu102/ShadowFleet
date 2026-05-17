@@ -202,6 +202,7 @@ class StateRepo:
                 FROM fleet_nodes
                 WHERE is_deleted = 0
                   AND status IN ('online', 'offline')
+                  AND (xboard_status IS NULL OR xboard_status != 'online')
                 ORDER BY id ASC
                 """
             ).fetchall()

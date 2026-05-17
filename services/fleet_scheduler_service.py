@@ -266,13 +266,16 @@ class FleetSchedulerService:
         """
         Get count of online nodes grouped by (region, protocol).
 
-        IMPORTANT: Only count nodes with status='online'.
-        Nodes in 'provisioning' status are NOT counted as online capacity.
-        This prevents the scheduler from thinking capacity exists when nodes are still being created.
+        IMPORTANT: Count nodes with status='online' OR 'healing'.
+        - Nodes in 'provisioning' status are NOT counted as online capacity.
+        - Nodes in 'healing' status ARE counted because they are temporarily being repaired
+          and will return to online status. We should NOT create new nodes to replace them.
+        This prevents the scheduler from thinking capacity exists when nodes are still being created,
+        while avoiding duplicate node creation when existing nodes are being healed.
         """
         counts: dict[tuple[str, str], int] = defaultdict(int)
         for node in self._state_repo.list_active_nodes():
-            if node.status != "online":
+            if node.status not in ("online", "healing"):
                 continue
             region = node.aws_region or "unknown"
             protocol = node.node_type
@@ -485,6 +488,8 @@ class FleetSchedulerService:
             }
         elif protocol_type_lower == "vmess":
             return {
+                "sni_domain": "www.bilibili.com",
+                "allow_insecure": True,
                 "network": "grpc",
             }
         elif protocol_type_lower == "vless":

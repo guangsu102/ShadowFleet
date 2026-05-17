@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import platform
 import socket
 import ssl
+import subprocess
 import time
 from typing import TYPE_CHECKING
 
@@ -27,21 +29,12 @@ class LocalProbeExecutor:
         return "local_active_probe"
 
     def probe_node(self, candidate: MonitorCandidate) -> ProbeResult:
-        if candidate.node_type == "Hysteria2":
-            return ProbeResult(
-                provider=self.provider,
-                status="probe_inconclusive",
-                reason="当前本地探测器未实现 Hysteria2 的 UDP 探测",
-                success_region_count=0,
-                failed_region_count=1,
-                failure_stage="udp_not_supported",
-                raw_payload={
-                    "node_type": candidate.node_type,
-                    "reason": "udp_not_supported",
-                },
-            )
-
+        """
+        使用ICMP ping探测节点是否可达
+        """
         target_host = self._resolve_target_host(candidate)
+
+        # 首先尝试DNS解析
         resolved_ip = self._resolve_dns(target_host)
         if resolved_ip is None:
             return ProbeResult(
@@ -54,78 +47,38 @@ class LocalProbeExecutor:
                 raw_payload={"target_host": target_host},
             )
 
-        tcp_result = self._run_tcp_probe(target_host, candidate.server_port or 0)
-        if tcp_result is not None:
-            status, reason, latency_ms = tcp_result
+        # 使用ping检测
+        ping_result = self._run_ping_probe(resolved_ip)
+        if ping_result["success"]:
             return ProbeResult(
                 provider=self.provider,
-                status=status,
-                reason=reason,
-                success_region_count=0,
-                failed_region_count=1,
-                failure_stage="tcp",
+                status="reachable",
+                reason=f"Ping成功: {ping_result['reason']}",
+                success_region_count=1,
+                failed_region_count=0,
                 resolved_ip=resolved_ip,
-                latency_ms=latency_ms,
+                latency_ms=ping_result.get("latency_ms"),
                 raw_payload={
                     "target_host": target_host,
                     "resolved_ip": resolved_ip,
-                    "server_port": candidate.server_port,
+                    "ping_output": ping_result.get("output"),
                 },
             )
-
-        latency_ms = self._measure_latency_ms(target_host, candidate.server_port or 0)
-        if candidate.node_type in TLS_PROTOCOL_NODE_TYPES:
-            tls_result = self._run_tls_probe(target_host, candidate.server_port or 0, candidate.domain_name)
-            if tls_result is not None:
-                return ProbeResult(
-                    provider=self.provider,
-                    status="tls_failed",
-                    reason=tls_result,
-                    success_region_count=0,
-                    failed_region_count=1,
-                    failure_stage="tls",
-                    resolved_ip=resolved_ip,
-                    latency_ms=latency_ms,
-                    raw_payload={
-                        "target_host": target_host,
-                        "resolved_ip": resolved_ip,
-                        "server_port": candidate.server_port,
-                    },
-                )
-
-        if candidate.node_type in HTTP_PROBE_NODE_TYPES and candidate.domain_name is not None:
-            http_result = self._run_http_probe(candidate.domain_name)
-            if http_result is not None:
-                return ProbeResult(
-                    provider=self.provider,
-                    status="application_unreachable",
-                    reason=http_result,
-                    success_region_count=0,
-                    failed_region_count=1,
-                    failure_stage="http",
-                    resolved_ip=resolved_ip,
-                    latency_ms=latency_ms,
-                    raw_payload={
-                        "target_host": target_host,
-                        "resolved_ip": resolved_ip,
-                        "server_port": candidate.server_port,
-                    },
-                )
-
-        return ProbeResult(
-            provider=self.provider,
-            status="reachable",
-            reason="控制面本地探测成功",
-            success_region_count=1,
-            failed_region_count=0,
-            resolved_ip=resolved_ip,
-            latency_ms=latency_ms,
-            raw_payload={
-                "target_host": target_host,
-                "resolved_ip": resolved_ip,
-                "server_port": candidate.server_port,
-            },
-        )
+        else:
+            return ProbeResult(
+                provider=self.provider,
+                status="origin_unreachable",
+                reason=f"Ping失败: {ping_result['reason']}",
+                success_region_count=0,
+                failed_region_count=1,
+                failure_stage="icmp",
+                resolved_ip=resolved_ip,
+                raw_payload={
+                    "target_host": target_host,
+                    "resolved_ip": resolved_ip,
+                    "ping_output": ping_result.get("output"),
+                },
+            )
 
     def _resolve_target_host(self, candidate: MonitorCandidate) -> str:
         # If daemon has IPv6, prefer domain_name or host (which resolve to IPv6)
@@ -210,4 +163,80 @@ class LocalProbeExecutor:
                 return f"HTTP 探测失败: status_code={response.status_code}"
         except requests.RequestException as exc:
             return f"HTTP 探测失败: {exc}"
+        return None
+
+    def _run_ping_probe(self, target_ip: str) -> dict:
+        """
+        使用系统ping命令探测目标IP
+        返回格式: {"success": bool, "reason": str, "latency_ms": float|None, "output": str}
+        """
+        # 检测操作系统类型
+        system = platform.system().lower()
+
+        # 根据操作系统构建ping命令
+        if system == "windows":
+            # Windows: ping -n 1 -w 5000 <ip>
+            cmd = ["ping", "-n", "1", "-w", str(int(self._timeout_seconds * 1000)), target_ip]
+        else:
+            # Linux/Unix: ping -c 1 -W 5 <ip>
+            cmd = ["ping", "-c", "1", "-W", str(int(self._timeout_seconds)), target_ip]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout_seconds + 2,
+            )
+
+            output = result.stdout + result.stderr
+
+            if result.returncode == 0:
+                # Ping成功，尝试提取延迟时间
+                latency_ms = self._extract_ping_latency(output, system)
+                return {
+                    "success": True,
+                    "reason": f"ICMP echo reply received (latency: {latency_ms}ms)" if latency_ms else "ICMP echo reply received",
+                    "latency_ms": latency_ms,
+                    "output": output,
+                }
+            else:
+                return {
+                    "success": False,
+                    "reason": f"Ping failed with return code {result.returncode}",
+                    "latency_ms": None,
+                    "output": output,
+                }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "reason": f"Ping timeout after {self._timeout_seconds}s",
+                "latency_ms": None,
+                "output": "",
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "reason": f"Ping execution error: {exc}",
+                "latency_ms": None,
+                "output": str(exc),
+            }
+
+    def _extract_ping_latency(self, output: str, system: str) -> float | None:
+        """从ping输出中提取延迟时间（毫秒）"""
+        import re
+
+        try:
+            if system == "windows":
+                # Windows格式: "时间=XXms" 或 "time=XXms"
+                match = re.search(r'[Tt]ime[=<]\s*(\d+(?:\.\d+)?)\s*ms', output)
+            else:
+                # Linux格式: "time=XX.X ms"
+                match = re.search(r'time=(\d+(?:\.\d+)?)\s*ms', output)
+
+            if match:
+                return float(match.group(1))
+        except Exception:
+            pass
+
         return None
