@@ -118,6 +118,17 @@ def classify_aws_client_error(error: BaseException, aws_account_id: str | None) 
                 aws_account_id=aws_account_id,
             )
 
+        # Instance has no network interface (usually means instance is terminating or damaged)
+        if "Instance has no network interface" in error_message:
+            # Extract instance_id from error message: "Instance has no network interface: i-xxxxx"
+            instance_id = None
+            if ": " in error_message:
+                instance_id = error_message.split(": ", 1)[1].strip()
+            return InstanceNotFoundError(
+                instance_id=instance_id or "unknown",
+                aws_account_id=aws_account_id,
+            )
+
     if not isinstance(error, ClientError) or aws_account_id is None:
         return error
     error_code = error.response.get("Error", {}).get("Code", "Unknown")
