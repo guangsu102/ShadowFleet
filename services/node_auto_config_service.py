@@ -142,7 +142,8 @@ class NodeAutoConfigService:
         elif protocol_type_lower == "vmess":
             return ProtocolConfigBuilder.build_vmess_config(
                 tls_enabled=True,
-                network=network
+                network=network,
+                sni_domain=sni_domain
             )
         elif protocol_type_lower == "vless":
             return ProtocolConfigBuilder.build_vless_config(

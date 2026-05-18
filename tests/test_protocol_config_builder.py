@@ -44,26 +44,25 @@ class TestProtocolConfigBuilder:
         """Test building Trojan config with default values"""
         config = ProtocolConfigBuilder.build_trojan_config()
 
-        assert "tls" in config
-        assert config["tls"]["server_name"] == "www.bilibili.com"
-        assert config["tls"]["allow_insecure"] is True
+        assert config["server_name"] == "www.bilibili.com"
+        assert config["allow_insecure"] is True
         assert config["network"] == "grpc"
-        assert "grpc" in config
-        assert config["grpc"]["serviceName"] == ""
+        assert "network_settings" in config
+        assert config["network_settings"]["serviceName"] == ""
 
     def test_build_trojan_config_custom_network_ws(self):
         """Test building Trojan config with websocket network"""
         config = ProtocolConfigBuilder.build_trojan_config(network="ws")
 
         assert config["network"] == "ws"
-        assert "grpc" not in config
+        assert "network_settings" not in config
 
     def test_build_trojan_config_custom_network_tcp(self):
         """Test building Trojan config with TCP network"""
         config = ProtocolConfigBuilder.build_trojan_config(network="tcp")
 
         assert config["network"] == "tcp"
-        assert "grpc" not in config
+        assert "network_settings" not in config
 
     def test_build_trojan_config_custom_sni(self):
         """Test building Trojan config with custom SNI"""
@@ -72,23 +71,23 @@ class TestProtocolConfigBuilder:
             allow_insecure=False
         )
 
-        assert config["tls"]["server_name"] == "trojan.example.com"
-        assert config["tls"]["allow_insecure"] is False
+        assert config["server_name"] == "trojan.example.com"
+        assert config["allow_insecure"] is False
 
     def test_build_vmess_config_default(self):
         """Test building VMess config with default values"""
         config = ProtocolConfigBuilder.build_vmess_config()
 
-        assert config["tls"] is True
+        assert config["tls"] == 1
         assert config["network"] == "grpc"
-        assert "grpc" in config
-        assert config["grpc"]["serviceName"] == ""
+        assert "network_settings" in config
+        assert config["network_settings"]["serviceName"] == ""
 
     def test_build_vmess_config_no_tls(self):
         """Test building VMess config without TLS"""
         config = ProtocolConfigBuilder.build_vmess_config(tls_enabled=False)
 
-        assert config["tls"] is False
+        assert config["tls"] == 0
         assert config["network"] == "grpc"
 
     def test_build_vmess_config_custom_network(self):
@@ -98,25 +97,19 @@ class TestProtocolConfigBuilder:
             network="ws"
         )
 
-        assert config["tls"] is True
+        assert config["tls"] == 1
         assert config["network"] == "ws"
-        assert "grpc" not in config
+        assert "network_settings" not in config
 
     def test_build_vless_config_default(self):
         """Test building VLESS config with default values"""
         config = ProtocolConfigBuilder.build_vless_config()
 
-        assert "tls" in config
-        assert config["tls"]["server_name"] == "www.bilibili.com"
-        assert config["tls"]["allow_insecure"] is True
+        assert config["tls"] == 1
         assert config["network"] == "grpc"
         assert config["flow"] == "xtls-rprx-vision"
-        assert "reality" in config
-        assert config["reality"]["enabled"] is True
-        assert config["reality"]["dest"] == "www.bilibili.com"
-        assert config["reality"]["private_key"] == ""
-        assert config["reality"]["public_key"] == ""
-        assert "grpc" in config
+        assert "tls_settings" not in config  # No keys provided
+        assert "network_settings" in config
 
     def test_build_vless_config_custom_reality_keys(self):
         """Test building VLESS config with custom Reality keys"""
@@ -125,26 +118,31 @@ class TestProtocolConfigBuilder:
             reality_public_key="test_public_key"
         )
 
-        assert config["reality"]["private_key"] == "test_private_key"
-        assert config["reality"]["public_key"] == "test_public_key"
+        assert "tls_settings" in config
+        assert config["tls_settings"]["private_key"] == "test_private_key"
+        assert config["tls_settings"]["public_key"] == "test_public_key"
 
     def test_build_vless_config_custom_reality_dest(self):
         """Test building VLESS config with custom Reality dest"""
         config = ProtocolConfigBuilder.build_vless_config(
             sni_domain="vless.example.com",
-            reality_dest="reality.example.com"
+            reality_dest="reality.example.com:443",
+            reality_private_key="key1",
+            reality_public_key="key2"
         )
 
-        assert config["tls"]["server_name"] == "vless.example.com"
-        assert config["reality"]["dest"] == "reality.example.com"
+        assert config["tls_settings"]["server_name"] == "vless.example.com"
+        assert config["tls_settings"]["server_port"] == "reality.example.com:443"
 
     def test_build_vless_config_reality_dest_defaults_to_sni(self):
         """Test that reality_dest defaults to sni_domain"""
         config = ProtocolConfigBuilder.build_vless_config(
-            sni_domain="vless.example.com"
+            sni_domain="vless.example.com",
+            reality_private_key="key1",
+            reality_public_key="key2"
         )
 
-        assert config["reality"]["dest"] == "vless.example.com"
+        assert config["tls_settings"]["server_port"] == "vless.example.com"
 
     def test_build_vless_config_no_reality(self):
         """Test building VLESS config without Reality"""
@@ -177,7 +175,7 @@ class TestProtocolConfigBuilder:
         )
 
         assert config["network"] == "ws"
-        assert "tls" in config
+        assert config["server_name"] == "www.bilibili.com"
 
     def test_build_protocol_config_vmess(self):
         """Test building protocol config for VMess"""
@@ -186,7 +184,7 @@ class TestProtocolConfigBuilder:
             tls_enabled=False
         )
 
-        assert config["tls"] is False
+        assert config["tls"] == 0
 
     def test_build_protocol_config_vless(self):
         """Test building protocol config for VLESS"""
@@ -195,7 +193,7 @@ class TestProtocolConfigBuilder:
             reality_enabled=False
         )
 
-        assert "reality" not in config
+        assert "tls_settings" not in config
 
     def test_build_protocol_config_case_insensitive(self):
         """Test that protocol type is case-insensitive"""

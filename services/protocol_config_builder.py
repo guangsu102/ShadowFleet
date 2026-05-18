@@ -92,21 +92,19 @@ class ProtocolConfigBuilder:
             network: 传输协议（grpc, ws, tcp）
 
         Returns:
-            完整的 protocol_settings 配置
+            完整的 protocol_settings 配置（符合 Xboard 字段结构）
         """
         if sni_domain is None:
             sni_domain = ProtocolConfigBuilder.DEFAULT_SNI_DOMAINS[0]
 
         config: dict[str, Any] = {
-            "tls": {
-                "server_name": sni_domain,
-                "allow_insecure": allow_insecure,
-            },
+            "allow_insecure": allow_insecure,
+            "server_name": sni_domain,
             "network": network,
         }
 
         if network == "grpc":
-            config["grpc"] = {
+            config["network_settings"] = {
                 "serviceName": "",
             }
 
@@ -116,6 +114,7 @@ class ProtocolConfigBuilder:
     def build_vmess_config(
         tls_enabled: bool = True,
         network: str = "grpc",
+        sni_domain: str | None = None,
     ) -> dict[str, Any]:
         """
         构建 VMess 协议配置
@@ -127,18 +126,25 @@ class ProtocolConfigBuilder:
         Args:
             tls_enabled: 是否启用 TLS
             network: 传输协议（grpc, ws, tcp）
+            sni_domain: SNI 伪装域名（可选）
 
         Returns:
             完整的 protocol_settings 配置
         """
         config: dict[str, Any] = {
-            "tls": tls_enabled,
+            "tls": 1 if tls_enabled else 0,
             "network": network,
         }
 
         if network == "grpc":
-            config["grpc"] = {
+            config["network_settings"] = {
                 "serviceName": "",
+            }
+
+        # 如果启用 TLS 且提供了 SNI 域名，添加 tls_settings
+        if tls_enabled and sni_domain:
+            config["tls_settings"] = {
+                "server_name": sni_domain,
             }
 
         return config
@@ -182,24 +188,28 @@ class ProtocolConfigBuilder:
             reality_dest = sni_domain
 
         config: dict[str, Any] = {
-            "tls": {
-                "server_name": sni_domain,
-                "allow_insecure": allow_insecure,
-            },
+            "tls": 1,
             "network": network,
             "flow": flow,
         }
 
-        if reality_enabled:
-            config["reality"] = {
-                "enabled": True,
-                "dest": reality_dest,
-                "private_key": reality_private_key or "",
-                "public_key": reality_public_key or "",
-            }
+        # 构建 tls_settings（符合 Xboard 结构）
+        tls_settings: dict[str, Any] = {}
+
+        if reality_enabled and reality_private_key and reality_public_key:
+            # Reality 配置
+            tls_settings["server_name"] = sni_domain
+            tls_settings["allow_insecure"] = allow_insecure
+            tls_settings["public_key"] = reality_public_key
+            tls_settings["private_key"] = reality_private_key
+            tls_settings["short_id"] = ""
+            tls_settings["server_port"] = reality_dest
+
+        if tls_settings:
+            config["tls_settings"] = tls_settings
 
         if network == "grpc":
-            config["grpc"] = {
+            config["network_settings"] = {
                 "serviceName": "",
             }
 
