@@ -139,6 +139,13 @@ class StateRepo:
             return None
         return map_fleet_node_record(row)
 
+    def node_exists_by_xboard_id(self, xboard_node_id: int) -> bool:
+        """Check if a node exists by xboard_node_id (including deleted nodes)."""
+        sql = "SELECT 1 FROM fleet_nodes WHERE xboard_node_id = ? LIMIT 1"
+        with self._sqlite_manager.connection() as connection:
+            row = connection.execute(sql, (xboard_node_id,)).fetchone()
+        return row is not None
+
     def get_node_by_node_name(self, node_name: str) -> FleetNodeRecord | None:
         sql = "SELECT * FROM fleet_nodes WHERE node_name = ? AND is_deleted = 0"
         with self._sqlite_manager.connection() as connection:

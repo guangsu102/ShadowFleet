@@ -20,6 +20,7 @@ class XboardSyncService:
         self._logger = runtime_context.logger.getChild("services.xboard_sync_service")
         self._state_repo = StateRepo(runtime_context)
         self._sentinel_client = XboardSentinelClient(runtime_context)
+        self._orphan_nodes: set[int] = set()  # Track orphan nodes to reduce log spam
 
     def sync_all_nodes(self) -> tuple[int, int]:
         """
@@ -35,11 +36,15 @@ class XboardSyncService:
 
         success_count = 0
         failed_count = 0
+        skipped_count = 0
 
         for server in server_list.servers:
             try:
-                self._sync_single_node(server)
-                success_count += 1
+                synced = self._sync_single_node(server)
+                if synced:
+                    success_count += 1
+                else:
+                    skipped_count += 1
             except Exception:
                 self._logger.exception(
                     "Failed to sync Xboard status for server id=%s",
@@ -47,16 +52,30 @@ class XboardSyncService:
                 )
                 failed_count += 1
 
-        self._logger.info(
-            "Xboard sync completed: success=%s failed=%s",
-            success_count,
-            failed_count,
-        )
+        log_message = f"Xboard sync completed: success={success_count} failed={failed_count}"
+        if skipped_count > 0:
+            log_message += f" skipped={skipped_count} (orphan nodes)"
+        self._logger.info(log_message)
         set_event_type("xboard_sync_completed")
         return success_count, failed_count
 
-    def _sync_single_node(self, server) -> None:
-        """Synchronize a single node's Xboard status from server list."""
+    def _sync_single_node(self, server) -> bool:
+        """
+        Synchronize a single node's Xboard status from server list.
+        Returns True if synced successfully, False if skipped (orphan node).
+        """
+        # Check if node exists in local database first
+        if not self._state_repo.node_exists_by_xboard_id(server.id):
+            # This is an orphan node (exists in Xboard but not in ShadowFleet)
+            if server.id not in self._orphan_nodes:
+                # Log only once per orphan node to avoid log spam
+                self._logger.warning(
+                    "Skipping orphan node: xboard_node_id=%s exists in Xboard but not in local database",
+                    server.id,
+                )
+                self._orphan_nodes.add(server.id)
+            return False
+
         # Map Xboard status to ShadowFleet status
         # is_online: 1 = online, 0 = offline
         # available_status: string describing the status
@@ -77,3 +96,4 @@ class XboardSyncService:
             server.show,
             server.is_online,
         )
+        return True
