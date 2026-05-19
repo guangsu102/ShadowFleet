@@ -152,8 +152,8 @@ class XboardRepo:
             normalized_node_type,
             request.code,
             request.parent_id,
-            self._to_json_text(request.group_ids if request.group_ids is not None else []),
-            self._to_json_text(request.route_ids if request.route_ids is not None else []),
+            self._to_json_text(self._convert_ids_to_strings(request.group_ids)),
+            self._to_json_text(self._convert_ids_to_strings(request.route_ids)),
             node_name,
             request.rate,
             self._to_json_text(request.tags if request.tags is not None else []),
@@ -523,6 +523,22 @@ class XboardRepo:
         if value is None:
             return None
         return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+
+    @staticmethod
+    def _convert_ids_to_strings(ids: list[int] | None) -> list[str]:
+        """
+        Convert list of integer IDs to list of string IDs.
+        Xboard frontend expects group_ids and route_ids as string arrays.
+
+        Args:
+            ids: List of integer IDs or None
+
+        Returns:
+            List of string IDs (empty list if input is None)
+        """
+        if ids is None:
+            return []
+        return [str(id) for id in ids]
 
     @staticmethod
     def _should_retry_database_error(exc: BaseException) -> bool:
