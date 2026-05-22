@@ -115,6 +115,7 @@ class ProtocolConfigBuilder:
         tls_enabled: bool = True,
         network: str = "grpc",
         sni_domain: str | None = None,
+        allow_insecure: bool = True,
     ) -> dict[str, Any]:
         """
         构建 VMess 协议配置
@@ -127,10 +128,15 @@ class ProtocolConfigBuilder:
             tls_enabled: 是否启用 TLS
             network: 传输协议（grpc, ws, tcp）
             sni_domain: SNI 伪装域名（可选）
+            allow_insecure: 是否允许不安全连接
 
         Returns:
             完整的 protocol_settings 配置
         """
+        # 如果没有提供 SNI，使用默认值
+        if sni_domain is None:
+            sni_domain = ProtocolConfigBuilder.DEFAULT_SNI_DOMAINS[0]
+
         config: dict[str, Any] = {
             "tls": 1 if tls_enabled else 0,
             "network": network,
@@ -141,10 +147,11 @@ class ProtocolConfigBuilder:
                 "serviceName": "",
             }
 
-        # 如果启用 TLS 且提供了 SNI 域名，添加 tls_settings
-        if tls_enabled and sni_domain:
+        # 如果启用 TLS，添加 tls_settings
+        if tls_enabled:
             config["tls_settings"] = {
                 "server_name": sni_domain,
+                "allow_insecure": allow_insecure,
             }
 
         return config
