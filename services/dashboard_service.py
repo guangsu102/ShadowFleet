@@ -220,25 +220,35 @@ class DashboardService:
             rows = connection.execute(
                 """
                 SELECT
-                    xboard_node_id,
-                    node_name,
-                    node_type,
-                    CASE WHEN aws_account_id IS NULL THEN 'self_hosted' ELSE 'aws' END AS asset_type,
-                    aws_region,
-                    status,
-                    aws_instance_id,
-                    domain_name,
-                    ipv6_address,
-                    aws_account_id,
-                    last_healed_at,
-                    updated_at,
-                    last_error,
-                    xboard_status,
-                    xboard_show,
-                    xboard_updated_at
-                FROM fleet_nodes
-                WHERE is_deleted = 0
-                ORDER BY updated_at DESC, id DESC
+                    n.xboard_node_id,
+                    n.node_name,
+                    n.node_type,
+                    COALESCE(
+                        (
+                            SELECT a.asset_type
+                            FROM fleet_asset_allocations AS alloc
+                            JOIN fleet_assets AS a ON a.id = alloc.asset_id
+                            WHERE alloc.xboard_node_id = n.xboard_node_id
+                            ORDER BY alloc.id DESC
+                            LIMIT 1
+                        ),
+                        CASE WHEN n.aws_account_id IS NULL THEN 'self_hosted' ELSE 'aws' END
+                    ) AS asset_type,
+                    n.aws_region,
+                    n.status,
+                    n.aws_instance_id,
+                    n.domain_name,
+                    n.ipv6_address,
+                    n.aws_account_id,
+                    n.last_healed_at,
+                    n.updated_at,
+                    n.last_error,
+                    n.xboard_status,
+                    n.xboard_show,
+                    n.xboard_updated_at
+                FROM fleet_nodes AS n
+                WHERE n.is_deleted = 0
+                ORDER BY n.updated_at DESC, n.id DESC
                 """
             ).fetchall()
         return [self._map_node_row(row) for row in rows]

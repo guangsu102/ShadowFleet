@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from database.state_models import FleetOperationLockRequest
 from database.state_repo import FleetNodeRecord
 from services.healing_models import AwsAccountBannedError, HealRequest, HealerServiceError, InstanceNotFoundError, ManualReviewRequiredError
+from services.monitor_support import infer_node_asset_type
 
 AWS_HEALABLE_PROTOCOLS = {"AnyTLS", "Trojan", "vless", "vmess"}
 SELF_HOSTED_PROXY_PROTOCOLS = {"Trojan", "vless", "vmess"}
@@ -43,14 +44,17 @@ def build_healing_context(request: HealRequest, node_record: FleetNodeRecord) ->
 def determine_heal_strategy(node_record: FleetNodeRecord, request: HealRequest) -> str:
     if request.force_strategy is not None:
         return request.force_strategy
-    if node_record.aws_account_id is not None and node_record.node_type in AWS_HEALABLE_PROTOCOLS:
+    asset_type = infer_node_asset_type(node_record)
+    if asset_type == "aws" and node_record.node_type in AWS_HEALABLE_PROTOCOLS:
         return "aws_ipv6_rotate"
-    if node_record.aws_account_id is None and node_record.node_type in SELF_HOSTED_PROXY_PROTOCOLS:
+    if asset_type == "self_hosted" and node_record.node_type in SELF_HOSTED_PROXY_PROTOCOLS:
         return "cloudflare_enable_proxy"
     return "manual_review_required"
 
 
 def ensure_aws_healing_eligible(node_record: FleetNodeRecord) -> None:
+    if infer_node_asset_type(node_record) != "aws":
+        raise ManualReviewRequiredError("AWS healing received a non-AWS node")
     if node_record.node_type not in AWS_HEALABLE_PROTOCOLS:
         raise ManualReviewRequiredError(
             f"AWS node type is not supported for IPv6 healing: {node_record.node_type}"
@@ -68,8 +72,8 @@ def ensure_aws_healing_eligible(node_record: FleetNodeRecord) -> None:
 
 
 def ensure_self_hosted_healing_eligible(node_record: FleetNodeRecord) -> None:
-    if node_record.aws_account_id is not None:
-        raise HealerServiceError("Self-hosted healing received an AWS-backed node")
+    if infer_node_asset_type(node_record) != "self_hosted":
+        raise HealerServiceError("Self-hosted healing received a non-self-hosted node")
     if node_record.node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
         raise ManualReviewRequiredError(
             f"Self-hosted node type is not supported for Cloudflare fallback: {node_record.node_type}"

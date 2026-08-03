@@ -44,6 +44,7 @@ class TestGetProtocolCapabilities:
         assert caps.requires_dns_record is True
         assert caps.supports_cdn_proxy is False
         assert "aws" in caps.supported_asset_providers
+        assert "digitalocean" in caps.supported_asset_providers
         assert "self_hosted" in caps.supported_asset_providers
         assert caps.enable_tfo is False
 

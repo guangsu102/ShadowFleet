@@ -174,6 +174,7 @@ class TestFleetAssetsSchema:
             "id", "asset_type", "asset_name", "status",
             "region", "aws_account_id", "ssh_host",
             "default_instance_type", "default_vcpu",
+            "provider_config_json",
             "created_at", "updated_at",
         }
         assert required.issubset(cols)
@@ -183,6 +184,7 @@ class TestFleetAssetsSchema:
         cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='fleet_assets'")
         ddl = cursor.fetchone()[0]
         assert "'aws'" in ddl
+        assert "'digitalocean'" in ddl
         assert "'self_hosted'" in ddl
 
 

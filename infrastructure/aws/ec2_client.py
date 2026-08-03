@@ -394,7 +394,7 @@ def _build_ec2_service_client(
         "connect_timeout": runtime_context.config.app.request_timeout_seconds,
         "read_timeout": runtime_context.config.app.request_timeout_seconds,
     }
-    proxies = build_aws_boto_proxies(runtime_context)
+    proxies = build_aws_boto_proxies(runtime_context, aws_region=aws_credential.region)
     if proxies is not None:
         kwargs["proxies"] = proxies
     return session.client("ec2", config=BotoConfig(**kwargs))

@@ -265,6 +265,52 @@ export interface SelfHostedAssetCreateRequest {
   memory_gb?: number | null
 }
 
+export interface DigitalOceanAssetCreateRequest {
+  asset_name: string
+  region: string
+  digitalocean_token: string
+  default_size?: string
+  default_image?: string
+  ssh_keys?: string[]
+  vpc_uuid?: string | null
+  tags?: string[]
+  remarks?: string | null
+  protocol_type?: string | null
+  additional_protocol_types?: string[]
+  target_count?: number
+  max_count?: number
+  priority?: number
+  allow_cdn_proxy?: boolean
+  default_vcpu?: number | null
+}
+
+export interface DigitalOceanImageInfo {
+  id: number | string | null
+  name: string | null
+  slug: string | null
+  distribution: string | null
+  regions: string[]
+}
+
+export interface DigitalOceanSizeInfo {
+  slug: string | null
+  memory: number | null
+  vcpus: number | null
+  disk: number | null
+  transfer: number | null
+  price_monthly: number | null
+  regions: string[]
+  available: boolean | null
+}
+
+export interface DigitalOceanImageQueryResponse {
+  images: DigitalOceanImageInfo[]
+}
+
+export interface DigitalOceanSizeQueryResponse {
+  sizes: DigitalOceanSizeInfo[]
+}
+
 // ============ Nodes ============
 export interface NodeResponse {
   xboard_node_id: number
@@ -528,6 +574,7 @@ export interface FleetSchedulerUpdateRequest {
   max_tasks_per_cycle?: number | null
   enabled_regions?: string[] | null
   enabled_protocols?: string[] | null
+  enabled_asset_types?: string[] | null
 }
 
 export interface ConfigValidateRequest {

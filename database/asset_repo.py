@@ -67,11 +67,12 @@ class AssetRepo:
                 default_architecture,
                 cpu_cores,
                 memory_gb,
+                provider_config_json,
                 remarks,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         parameters = (
             request.asset_type,
@@ -92,6 +93,7 @@ class AssetRepo:
             request.default_architecture.strip() if request.default_architecture else None,
             request.cpu_cores,
             request.memory_gb,
+            to_json_text(request.provider_config),
             request.remarks,
             timestamp,
             timestamp,

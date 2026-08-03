@@ -53,6 +53,7 @@ class AssetSelectionResult:
     current_allocated_vcpu: int
     target_count: int
     max_count: int
+    provider_config: dict[str, object] | None = None
 
 
 class AssetSelectorService:
@@ -137,11 +138,12 @@ class AssetSelectorService:
             current_allocated_vcpu=candidate.current_allocated_vcpu,
             target_count=protocol_config.target_count,
             max_count=protocol_config.max_count,
+            provider_config=asset.provider_config,
         )
 
     @staticmethod
     def _validate_request(request: AssetSelectionRequest) -> None:
-        if request.asset_type == "aws" and request.protocol_type == "Hysteria2":
-            raise AssetSelectionError("Hysteria2 is not allowed on AWS assets")
+        if request.asset_type in ("aws", "digitalocean") and request.protocol_type == "Hysteria2":
+            raise AssetSelectionError("Hysteria2 is not allowed on cloud assets")
         if request.require_cdn_proxy and request.protocol_type == "AnyTLS":
             raise AssetSelectionError("AnyTLS supports DNS linkage but must not use CDN proxy")

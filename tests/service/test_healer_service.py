@@ -33,6 +33,8 @@ def create_mock_node_record(
     status: FleetNodeStatus = "online",
 ) -> FleetNodeRecord:
     """Create a mock FleetNodeRecord."""
+    is_aws = asset_type == "aws"
+    is_digitalocean = asset_type == "digitalocean"
     return FleetNodeRecord(
         id=1,
         xboard_node_id=12345,
@@ -40,11 +42,11 @@ def create_mock_node_record(
         node_type=node_type,
         status=status,
         status_reason=None,
-        aws_account_id="test-aws-account" if asset_type == "aws" else None,
-        aws_region="ap-northeast-1" if asset_type == "aws" else None,
-        aws_instance_id="i-1234567890abcdef0" if asset_type == "aws" else None,
-        aws_subnet_id="subnet-1234567890abcdef0" if asset_type == "aws" else None,
-        aws_security_group_id="sg-1234567890abcdef0" if asset_type == "aws" else None,
+        aws_account_id="test-aws-account" if is_aws else "test-do-account" if is_digitalocean else None,
+        aws_region="ap-northeast-1" if is_aws else "sgp1" if is_digitalocean else None,
+        aws_instance_id="i-1234567890abcdef0" if is_aws else "do-droplet-123" if is_digitalocean else None,
+        aws_subnet_id="subnet-1234567890abcdef0" if is_aws else "do-vpc-123" if is_digitalocean else None,
+        aws_security_group_id="sg-1234567890abcdef0" if is_aws else None,
         cloudflare_record_id="cf-record-123",
         domain_name="sf-12345.example.com",
         ipv4_address=None,
@@ -58,6 +60,10 @@ def create_mock_node_record(
         offline_at=None,
         deleted_at=None,
         last_healed_at=None,
+        xboard_status=None,
+        xboard_show=None,
+        xboard_updated_at=None,
+        asset_type=asset_type,
     )
 
 
@@ -162,6 +168,16 @@ class TestDetermineHealStrategy:
         """Self-hosted AnyTLS node should require manual review (not in SELF_HOSTED_PROXY_PROTOCOLS)."""
         # AnyTLS is not in SELF_HOSTED_PROXY_PROTOCOLS, so it returns manual_review_required
         node = create_mock_node_record(asset_type="self_hosted", node_type="AnyTLS")
+        request = HealRequest(
+            xboard_node_id=12345,
+            reason="confirmed_blocked_by_gfw",
+        )
+        strategy = determine_heal_strategy(node, request)
+        assert strategy == "manual_review_required"
+
+    def test_digitalocean_node_returns_manual_review(self) -> None:
+        """DigitalOcean nodes should not use AWS IPv6 rotation."""
+        node = create_mock_node_record(asset_type="digitalocean", node_type="AnyTLS")
         request = HealRequest(
             xboard_node_id=12345,
             reason="confirmed_blocked_by_gfw",

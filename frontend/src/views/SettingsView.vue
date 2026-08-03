@@ -277,6 +277,7 @@ const schedulerCooldown = ref(60.0)
 const schedulerMaxTasks = ref(5)
 const schedulerEnabledRegions = ref<string[]>(['*'])
 const schedulerEnabledProtocols = ref<string[]>(['*'])
+const schedulerEnabledAssetTypes = ref<string[]>(['digitalocean', 'aws'])
 
 const regionListOptions: SelectOption[] = [
   { label: '全部区域 (*)', value: '*' },
@@ -292,6 +293,11 @@ const protocolListOptions: SelectOption[] = [
   { label: 'Hysteria2', value: 'Hysteria2' },
 ]
 
+const cloudAssetTypeOptions: SelectOption[] = [
+  { label: 'DigitalOcean', value: 'digitalocean' },
+  { label: 'AWS', value: 'aws' },
+]
+
 function buildFleetSchedulerForm() {
   if (!config.value) return
   const scheduler = config.value.fleet_scheduler ?? {}
@@ -301,6 +307,7 @@ function buildFleetSchedulerForm() {
   schedulerMaxTasks.value = (scheduler.max_tasks_per_cycle as number) ?? 5
   schedulerEnabledRegions.value = (scheduler.enabled_regions as string[]) ?? ['*']
   schedulerEnabledProtocols.value = (scheduler.enabled_protocols as string[]) ?? ['*']
+  schedulerEnabledAssetTypes.value = (scheduler.enabled_asset_types as string[]) ?? ['digitalocean', 'aws']
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +475,7 @@ async function saveFleetScheduler() {
       max_tasks_per_cycle: schedulerMaxTasks.value,
       enabled_regions: schedulerEnabledRegions.value,
       enabled_protocols: schedulerEnabledProtocols.value,
+      enabled_asset_types: schedulerEnabledAssetTypes.value,
     }
     await apiClient.put<FleetSchedulerUpdateRequest, never>('/config/fleet-scheduler', body)
     message.success(t('settings.schedulerSaved'))
@@ -768,6 +776,19 @@ onMounted(() => { fetchConfig() })
               style="width: 100%"
             />
             <NText depth="3" style="font-size: 11px; display:block; margin-top: 2px">{{ t('settings.schedulerEnabledProtocolsDesc') }}</NText>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr; gap: 16px; margin-bottom: 16px">
+          <div>
+            <NText depth="3" style="font-size: 12px; display:block; margin-bottom: 4px">{{ t('settings.schedulerEnabledAssetTypes') }}</NText>
+            <NSelect
+              v-model:value="schedulerEnabledAssetTypes"
+              :options="cloudAssetTypeOptions"
+              multiple
+              style="width: 100%"
+            />
+            <NText depth="3" style="font-size: 11px; display:block; margin-top: 2px">{{ t('settings.schedulerEnabledAssetTypesDesc') }}</NText>
           </div>
         </div>
 

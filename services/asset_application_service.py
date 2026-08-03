@@ -5,11 +5,13 @@ from database.asset_models import AssetCreateRequest, AssetEventCreateRequest, A
 from database.asset_repo import AssetRepo
 from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.aws.sts_client import StsClientError, resolve_aws_account_id
+from infrastructure.digitalocean import DigitalOceanClient
 from infrastructure.self_hosted.ssh_client import SelfHostedSshClient, SelfHostedSshConfig
 from models.aws_credentials import AwsCredentials
 from services.asset_application_models import (
     AssetRegistrationRequest,
     AssetRegistrationResult,
+    DigitalOceanAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
 )
 from services.runtime_service import RuntimeContext
@@ -134,6 +136,91 @@ class AssetApplicationService:
             protocol_config_id=first_protocol_config_id,
         )
 
+    def register_digitalocean_asset(
+        self,
+        request: DigitalOceanAssetRegistrationRequest,
+    ) -> AssetRegistrationResult:
+        self._validate_digitalocean_registration_request(request)
+
+        client = self._build_digitalocean_client(request.digitalocean_token)
+        account = client.validate_account()
+        account_id = self._normalize_optional_text(str(account.get("uuid") or "")) or "digitalocean"
+
+        tags = tuple(tag.strip() for tag in request.tags if tag and tag.strip())
+        provider_config: dict[str, object] = {
+            "ssh_keys": [key.strip() for key in request.ssh_keys if key and key.strip()],
+            "tags": list(dict.fromkeys(("shadowfleet", *tags))),
+        }
+        vpc_uuid = self._normalize_optional_text(request.vpc_uuid)
+        if vpc_uuid:
+            provider_config["vpc_uuid"] = vpc_uuid
+
+        asset_id = self._asset_repo.create_asset(
+            AssetCreateRequest(
+                asset_type="digitalocean",
+                asset_name=request.asset_name.strip(),
+                region=request.region.strip(),
+                aws_account_id=account_id,
+                aws_access_key=request.digitalocean_token.strip(),
+                default_instance_type=request.default_size.strip(),
+                default_vcpu=request.default_vcpu,
+                default_architecture="x64",
+                provider_config=provider_config,
+                remarks=self._normalize_optional_text(request.remarks),
+            )
+        )
+
+        all_protocol_types = [request.protocol_type] + list(request.additional_protocol_types)
+        all_protocol_types = [p for p in all_protocol_types if p]
+
+        first_protocol_config_id: int | None = None
+        for idx, proto_type in enumerate(all_protocol_types):
+            is_first = idx == 0
+            protocol_config_id = self._asset_repo.upsert_asset_protocol_config(
+                AssetProtocolConfigRequest(
+                    asset_id=asset_id,
+                    protocol_type=proto_type,
+                    target_count=request.target_count,
+                    max_count=request.max_count,
+                    priority=request.priority if is_first else request.priority + idx,
+                    allow_cdn_proxy=request.allow_cdn_proxy,
+                    instance_type=request.default_size.strip(),
+                    vcpu=request.default_vcpu,
+                    architecture="x64",
+                    ami_id=request.default_image.strip(),
+                    subnet_id=vpc_uuid,
+                )
+            )
+            if is_first:
+                first_protocol_config_id = protocol_config_id
+
+        self._asset_repo.create_asset_event(
+            AssetEventCreateRequest(
+                asset_id=asset_id,
+                event_type="asset_registered_from_dashboard",
+                correlation_id=self._runtime_context.correlation_id,
+                message="DigitalOcean asset registered from dashboard.",
+                payload={
+                    "asset_name": request.asset_name.strip(),
+                    "region": request.region.strip(),
+                    "account_id": account_id,
+                    "protocol_type": request.protocol_type,
+                },
+            )
+        )
+        self._logger.info(
+            "Registered DigitalOcean asset id=%s name=%s region=%s account_id=%s",
+            asset_id,
+            request.asset_name,
+            request.region,
+            account_id,
+        )
+        return AssetRegistrationResult(
+            asset_id=asset_id,
+            asset_name=request.asset_name.strip(),
+            protocol_config_id=first_protocol_config_id,
+        )
+
     @staticmethod
     def _validate_registration_request(request: AssetRegistrationRequest) -> None:
         if not request.asset_name or not request.asset_name.strip():
@@ -221,6 +308,24 @@ class AssetApplicationService:
         )
         return ec2_client.list_arm64_amis(name_filter=name_filter, limit=limit)
 
+    def query_digitalocean_images(
+        self,
+        digitalocean_token: str,
+        image_type: str = "distribution",
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        return self._build_digitalocean_client(digitalocean_token).list_images(
+            image_type=image_type,
+            per_page=limit,
+        )
+
+    def query_digitalocean_sizes(
+        self,
+        digitalocean_token: str,
+        limit: int = 200,
+    ) -> list[dict[str, object]]:
+        return self._build_digitalocean_client(digitalocean_token).list_sizes(per_page=limit)
+
     def _build_ec2_client(
         self,
         aws_account_id: str,
@@ -238,6 +343,35 @@ class AssetApplicationService:
             runtime_context=self._runtime_context,
             aws_credential=credential,
         )
+
+    def _build_digitalocean_client(self, digitalocean_token: str) -> DigitalOceanClient:
+        return DigitalOceanClient(
+            runtime_context=self._runtime_context,
+            api_token=digitalocean_token,
+        )
+
+    @staticmethod
+    def _validate_digitalocean_registration_request(
+        request: DigitalOceanAssetRegistrationRequest,
+    ) -> None:
+        if not request.asset_name or not request.asset_name.strip():
+            raise ValueError("资产名称不能为空")
+        if not request.region or not request.region.strip():
+            raise ValueError("区域不能为空")
+        if not request.digitalocean_token or not request.digitalocean_token.strip():
+            raise ValueError("DigitalOcean Token 不能为空")
+        if not request.default_size or not request.default_size.strip():
+            raise ValueError("DigitalOcean size 不能为空")
+        if not request.default_image or not request.default_image.strip():
+            raise ValueError("DigitalOcean image 不能为空")
+        if request.default_vcpu is not None and request.default_vcpu <= 0:
+            raise ValueError("默认 vCPU 必须大于 0")
+        if request.target_count < 0:
+            raise ValueError("target_count 不能小于 0")
+        if request.max_count < 0:
+            raise ValueError("max_count 不能小于 0")
+        if request.max_count > 0 and request.target_count > request.max_count:
+            raise ValueError("target_count 不能大于 max_count")
 
     @staticmethod
     def _validate_self_hosted_request(request: SelfHostedAssetRegistrationRequest) -> None:

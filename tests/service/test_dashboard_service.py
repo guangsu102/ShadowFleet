@@ -193,6 +193,72 @@ class TestDashboardServiceBuildSnapshot:
         assert snapshot.overview.healing_node_count == 1
         assert snapshot.overview.offline_or_failed_node_count == 2
 
+    def test_node_rows_use_allocated_asset_type(
+        self, in_memory_sqlite_db
+    ) -> None:
+        runtime_context = _make_runtime_context(in_memory_sqlite_db)
+        state_repo = StateRepo(runtime_context)
+        fleet_node_id = state_repo.create_node(
+            FleetNodeCreateRequest(
+                xboard_node_id=9090,
+                node_name="do-node",
+                node_type="AnyTLS",
+                status="online",
+                aws_account_id="do-account-uuid",
+                aws_region="sgp1",
+                aws_instance_id="do-droplet-9090",
+            )
+        )
+        timestamp = "2026-03-23T10:00:00Z"
+        cursor = in_memory_sqlite_db.execute(
+            """
+            INSERT INTO fleet_assets (
+                asset_type, asset_name, status, region, aws_account_id,
+                aws_access_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "digitalocean",
+                "do-sgp1",
+                "active",
+                "sgp1",
+                "do-account-uuid",
+                "dop_v1_test",
+                timestamp,
+                timestamp,
+            ),
+        )
+        asset_id = int(cursor.lastrowid)
+        in_memory_sqlite_db.execute(
+            """
+            INSERT INTO fleet_asset_allocations (
+                asset_id, fleet_node_id, xboard_node_id, protocol_type,
+                allocation_status, vcpu_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (asset_id, fleet_node_id, 9090, "AnyTLS", "allocated", 2, timestamp, timestamp),
+        )
+        in_memory_sqlite_db.commit()
+
+        mock_probe_repo = MagicMock()
+        mock_probe_repo.list_probes.return_value = []
+        mock_probe_repo.list_recent_measurements.return_value = []
+        mock_monitor_repo = MagicMock()
+        mock_monitor_repo.get_latest_cycle.return_value = None
+
+        with patch(
+            "services.dashboard_service.ProbeRepo", return_value=mock_probe_repo
+        ), patch(
+            "services.dashboard_service.MonitorRepo", return_value=mock_monitor_repo
+        ):
+            from services.dashboard_service import DashboardService
+
+            svc = DashboardService(runtime_context)
+            snapshot = svc.build_snapshot()
+
+        node_row = next(row for row in snapshot.node_rows if row.xboard_node_id == 9090)
+        assert node_row.asset_type == "digitalocean"
+
     def test_build_overview_survival_rate(self, in_memory_sqlite_db) -> None:
         runtime_context = _make_runtime_context(in_memory_sqlite_db)
         state_repo = StateRepo(runtime_context)

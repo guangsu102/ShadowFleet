@@ -101,11 +101,12 @@ cloudflare:
 # -----------------------------------------------------------------------------
 aws_proxy:
   enabled: false
-  provider: "decodo"
-  base_url: "https://api.decodo.com/v2"
+  provider: "evomi"
+  base_url: "https://api.evomi.com"
   authorization: null
   username: null
   password: null
+  api_key: null
   proxy_type: "residential_proxies"
   auth_type: "basic"
   session_type: "sticky"
@@ -116,6 +117,15 @@ aws_proxy:
   domain: "decodo.com"
   count: 1
   page: 1
+  # ------------------ Evomi 配置（provider=evomi 时使用） ------------------
+  # 建议 country 留空，系统会根据当前 AWS region 自动映射国家并强制校验
+  product: "rp"
+  protocol: "http"
+  country: null
+  region: null
+  city: null
+  session_id: null
+  adblock_enabled: false
 
 # =============================================================================
 # Xboard PostgreSQL 数据库连接配置 & V2bX 节点上报配置
@@ -156,3 +166,5 @@ fleet_scheduler:
   enabled_regions: ["*"]
   # 启用调度的协议列表（["*"] 表示所有协议）
   enabled_protocols: ["*"]
+  # 自动调度使用的云厂商顺序（当前支持 digitalocean、aws）
+  enabled_asset_types: ["digitalocean", "aws"]

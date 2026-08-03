@@ -306,3 +306,56 @@ class TestHealthCheckService:
             assert all(
                 isinstance(c, HealthCheckResult) for c in result.checks
             )
+
+    def test_check_sqlite_uses_runtime_sqlite_manager(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """Test SQLite readiness uses the runtime connection manager."""
+        mock_connection = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connection.cursor.return_value = mock_cursor
+        mock_ctx.sqlite_manager.connection.return_value.__enter__.return_value = (
+            mock_connection
+        )
+        service = HealthCheckService(mock_ctx)
+
+        result = service._check_sqlite()
+
+        assert result.status == "healthy"
+        mock_ctx.sqlite_manager.connection.assert_called_once()
+        mock_cursor.execute.assert_called_once_with("SELECT 1")
+        mock_cursor.fetchone.assert_called_once()
+
+    def test_check_xboard_postgres_uses_runtime_pool(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """Test PostgreSQL readiness uses the runtime db_pool."""
+        mock_cursor = MagicMock()
+        mock_ctx.db_pool.cursor.return_value.__enter__.return_value = mock_cursor
+        service = HealthCheckService(mock_ctx)
+
+        result = service._check_xboard_postgres()
+
+        assert result.status == "healthy"
+        mock_ctx.db_pool.cursor.assert_called_once()
+        mock_cursor.execute.assert_called_once_with("SELECT 1")
+        mock_cursor.fetchone.assert_called_once()
+
+    def test_check_cloudflare_api_uses_cf_client(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """Test Cloudflare readiness uses the current CFClient API."""
+        mock_ctx.config.cloudflare.enabled = True
+        service = HealthCheckService(mock_ctx)
+
+        with patch("infrastructure.cloudflare.cf_client.CFClient") as mock_cls:
+            mock_client = mock_cls.return_value
+
+            result = service._check_cloudflare_api()
+
+        assert result.status == "healthy"
+        mock_cls.assert_called_once_with(mock_ctx)
+        mock_client._request.assert_called_once_with(
+            method="GET",
+            endpoint="/user/tokens/verify",
+        )

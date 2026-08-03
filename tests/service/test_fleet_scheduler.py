@@ -12,6 +12,7 @@ from services.fleet_scheduler_models import (
     RegionProtocolGap,
     SchedulerCooldownTracker,
 )
+from services.asset_selector_service import AssetSelectionError
 from services.fleet_scheduler_service import FleetSchedulerService
 
 
@@ -31,10 +32,12 @@ def mock_runtime():
     mock_config.fleet_scheduler.max_tasks_per_cycle = 5
     mock_config.fleet_scheduler.enabled_regions = ["*"]
     mock_config.fleet_scheduler.enabled_protocols = ["*"]
+    mock_config.fleet_scheduler.enabled_asset_types = ["digitalocean", "aws"]
     mock_config.app.max_retries = 0
 
     mock_runtime = MagicMock()
     mock_runtime.config = mock_config
+    mock_runtime.config_holder = None
     mock_runtime.correlation_id = "test-correlation-id"
     mock_runtime.logger.getChild.return_value = MagicMock()
     return mock_runtime
@@ -130,6 +133,16 @@ class TestSchedulerCooldownTracker:
         backoff = tracker.get_backoff_seconds(key, base_cooldown=60.0, max_cooldown=300.0)
         assert backoff == 300.0
 
+    def test_backoff_large_failure_count_does_not_overflow(self):
+        """失败次数极大时应直接封顶，不应计算超大指数。"""
+        tracker = SchedulerCooldownTracker()
+        key = ("ap-northeast-1", "AnyTLS")
+        tracker.consecutive_failures[key] = 10000
+
+        backoff = tracker.get_backoff_seconds(key, base_cooldown=60.0, max_cooldown=300.0)
+
+        assert backoff == 300.0
+
 
 class TestGenerateUniqueNodeName:
     """测试节点名称生成"""
@@ -196,6 +209,63 @@ class TestRegionProtocolFiltering:
         service = FleetSchedulerService(mock_runtime)
         assert service._is_protocol_enabled("AnyTLS") == True
         assert service._is_protocol_enabled("Trojan") == False
+
+
+class TestCloudAssetSelection:
+    """测试自动调度选择云资产类型的顺序。"""
+
+    @staticmethod
+    def _gap() -> RegionProtocolGap:
+        return RegionProtocolGap(
+            region="sgp1",
+            protocol_type="AnyTLS",
+            desired_count=1,
+            min_alert_threshold=1,
+            current_online_count=0,
+            pending_provisioning_tasks=0,
+            deficit=1,
+            alert_level="critical",
+        )
+
+    def test_default_order_tries_digitalocean_before_aws(self, mock_runtime):
+        with patch("services.fleet_scheduler_service.StateRepo"), \
+             patch("services.fleet_scheduler_service.ProvisioningTaskRepo"), \
+             patch("services.fleet_scheduler_service.AssetRepo"), \
+             patch("services.fleet_scheduler_service.AssetSelectorService") as MockAssetSelector:
+
+            selector = MagicMock()
+            selector.select_asset.side_effect = [
+                AssetSelectionError("no digitalocean asset"),
+                "aws-selection",
+            ]
+            MockAssetSelector.return_value = selector
+
+            service = FleetSchedulerService(mock_runtime)
+            result = service._select_cloud_asset_for_gap(self._gap())
+
+        assert result == "aws-selection"
+        assert [call.args[0].asset_type for call in selector.select_asset.call_args_list] == [
+            "digitalocean",
+            "aws",
+        ]
+
+    def test_config_can_limit_scheduler_to_aws(self, mock_runtime):
+        mock_runtime.config.fleet_scheduler.enabled_asset_types = ["aws"]
+        with patch("services.fleet_scheduler_service.StateRepo"), \
+             patch("services.fleet_scheduler_service.ProvisioningTaskRepo"), \
+             patch("services.fleet_scheduler_service.AssetRepo"), \
+             patch("services.fleet_scheduler_service.AssetSelectorService") as MockAssetSelector:
+
+            selector = MagicMock()
+            selector.select_asset.return_value = "aws-selection"
+            MockAssetSelector.return_value = selector
+
+            service = FleetSchedulerService(mock_runtime)
+            result = service._select_cloud_asset_for_gap(self._gap())
+
+        assert result == "aws-selection"
+        selector.select_asset.assert_called_once()
+        assert selector.select_asset.call_args.args[0].asset_type == "aws"
 
 
 class TestRegionProtocolGap:

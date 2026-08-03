@@ -67,6 +67,7 @@ def make_node_record(
     status: str = "online",
     aws_account_id: str = "test-account",
     last_healed_at: str | None = None,
+    asset_type: str | None = None,
 ) -> MagicMock:
     record = MagicMock()
     record.id = xboard_node_id
@@ -81,6 +82,8 @@ def make_node_record(
     record.ipv6_address = "2600:1f14:804:as03:1234::"
     record.is_deleted = False
     record.last_healed_at = last_healed_at
+    if asset_type is not None:
+        record.asset_type = asset_type
     record.created_at = "2026-03-01T00:00:00Z"
     record.updated_at = "2026-03-01T00:00:00Z"
     return record
@@ -170,6 +173,22 @@ class TestMonitorSupportPureFunctions:
         candidate = to_monitor_candidate(record, xboard_runtime)
 
         assert candidate.asset_type == "self_hosted"
+
+    def test_to_monitor_candidate_uses_record_asset_type(self) -> None:
+        """Derived asset_type on FleetNodeRecord should override legacy AWS field inference."""
+        record = make_node_record(
+            xboard_node_id=7788,
+            aws_account_id="do-account-uuid",
+            asset_type="digitalocean",
+        )
+        xboard_runtime = MagicMock()
+        xboard_runtime.host = "sf-7788.example.com"
+        xboard_runtime.port = "443"
+        xboard_runtime.server_port = 443
+
+        candidate = to_monitor_candidate(record, xboard_runtime)
+
+        assert candidate.asset_type == "digitalocean"
 
     def test_utcnow_returns_utc_datetime(self) -> None:
         """utcnow() should return a timezone-aware UTC datetime."""

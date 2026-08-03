@@ -8,7 +8,7 @@ import time
 from database.asset_repo import AssetRepo
 from database.provisioning_task_repo import ProvisioningTaskCreateRequest, ProvisioningTaskRepo
 from database.state_repo import StateRepo
-from services.asset_selector_service import AssetSelectorService, AssetSelectionRequest
+from services.asset_selector_service import AssetSelectorService, AssetSelectionError, AssetSelectionRequest
 from services.fleet_scheduler_models import (
     RegionProtocolGap,
     SchedulerCooldownTracker,
@@ -321,14 +321,7 @@ class FleetSchedulerService:
     ) -> int | None:
         """Submit a provisioning task to fill a capacity gap."""
         try:
-            asset_result = self._asset_selector.select_asset(
-                AssetSelectionRequest(
-                    protocol_type=gap.protocol_type,
-                    asset_type="aws",
-                    region=gap.region,
-                    require_cdn_proxy=False,
-                )
-            )
+            asset_result = self._select_cloud_asset_for_gap(gap)
 
             node_name = self._generate_unique_node_name(gap.region, gap.protocol_type)
 
@@ -344,7 +337,7 @@ class FleetSchedulerService:
                 port="443",
                 server_port=443,
                 rate=Decimal("100"),
-                asset_type="aws",
+                asset_type=asset_result.asset_type,
                 region=gap.region,
                 require_cdn_proxy=False,
                 cert_mode="dns",
@@ -389,6 +382,37 @@ class FleetSchedulerService:
                 exc,
             )
             return None
+
+    def _select_cloud_asset_for_gap(self, gap: RegionProtocolGap):
+        last_error: AssetSelectionError | None = None
+        for asset_type in self._enabled_cloud_asset_types():
+            try:
+                return self._asset_selector.select_asset(
+                    AssetSelectionRequest(
+                        protocol_type=gap.protocol_type,
+                        asset_type=asset_type,
+                        region=gap.region,
+                        require_cdn_proxy=False,
+                    )
+                )
+            except AssetSelectionError as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise FleetSchedulerServiceError("No cloud asset types configured for scheduling")
+
+    def _enabled_cloud_asset_types(self) -> tuple[str, ...]:
+        configured = getattr(self._config, "enabled_asset_types", None)
+        if not isinstance(configured, (list, tuple)):
+            return ("digitalocean", "aws")
+
+        enabled: list[str] = []
+        for asset_type in configured:
+            if asset_type not in ("digitalocean", "aws"):
+                continue
+            if asset_type not in enabled:
+                enabled.append(asset_type)
+        return tuple(enabled)
 
     def _generate_unique_node_name(self, region: str, protocol_type: str) -> str:
         """Generate a unique node name for auto-provisioned nodes."""

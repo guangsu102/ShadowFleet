@@ -105,12 +105,13 @@ class HealthCheckService:
         try:
             start_time = time.time()
 
-            # 执行简单查询
-            from database.sqlite_connection import get_sqlite_connection
-            conn = get_sqlite_connection(self._runtime)
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
+            if self._runtime.sqlite_manager is None:
+                raise ValueError("SQLite connection manager is not initialized")
+
+            with self._runtime.sqlite_manager.connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
 
             response_time_ms = (time.time() - start_time) * 1000
 
@@ -135,15 +136,12 @@ class HealthCheckService:
         try:
             start_time = time.time()
 
-            # 执行简单查询
-            from database.xboard_repo import XboardRepo
-            xboard_repo = XboardRepo(self._runtime)
+            if self._runtime.db_pool is None:
+                raise ValueError("PostgreSQL connection pool is not initialized")
 
-            # 尝试查询一个简单的表
-            with xboard_repo._get_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("SELECT 1")
-                    cursor.fetchone()
+            with self._runtime.db_pool.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
 
             response_time_ms = (time.time() - start_time) * 1000
 
@@ -177,15 +175,13 @@ class HealthCheckService:
         try:
             start_time = time.time()
 
-            from infrastructure.cloudflare.cf_client import CloudflareClient
-            cf_client = CloudflareClient(self._runtime)
+            from infrastructure.cloudflare.cf_client import CFClient
+            cf_client = CFClient(self._runtime)
 
             # 尝试验证 API Token（轻量级操作）
-            cf_client._execute_cf_call(
-                operation_name="verify_token",
-                func=lambda: cf_client._session.get(
-                    f"{cf_client._base_url}/user/tokens/verify"
-                ),
+            cf_client._request(
+                method="GET",
+                endpoint="/user/tokens/verify",
             )
 
             response_time_ms = (time.time() - start_time) * 1000

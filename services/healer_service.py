@@ -18,7 +18,7 @@ from services.healing_support import (
     ensure_self_hosted_healing_eligible,
     get_duration_ms,
 )
-from services.monitor_support import is_in_heal_cooldown, utcnow
+from services.monitor_support import infer_node_asset_type, is_in_heal_cooldown, utcnow
 from services.runtime_service import RuntimeContext
 
 
@@ -39,6 +39,7 @@ class HealerService:
             )
 
         config = self._runtime_context.config.app
+        asset_type = infer_node_asset_type(node_record)
         if is_in_heal_cooldown(
             node_record,
             now_utc=utcnow(),
@@ -61,7 +62,7 @@ class HealerService:
                 xboard_node_id=node_record.xboard_node_id,
                 node_name=node_record.node_name,
                 node_type=node_record.node_type,
-                asset_type="aws" if node_record.aws_account_id is not None else "self_hosted",
+                asset_type=asset_type,
                 strategy="cooldown_blocked",
                 success=False,
                 old_ipv6_address=node_record.ipv6_address,
@@ -103,7 +104,7 @@ class HealerService:
                 xboard_node_id=node_record.xboard_node_id,
                 node_name=node_record.node_name,
                 node_type=node_record.node_type,
-                asset_type="aws" if node_record.aws_account_id is not None else "self_hosted",
+                asset_type=asset_type,
                 strategy="manual_review_required",
                 success=False,
                 old_ipv6_address=node_record.ipv6_address,
@@ -135,7 +136,7 @@ class HealerService:
                 xboard_node_id=node_record.xboard_node_id,
                 node_name=node_record.node_name,
                 node_type=node_record.node_type,
-                asset_type="aws" if node_record.aws_account_id is not None else "self_hosted",
+                asset_type=asset_type,
                 strategy=strategy,
                 success=False,
                 old_ipv6_address=node_record.ipv6_address,

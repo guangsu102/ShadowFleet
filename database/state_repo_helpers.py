@@ -17,6 +17,8 @@ def validate_create_request(request: FleetNodeCreateRequest) -> None:
 
 
 def map_fleet_node_record(row: sqlite3.Row) -> FleetNodeRecord:
+    keys = row.keys()
+    asset_type = row["asset_type"] if "asset_type" in keys else None
     return FleetNodeRecord(
         id=int(row["id"]),
         xboard_node_id=int(row["xboard_node_id"]),
@@ -42,9 +44,10 @@ def map_fleet_node_record(row: sqlite3.Row) -> FleetNodeRecord:
         offline_at=row["offline_at"],
         deleted_at=row["deleted_at"],
         last_healed_at=row["last_healed_at"],
-        xboard_status=row["xboard_status"],
-        xboard_show=row["xboard_show"],
-        xboard_updated_at=row["xboard_updated_at"],
+        xboard_status=row["xboard_status"] if "xboard_status" in keys else None,
+        xboard_show=row["xboard_show"] if "xboard_show" in keys else None,
+        xboard_updated_at=row["xboard_updated_at"] if "xboard_updated_at" in keys else None,
+        asset_type=str(asset_type) if asset_type else None,
     )
 
 

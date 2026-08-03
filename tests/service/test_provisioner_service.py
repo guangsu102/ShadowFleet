@@ -207,7 +207,7 @@ class TestAssetTypeValidation:
 
     def test_all_supported_asset_types(self) -> None:
         """All asset types should be valid."""
-        asset_types: list[AssetType] = ["aws", "self_hosted"]
+        asset_types: list[AssetType] = ["aws", "digitalocean", "self_hosted"]
         for asset_type in asset_types:
             request = ProvisionRequest(
                 protocol_type="Trojan",

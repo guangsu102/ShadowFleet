@@ -29,7 +29,21 @@ import {
 } from 'naive-ui'
 import type { SelectOption, DataTableColumns } from 'naive-ui'
 import apiClient from '@/api/client'
-import type { AssetResponse, AWSAssetCreateRequest, SelfHostedAssetCreateRequest, AmiQueryResponse, AmiInfo } from '@/types/api'
+import type {
+  AssetResponse,
+  AWSAssetCreateRequest,
+  SelfHostedAssetCreateRequest,
+  DigitalOceanAssetCreateRequest,
+  DigitalOceanImageInfo,
+  DigitalOceanImageQueryResponse,
+  DigitalOceanSizeInfo,
+  DigitalOceanSizeQueryResponse,
+  AmiQueryResponse,
+  AmiInfo,
+} from '@/types/api'
+
+type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'self_hosted'
+type AssetModalTab = 'aws' | 'digitalocean' | 'self'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function statusTagType(status: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
@@ -60,6 +74,33 @@ function maskAccountId(id: string | null): string {
   return id.slice(0, 4) + '...'
 }
 
+function assetTypeLabel(assetType: string): string {
+  if (assetType === 'aws') return 'AWS'
+  if (assetType === 'digitalocean') return 'DO'
+  if (assetType === 'self_hosted') return '自建'
+  return assetType
+}
+
+function assetTypeTagType(assetType: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
+  if (assetType === 'aws') return 'info'
+  if (assetType === 'digitalocean') return 'success'
+  if (assetType === 'self_hosted') return 'warning'
+  return 'default'
+}
+
+function modalTitle(tab: AssetModalTab): string {
+  if (tab === 'aws') return '新增 AWS 资产'
+  if (tab === 'digitalocean') return '新增 DigitalOcean 资产'
+  return '新增自建资产'
+}
+
+function splitList(raw: string): string[] {
+  return raw
+    .split(/[\n,，]+/)
+    .map(value => value.trim())
+    .filter(Boolean)
+}
+
 // ── State ──────────────────────────────────────────────────────────────────────
 const message = useMessage()
 const dialog = useDialog()
@@ -69,12 +110,13 @@ const loading = ref(true)
 const errorMsg = ref<string | null>(null)
 const selectedAssetIds = ref<number[]>([])
 const batchDeleting = ref(false)
+const activeAssetFilter = ref<AssetFilter>('all')
 
 // ── Modal ──────────────────────────────────────────────────────────────────────
 const showModal = ref(false)
-const modalTab = ref<'aws' | 'self'>('aws')
+const modalTab = ref<AssetModalTab>('aws')
 
-function openModal(tab: 'aws' | 'self' = 'aws') {
+function openModal(tab: AssetModalTab = 'aws') {
   modalTab.value = tab
   showModal.value = true
 }
@@ -142,7 +184,12 @@ async function batchDeleteAssets() {
 
 // ── Computed: filtered assets ─────────────────────────────────────────────────
 const awsAssets  = computed(() => assets.value.filter(a => a.asset_type === 'aws'))
+const digitalOceanAssets = computed(() => assets.value.filter(a => a.asset_type === 'digitalocean'))
 const selfAssets = computed(() => assets.value.filter(a => a.asset_type === 'self_hosted'))
+const filteredAssets = computed(() => {
+  if (activeAssetFilter.value === 'all') return assets.value
+  return assets.value.filter(a => a.asset_type === activeAssetFilter.value)
+})
 
 // ── Table columns ──────────────────────────────────────────────────────────────
 function buildColumns(onDelete: (asset: AssetResponse) => void): DataTableColumns<AssetResponse> {
@@ -154,8 +201,8 @@ function buildColumns(onDelete: (asset: AssetResponse) => void): DataTableColumn
     { title: 'Name', key: 'asset_name', ellipsis: { tooltip: true } },
     {
       title: 'Type', key: 'asset_type', width: 80,
-      render: (row) => h(NTag, { size: 'small', type: row.asset_type === 'aws' ? 'info' : 'warning' },
-        { default: () => row.asset_type === 'aws' ? 'AWS' : '自建' }),
+      render: (row) => h(NTag, { size: 'small', type: assetTypeTagType(row.asset_type) },
+        { default: () => assetTypeLabel(row.asset_type) }),
     },
     { title: 'Region', key: 'region', render: (r) => r.region ?? '—' },
     {
@@ -163,7 +210,7 @@ function buildColumns(onDelete: (asset: AssetResponse) => void): DataTableColumn
       render: (row) => h(NTag, { type: statusTagType(row.status), size: 'small' },
         { default: () => row.status }),
     },
-    { title: 'AWS Account', key: 'aws_account_id', render: (row) => maskAccountId(row.aws_account_id) },
+    { title: 'Provider Account', key: 'aws_account_id', render: (row) => maskAccountId(row.aws_account_id) },
     {
       title: 'vCPU', key: 'account_total_vcpu', width: 70,
       render: (r) => r.account_total_vcpu ?? r.cpu_cores ?? '—',
@@ -400,6 +447,182 @@ async function fetchAccountId() {
   }
 }
 
+// ── DigitalOcean Registration Form ────────────────────────────────────────────
+const digitalOceanForm = ref({
+  asset_name: '',
+  region: 'sgp1',
+  digitalocean_token: '',
+  default_size: 's-2vcpu-2gb',
+  default_image: 'ubuntu-24-04-x64',
+  ssh_keys_raw: '',
+  vpc_uuid: '',
+  tags_raw: 'shadowfleet',
+  remarks: '',
+  protocol_types: ['AnyTLS'] as string[],
+  target_count: 1,
+  max_count: 0,
+  priority: 100,
+  allow_cdn_proxy: false,
+  default_vcpu: 2 as number | null,
+})
+
+const digitalOceanRegions: SelectOption[] = [
+  { label: '纽约 1 (nyc1)', value: 'nyc1' },
+  { label: '纽约 3 (nyc3)', value: 'nyc3' },
+  { label: '旧金山 3 (sfo3)', value: 'sfo3' },
+  { label: '阿姆斯特丹 3 (ams3)', value: 'ams3' },
+  { label: '新加坡 (sgp1)', value: 'sgp1' },
+  { label: '伦敦 (lon1)', value: 'lon1' },
+  { label: '法兰克福 (fra1)', value: 'fra1' },
+  { label: '多伦多 (tor1)', value: 'tor1' },
+  { label: '班加罗尔 (blr1)', value: 'blr1' },
+  { label: '悉尼 (syd1)', value: 'syd1' },
+]
+
+const digitalOceanProtocolOptions = awsProtocolOptions
+const submittingDigitalOcean = ref(false)
+const queryingDigitalOceanImages = ref(false)
+const queryingDigitalOceanSizes = ref(false)
+const digitalOceanImageResults = ref<DigitalOceanImageInfo[]>([])
+const digitalOceanSizeResults = ref<DigitalOceanSizeInfo[]>([])
+const digitalOceanCatalogError = ref<string | null>(null)
+
+function resetDigitalOceanForm() {
+  digitalOceanForm.value = {
+    asset_name: '',
+    region: 'sgp1',
+    digitalocean_token: '',
+    default_size: 's-2vcpu-2gb',
+    default_image: 'ubuntu-24-04-x64',
+    ssh_keys_raw: '',
+    vpc_uuid: '',
+    tags_raw: 'shadowfleet',
+    remarks: '',
+    protocol_types: ['AnyTLS'],
+    target_count: 1,
+    max_count: 0,
+    priority: 100,
+    allow_cdn_proxy: false,
+    default_vcpu: 2,
+  }
+  digitalOceanImageResults.value = []
+  digitalOceanSizeResults.value = []
+  digitalOceanCatalogError.value = null
+}
+
+function requireDigitalOceanToken(): boolean {
+  if (!digitalOceanForm.value.digitalocean_token.trim()) {
+    message.warning('请先填写 DigitalOcean Token')
+    return false
+  }
+  return true
+}
+
+async function queryDigitalOceanImages() {
+  if (!requireDigitalOceanToken()) return
+  queryingDigitalOceanImages.value = true
+  digitalOceanCatalogError.value = null
+  digitalOceanImageResults.value = []
+  try {
+    const { data } = await apiClient.post<DigitalOceanImageQueryResponse>('/assets/digitalocean/query-images', {
+      digitalocean_token: digitalOceanForm.value.digitalocean_token,
+      limit: 80,
+    })
+    digitalOceanImageResults.value = data.images.filter(image => image.slug || image.id)
+    if (digitalOceanImageResults.value.length === 0) {
+      message.info('未查询到可用镜像')
+    }
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string }; message?: string } }
+    digitalOceanCatalogError.value = e.response?.data?.error || e.response?.data?.detail || '镜像查询失败'
+    message.error(digitalOceanCatalogError.value)
+  } finally {
+    queryingDigitalOceanImages.value = false
+  }
+}
+
+async function queryDigitalOceanSizes() {
+  if (!requireDigitalOceanToken()) return
+  queryingDigitalOceanSizes.value = true
+  digitalOceanCatalogError.value = null
+  digitalOceanSizeResults.value = []
+  try {
+    const { data } = await apiClient.post<DigitalOceanSizeQueryResponse>('/assets/digitalocean/query-sizes', {
+      digitalocean_token: digitalOceanForm.value.digitalocean_token,
+      limit: 200,
+    })
+    digitalOceanSizeResults.value = data.sizes.filter(size =>
+      Boolean(size.slug) &&
+      size.available !== false &&
+      (!size.regions.length || size.regions.includes(digitalOceanForm.value.region))
+    )
+    if (digitalOceanSizeResults.value.length === 0) {
+      message.info('当前区域未查询到可用规格')
+    }
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string }; message?: string } }
+    digitalOceanCatalogError.value = e.response?.data?.error || e.response?.data?.detail || '规格查询失败'
+    message.error(digitalOceanCatalogError.value)
+  } finally {
+    queryingDigitalOceanSizes.value = false
+  }
+}
+
+function selectDigitalOceanImage(image: DigitalOceanImageInfo) {
+  const imageId = image.slug || String(image.id)
+  digitalOceanForm.value.default_image = imageId
+  digitalOceanImageResults.value = []
+  message.success(`已选择镜像: ${image.name || imageId}`)
+}
+
+function selectDigitalOceanSize(size: DigitalOceanSizeInfo) {
+  if (!size.slug) return
+  digitalOceanForm.value.default_size = size.slug
+  digitalOceanForm.value.default_vcpu = size.vcpus ?? digitalOceanForm.value.default_vcpu
+  digitalOceanSizeResults.value = []
+  message.success(`已选择规格: ${size.slug}`)
+}
+
+async function submitDigitalOceanForm() {
+  if (!digitalOceanForm.value.asset_name.trim()) { message.warning('请填写资产名称'); return }
+  if (!digitalOceanForm.value.region)            { message.warning('请选择 Region'); return }
+  if (!digitalOceanForm.value.digitalocean_token.trim()) { message.warning('请填写 DigitalOcean Token'); return }
+  if (!digitalOceanForm.value.default_size.trim())       { message.warning('请填写 Droplet Size'); return }
+  if (!digitalOceanForm.value.default_image.trim())      { message.warning('请填写镜像 Slug'); return }
+
+  submittingDigitalOcean.value = true
+  try {
+    const body: DigitalOceanAssetCreateRequest = {
+      asset_name: digitalOceanForm.value.asset_name.trim(),
+      region: digitalOceanForm.value.region,
+      digitalocean_token: digitalOceanForm.value.digitalocean_token.trim(),
+      default_size: digitalOceanForm.value.default_size.trim(),
+      default_image: digitalOceanForm.value.default_image.trim(),
+      ssh_keys: splitList(digitalOceanForm.value.ssh_keys_raw),
+      vpc_uuid: digitalOceanForm.value.vpc_uuid || undefined,
+      tags: splitList(digitalOceanForm.value.tags_raw),
+      remarks: digitalOceanForm.value.remarks || undefined,
+      protocol_type: digitalOceanForm.value.protocol_types[0] ?? null,
+      additional_protocol_types: digitalOceanForm.value.protocol_types.slice(1),
+      target_count: digitalOceanForm.value.target_count,
+      max_count: digitalOceanForm.value.max_count,
+      priority: digitalOceanForm.value.priority,
+      allow_cdn_proxy: digitalOceanForm.value.allow_cdn_proxy,
+      default_vcpu: digitalOceanForm.value.default_vcpu ?? undefined,
+    }
+    await apiClient.post<AssetResponse>('/assets/digitalocean', body)
+    message.success('DigitalOcean 资产注册成功')
+    closeModal()
+    resetDigitalOceanForm()
+    await fetchAssets()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string; message?: string }; message?: string } }
+    message.error(e.response?.data?.error || e.response?.data?.detail || e.response?.data?.message || '注册失败')
+  } finally {
+    submittingDigitalOcean.value = false
+  }
+}
+
 // ── Self-Hosted Registration Form ──────────────────────────────────────────────
 const selfForm = ref({
   asset_name: '',
@@ -512,7 +735,7 @@ onMounted(fetchAssets)
     <div class="page-header">
       <div class="header-left">
         <h1 class="page-title">账号与资产池</h1>
-        <p class="page-subtitle">管理 AWS 账号与自建资产，统一调度节点配额与协议</p>
+        <p class="page-subtitle">管理 AWS、DigitalOcean 与自建资产，统一调度节点配额与协议</p>
       </div>
       <div class="header-right">
         <NSpace>
@@ -541,6 +764,10 @@ onMounted(fetchAssets)
         <div class="stat-value">{{ awsAssets.length }}</div>
         <div class="stat-label">AWS 资产</div>
       </div>
+      <div class="stat-card stat-do">
+        <div class="stat-value">{{ digitalOceanAssets.length }}</div>
+        <div class="stat-label">DO 资产</div>
+      </div>
       <div class="stat-card stat-self">
         <div class="stat-value">{{ selfAssets.length }}</div>
         <div class="stat-label">自建资产</div>
@@ -564,17 +791,34 @@ onMounted(fetchAssets)
         <!-- ── Filter Tabs ────────────────────────────────────────────────── -->
         <div class="tab-bar">
           <button
-            class="tab-btn active"
-            @click="() => {}"
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'all' }"
+            @click="activeAssetFilter = 'all'"
           >
             全部
             <span class="tab-badge">{{ assets.length }}</span>
           </button>
-          <button class="tab-btn">
+          <button
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'aws' }"
+            @click="activeAssetFilter = 'aws'"
+          >
             AWS
             <span class="tab-badge tab-badge-aws">{{ awsAssets.length }}</span>
           </button>
-          <button class="tab-btn">
+          <button
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'digitalocean' }"
+            @click="activeAssetFilter = 'digitalocean'"
+          >
+            DigitalOcean
+            <span class="tab-badge tab-badge-do">{{ digitalOceanAssets.length }}</span>
+          </button>
+          <button
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'self_hosted' }"
+            @click="activeAssetFilter = 'self_hosted'"
+          >
             自建
             <span class="tab-badge tab-badge-self">{{ selfAssets.length }}</span>
           </button>
@@ -583,7 +827,7 @@ onMounted(fetchAssets)
         <!-- ── Data Table ──────────────────────────────────────────────────── -->
         <NDataTable
           :columns="allColumns"
-          :data="assets"
+          :data="filteredAssets"
           :bordered="false"
           :single-line="false"
           size="small"
@@ -601,7 +845,7 @@ onMounted(fetchAssets)
       preset="card"
       class="asset-modal"
       :style="{ width: '860px', maxWidth: '95vw' }"
-      :title="modalTab === 'aws' ? '新增 AWS 资产' : '新增自建资产'"
+      :title="modalTitle(modalTab)"
       :mask-closable="false"
       :segmented="{ content: true, footer: 'soft' }"
     >
@@ -757,6 +1001,190 @@ onMounted(fetchAssets)
           </div>
         </NTabPane>
 
+        <!-- ── DigitalOcean Tab ───────────────────────────────────────────── -->
+        <NTabPane name="digitalocean" tab="DigitalOcean 资产">
+          <div class="modal-form">
+            <NForm label-placement="left" label-width="140" size="medium">
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="资产名称" required>
+                    <NInput v-model:value="digitalOceanForm.asset_name" placeholder="my-do-sgp1-01" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Region" required>
+                    <NSelect v-model:value="digitalOceanForm.region" :options="digitalOceanRegions" placeholder="选择 Region" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="DO Token" required>
+                    <NInput
+                      v-model:value="digitalOceanForm.digitalocean_token"
+                      type="password"
+                      placeholder="dop_v1_..."
+                      show-password-on="click"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="备注">
+                    <NInput v-model:value="digitalOceanForm.remarks" type="textarea" placeholder="可选备注信息" :rows="2" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>Droplet 配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="Size" required>
+                    <NSpace vertical>
+                      <NSpace>
+                        <NInput v-model:value="digitalOceanForm.default_size" placeholder="s-2vcpu-2gb" style="width: 220px" />
+                        <NButton :loading="queryingDigitalOceanSizes" @click="queryDigitalOceanSizes" :disabled="!digitalOceanForm.digitalocean_token">
+                          查询规格
+                        </NButton>
+                      </NSpace>
+                      <NAlert
+                        v-if="digitalOceanSizeResults.length > 0"
+                        type="info"
+                        title="可用规格"
+                        style="margin-top: 4px"
+                      >
+                        <NSpace vertical>
+                          <div
+                            v-for="size in digitalOceanSizeResults"
+                            :key="String(size.slug)"
+                            class="choice-row"
+                            @click="selectDigitalOceanSize(size)"
+                          >
+                            <NText strong style="font-size: 12px">{{ size.slug }}</NText>
+                            <NText depth="3" style="font-size: 11px; margin-left: 8px">
+                              {{ size.vcpus ?? '—' }} vCPU / {{ size.memory ?? '—' }} MB / ${{ size.price_monthly ?? '—' }}
+                            </NText>
+                          </div>
+                        </NSpace>
+                      </NAlert>
+                    </NSpace>
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="默认 vCPU">
+                    <NInputNumber v-model:value="digitalOceanForm.default_vcpu" :min="1" :max="256" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Image Slug" required>
+                    <NSpace vertical>
+                      <NSpace>
+                        <NInput v-model:value="digitalOceanForm.default_image" placeholder="ubuntu-24-04-x64" style="width: 300px" />
+                        <NButton :loading="queryingDigitalOceanImages" @click="queryDigitalOceanImages" :disabled="!digitalOceanForm.digitalocean_token">
+                          查询镜像
+                        </NButton>
+                      </NSpace>
+                      <NAlert
+                        v-if="digitalOceanCatalogError"
+                        type="error"
+                        :title="digitalOceanCatalogError"
+                        style="margin-top: 4px"
+                        closable
+                        @close="digitalOceanCatalogError = null"
+                      />
+                      <NAlert
+                        v-if="digitalOceanImageResults.length > 0"
+                        type="info"
+                        title="可用镜像"
+                        style="margin-top: 4px"
+                      >
+                        <NSpace vertical>
+                          <div
+                            v-for="image in digitalOceanImageResults"
+                            :key="String(image.slug || image.id)"
+                            class="choice-row"
+                            @click="selectDigitalOceanImage(image)"
+                          >
+                            <NText strong style="font-size: 12px">{{ image.name || image.slug || image.id }}</NText>
+                            <NText depth="3" style="font-size: 11px; margin-left: 8px">{{ image.slug || image.id }}</NText>
+                            <NText depth="3" style="font-size: 11px; display: block">{{ image.distribution || '' }}</NText>
+                          </div>
+                        </NSpace>
+                      </NAlert>
+                    </NSpace>
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>协议与容量配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="2">
+                  <NFormItem label="协议类型">
+                    <NCheckboxGroup v-model:value="digitalOceanForm.protocol_types">
+                      <NSpace>
+                        <NCheckbox v-for="opt in digitalOceanProtocolOptions" :key="String(opt.value)" :value="opt.value" :label="String(opt.label)" />
+                      </NSpace>
+                    </NCheckboxGroup>
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="目标节点数">
+                    <NInputNumber v-model:value="digitalOceanForm.target_count" :min="1" :max="9999" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="最大节点数">
+                    <NInputNumber v-model:value="digitalOceanForm.max_count" :min="0" :max="9999" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="优先级">
+                    <NInputNumber v-model:value="digitalOceanForm.priority" :min="1" :max="1000" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="允许 CDN Proxy">
+                    <NSwitch v-model:value="digitalOceanForm.allow_cdn_proxy" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NCollapse>
+                <NCollapseItem title="网络与标签配置（可选）" name="do-network">
+                  <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                    <NGi span="1">
+                      <NFormItem label="VPC UUID">
+                        <NInput v-model:value="digitalOceanForm.vpc_uuid" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="1">
+                      <NFormItem label="Tags">
+                        <NInput v-model:value="digitalOceanForm.tags_raw" placeholder="shadowfleet, prod" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="2">
+                      <NFormItem label="SSH Keys">
+                        <NInput
+                          v-model:value="digitalOceanForm.ssh_keys_raw"
+                          type="textarea"
+                          placeholder="fingerprint 或 key id，逗号/换行分隔"
+                          :rows="3"
+                        />
+                      </NFormItem>
+                    </NGi>
+                  </NGrid>
+                </NCollapseItem>
+              </NCollapse>
+            </NForm>
+
+            <div class="modal-footer">
+              <NSpace>
+                <NButton @click="closeModal">取消</NButton>
+                <NButton type="primary" :loading="submittingDigitalOcean" @click="submitDigitalOceanForm">
+                  注册 DigitalOcean 资产
+                </NButton>
+              </NSpace>
+            </div>
+          </div>
+        </NTabPane>
+
         <!-- ── Self-Hosted Tab ───────────────────────────────────────────── -->
         <NTabPane name="self" tab="自建资产">
           <div class="modal-form">
@@ -803,7 +1231,7 @@ onMounted(fetchAssets)
                       <NInput
                         v-model:value="selfForm.ssh_private_key"
                         type="textarea"
-                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                        placeholder="Paste OpenSSH private key here"
                         :rows="6"
                         style="font-family: monospace; font-size: 12px"
                       />
@@ -967,6 +1395,7 @@ onMounted(fetchAssets)
 }
 
 .stat-aws .stat-value  { color: #f59e0b; }
+.stat-do .stat-value   { color: #0080ff; }
 .stat-self .stat-value { color: #8b5cf6; }
 .stat-active .stat-value { color: #10b981; }
 .stat-full .stat-value  { color: #f97316; }
@@ -1037,11 +1466,22 @@ onMounted(fetchAssets)
 }
 
 .tab-badge-aws  { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+.tab-badge-do   { background: rgba(0, 128, 255, 0.1); color: #0080ff; }
 .tab-badge-self { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
 
 /* ── Table ──────────────────────────────────────────────────────────────────── */
 .assets-table {
   font-size: 13px;
+}
+
+.choice-row {
+  cursor: pointer;
+  padding: 4px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.choice-row:hover {
+  background: rgba(0, 0, 0, 0.03);
 }
 
 /* ── Modal Form ─────────────────────────────────────────────────────────────── */

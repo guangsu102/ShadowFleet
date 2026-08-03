@@ -82,7 +82,10 @@ def in_memory_sqlite_db() -> Generator[sqlite3.Connection, None, None]:
             online_at TEXT,
             offline_at TEXT,
             deleted_at TEXT,
-            last_healed_at TEXT
+            last_healed_at TEXT,
+            xboard_status TEXT,
+            xboard_show INTEGER,
+            xboard_updated_at TEXT
         )
     """)
     cursor.execute("CREATE INDEX idx_fleet_nodes_status ON fleet_nodes (status)")
@@ -128,7 +131,7 @@ def in_memory_sqlite_db() -> Generator[sqlite3.Connection, None, None]:
     cursor.execute("""
         CREATE TABLE fleet_assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'self_hosted')),
+            asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'digitalocean', 'self_hosted')),
             asset_name TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active','full','banned','offline','deploying')),
@@ -147,6 +150,7 @@ def in_memory_sqlite_db() -> Generator[sqlite3.Connection, None, None]:
             default_architecture TEXT,
             cpu_cores INTEGER,
             memory_gb REAL,
+            provider_config_json TEXT,
             remarks TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL

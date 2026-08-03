@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import math
 from typing import Literal
 
 
@@ -44,8 +45,15 @@ class SchedulerCooldownTracker:
         failures = self.consecutive_failures.get(key, 0)
         if failures <= 1:
             return base_cooldown
-        backoff = min(base_cooldown * (2 ** (failures - 1)), max_cooldown)
-        return backoff
+        if base_cooldown >= max_cooldown:
+            return max_cooldown
+
+        max_exponent = math.ceil(math.log2(max_cooldown / base_cooldown))
+        exponent = failures - 1
+        if exponent >= max_exponent:
+            return max_cooldown
+
+        return min(base_cooldown * (2 ** exponent), max_cooldown)
 
 
 @dataclass(frozen=True)

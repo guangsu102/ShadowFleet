@@ -274,14 +274,15 @@ class AwsProxyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    provider: Literal["decodo"] = "decodo"
-    base_url: str = "https://api.decodo.com/v2"
+    provider: Literal["decodo", "evomi"] = "evomi"
+    base_url: str = "https://api.evomi.com"
     authorization: str | None = None
     username: str | None = None
     password: str | None = None
+    api_key: str | None = None
     proxy_type: str = "residential_proxies"
     auth_type: Literal["basic", "whitelist"] = "basic"
-    session_type: Literal["sticky", "random"] = "sticky"
+    session_type: Literal["sticky", "random", "hard"] = "sticky"
     session_duration_minutes: int = Field(default=10, alias="session_duration")
     location: str = "random"
     output_format: str = "protocol:auth@endpoint"
@@ -289,16 +290,28 @@ class AwsProxyConfig(BaseModel):
     domain: str = "decodo.com"
     count: int = 1
     page: int = 1
+    product: Literal["rp", "rpc"] = "rp"
+    protocol: Literal["http", "https", "socks5"] = "http"
+    country: str | None = None
+    region: str | None = None
+    city: str | None = None
+    session_id: str | None = None
+    adblock_enabled: bool = False
 
     @field_validator(
         "base_url",
         "authorization",
         "username",
         "password",
+        "api_key",
         "proxy_type",
         "location",
         "output_format",
         "domain",
+        "country",
+        "region",
+        "city",
+        "session_id",
     )
     @classmethod
     def validate_optional_non_empty_string(cls, value: str | None) -> str | None:
@@ -315,15 +328,53 @@ class AwsProxyConfig(BaseModel):
             raise ValueError("aws_proxy numeric settings must be greater than 0")
         return value
 
+    @field_validator("country")
+    @classmethod
+    def normalize_country(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip().upper()
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized.isalnum() or not 6 <= len(normalized) <= 10:
+            raise ValueError("aws_proxy.session_id must be 6-10 alphanumeric characters")
+        return normalized
+
     @model_validator(mode="after")
     def validate_enabled_credentials(self) -> "AwsProxyConfig":
-        if self.enabled:
+        if not self.enabled:
+            return self
+
+        if self.provider == "decodo":
             if self.authorization is None:
                 raise ValueError("aws_proxy.authorization is required when aws_proxy.enabled is true")
             if self.username is None:
                 raise ValueError("aws_proxy.username is required when aws_proxy.enabled is true")
             if self.password is None:
                 raise ValueError("aws_proxy.password is required when aws_proxy.enabled is true")
+            if self.session_type == "hard":
+                raise ValueError("aws_proxy.session_type=hard is only supported for provider=evomi")
+            return self
+
+        if self.api_key is None:
+            raise ValueError("aws_proxy.api_key is required when aws_proxy.provider is evomi")
+        if self.adblock_enabled and self.product != "rp":
+            raise ValueError("aws_proxy.adblock_enabled is only supported for aws_proxy.product=rp")
+        if self.protocol == "socks5":
+            raise ValueError("aws_proxy.protocol=socks5 is not supported for AWS SDK proxying")
+        if self.region is not None and self.country is None:
+            raise ValueError("aws_proxy.country is required when aws_proxy.region is configured")
+        if self.city is not None and self.country is None:
+            raise ValueError("aws_proxy.country is required when aws_proxy.city is configured")
+        if self.session_type == "hard" and self.session_duration_minutes != 10:
+            raise ValueError("aws_proxy.session_duration must not be customized when session_type=hard")
+        if self.session_duration_minutes > 120:
+            raise ValueError("aws_proxy.session_duration must be less than or equal to 120")
         return self
 
 
@@ -412,6 +463,9 @@ class FleetSchedulerConfig(BaseModel):
     max_tasks_per_cycle: int = 5
     enabled_regions: list[str] = Field(default_factory=lambda: ["*"])
     enabled_protocols: list[str] = Field(default_factory=lambda: ["*"])
+    enabled_asset_types: list[Literal["digitalocean", "aws"]] = Field(
+        default_factory=lambda: ["digitalocean", "aws"]
+    )
     default_group_ids: list[int] = Field(default_factory=list)
 
     @field_validator("poll_interval_seconds", "cooldown_seconds")
@@ -427,6 +481,14 @@ class FleetSchedulerConfig(BaseModel):
         if v <= 0:
             raise ValueError("max_tasks_per_cycle must be at least 1")
         return v
+
+    @field_validator("enabled_asset_types")
+    @classmethod
+    def validate_enabled_asset_types(cls, v: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(item.strip() for item in v if item and item.strip()))
+        if not normalized:
+            raise ValueError("enabled_asset_types must not be empty")
+        return normalized
 
 
 class AppConfig(BaseModel):

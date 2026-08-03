@@ -42,6 +42,21 @@ __all__ = [
     "StateRepoError",
 ]
 
+NODE_SELECT_COLUMNS = """
+    n.*,
+    COALESCE(
+        (
+            SELECT a.asset_type
+            FROM fleet_asset_allocations AS alloc
+            JOIN fleet_assets AS a ON a.id = alloc.asset_id
+            WHERE alloc.xboard_node_id = n.xboard_node_id
+            ORDER BY alloc.id DESC
+            LIMIT 1
+        ),
+        CASE WHEN n.aws_account_id IS NULL THEN 'self_hosted' ELSE 'aws' END
+    ) AS asset_type
+"""
+
 
 class StateRepo:
     def __init__(self, runtime_context: RuntimeContext) -> None:
@@ -132,7 +147,11 @@ class StateRepo:
         return node_id
 
     def get_node_by_xboard_node_id(self, xboard_node_id: int) -> FleetNodeRecord | None:
-        sql = "SELECT * FROM fleet_nodes WHERE xboard_node_id = ?"
+        sql = f"""
+            SELECT {NODE_SELECT_COLUMNS}
+            FROM fleet_nodes AS n
+            WHERE n.xboard_node_id = ?
+        """
         with self._sqlite_manager.connection() as connection:
             row = connection.execute(sql, (xboard_node_id,)).fetchone()
         if row is None:
@@ -147,7 +166,11 @@ class StateRepo:
         return row is not None
 
     def get_node_by_node_name(self, node_name: str) -> FleetNodeRecord | None:
-        sql = "SELECT * FROM fleet_nodes WHERE node_name = ? AND is_deleted = 0"
+        sql = f"""
+            SELECT {NODE_SELECT_COLUMNS}
+            FROM fleet_nodes AS n
+            WHERE n.node_name = ? AND n.is_deleted = 0
+        """
         with self._sqlite_manager.connection() as connection:
             row = connection.execute(sql, (node_name.strip(),)).fetchone()
         if row is None:
@@ -186,16 +209,16 @@ class StateRepo:
     ) -> list[FleetNodeRecord]:
         if not aws_account_id or not aws_account_id.strip():
             raise ValueError("aws_account_id must not be empty")
-        conditions = ["aws_account_id = ?"]
+        conditions = ["n.aws_account_id = ?"]
         parameters: list[object] = [aws_account_id.strip()]
         if not include_deleted:
-            conditions.append("is_deleted = 0")
+            conditions.append("n.is_deleted = 0")
         where_clause = " AND ".join(conditions)
         sql = f"""
-            SELECT *
-            FROM fleet_nodes
+            SELECT {NODE_SELECT_COLUMNS}
+            FROM fleet_nodes AS n
             WHERE {where_clause}
-            ORDER BY id ASC
+            ORDER BY n.id ASC
         """
         with self._sqlite_manager.connection() as connection:
             rows = connection.execute(sql, tuple(parameters)).fetchall()
@@ -204,13 +227,13 @@ class StateRepo:
     def list_monitorable_nodes(self) -> list[FleetNodeRecord]:
         with self._sqlite_manager.connection() as connection:
             rows = connection.execute(
-                """
-                SELECT *
-                FROM fleet_nodes
-                WHERE is_deleted = 0
-                  AND status IN ('online', 'offline')
-                  AND (xboard_status IS NULL OR xboard_status != 'online')
-                ORDER BY id ASC
+                f"""
+                SELECT {NODE_SELECT_COLUMNS}
+                FROM fleet_nodes AS n
+                WHERE n.is_deleted = 0
+                  AND n.status IN ('online', 'offline')
+                  AND (n.xboard_status IS NULL OR n.xboard_status != 'online')
+                ORDER BY n.id ASC
                 """
             ).fetchall()
         return [map_fleet_node_record(row) for row in rows]
@@ -463,7 +486,12 @@ class StateRepo:
 
     def list_active_nodes(self) -> list[FleetNodeRecord]:
         """List all active (non-deleted) nodes from local SQLite."""
-        sql = "SELECT * FROM fleet_nodes WHERE is_deleted = 0 ORDER BY id ASC"
+        sql = f"""
+            SELECT {NODE_SELECT_COLUMNS}
+            FROM fleet_nodes AS n
+            WHERE n.is_deleted = 0
+            ORDER BY n.id ASC
+        """
         with self._sqlite_manager.connection() as connection:
             rows = connection.execute(sql).fetchall()
         return [map_fleet_node_record(row) for row in rows]
@@ -521,7 +549,11 @@ class StateRepo:
 
     def get_deleted_node_by_xboard_id(self, xboard_node_id: int) -> FleetNodeRecord | None:
         """Get a deleted node by xboard_node_id (including deleted nodes)."""
-        sql = "SELECT * FROM fleet_nodes WHERE xboard_node_id = ? AND is_deleted = 1"
+        sql = f"""
+            SELECT {NODE_SELECT_COLUMNS}
+            FROM fleet_nodes AS n
+            WHERE n.xboard_node_id = ? AND n.is_deleted = 1
+        """
         with self._sqlite_manager.connection() as connection:
             row = connection.execute(sql, (xboard_node_id,)).fetchone()
         if row is None:
@@ -562,22 +594,24 @@ class StateRepo:
             已删除且有域名的节点列表
         """
         if protocol_type:
-            sql = """
-                SELECT * FROM fleet_nodes
-                WHERE status = 'deleted'
-                AND domain_name IS NOT NULL
-                AND domain_name != ''
-                AND node_type = ?
-                ORDER BY deleted_at DESC
+            sql = f"""
+                SELECT {NODE_SELECT_COLUMNS}
+                FROM fleet_nodes AS n
+                WHERE n.status = 'deleted'
+                AND n.domain_name IS NOT NULL
+                AND n.domain_name != ''
+                AND n.node_type = ?
+                ORDER BY n.deleted_at DESC
             """
             params = (protocol_type,)
         else:
-            sql = """
-                SELECT * FROM fleet_nodes
-                WHERE status = 'deleted'
-                AND domain_name IS NOT NULL
-                AND domain_name != ''
-                ORDER BY deleted_at DESC
+            sql = f"""
+                SELECT {NODE_SELECT_COLUMNS}
+                FROM fleet_nodes AS n
+                WHERE n.status = 'deleted'
+                AND n.domain_name IS NOT NULL
+                AND n.domain_name != ''
+                ORDER BY n.deleted_at DESC
             """
             params = ()
 
@@ -592,11 +626,12 @@ class StateRepo:
         Returns:
             所有有域名的节点列表
         """
-        sql = """
-            SELECT * FROM fleet_nodes
-            WHERE domain_name IS NOT NULL
-            AND domain_name != ''
-            ORDER BY created_at DESC
+        sql = f"""
+            SELECT {NODE_SELECT_COLUMNS}
+            FROM fleet_nodes AS n
+            WHERE n.domain_name IS NOT NULL
+            AND n.domain_name != ''
+            ORDER BY n.created_at DESC
         """
         with self._sqlite_manager.connection() as connection:
             rows = connection.execute(sql).fetchall()

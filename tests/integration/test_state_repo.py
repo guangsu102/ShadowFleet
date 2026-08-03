@@ -145,6 +145,57 @@ class TestStateRepoGetNode:
         assert result.xboard_node_id == 2001
         assert result.node_name == "get-test-node"
 
+    def test_get_node_derives_asset_type_from_allocation(self, in_memory_sqlite_db) -> None:
+        """Allocated DigitalOcean nodes should expose asset_type='digitalocean'."""
+        runtime_context = create_mock_runtime_context(in_memory_sqlite_db)
+        repo = StateRepo(runtime_context)
+        fleet_node_id = repo.create_node(
+            FleetNodeCreateRequest(
+                xboard_node_id=2002,
+                node_name="do-node",
+                node_type="AnyTLS",
+                status="online",
+                aws_account_id="do-account-uuid",
+                aws_region="sgp1",
+                aws_instance_id="do-droplet-2002",
+            )
+        )
+        timestamp = "2026-03-23T10:00:00Z"
+        cursor = in_memory_sqlite_db.execute(
+            """
+            INSERT INTO fleet_assets (
+                asset_type, asset_name, status, region, aws_account_id,
+                aws_access_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "digitalocean",
+                "do-sgp1",
+                "active",
+                "sgp1",
+                "do-account-uuid",
+                "dop_v1_test",
+                timestamp,
+                timestamp,
+            ),
+        )
+        asset_id = int(cursor.lastrowid)
+        in_memory_sqlite_db.execute(
+            """
+            INSERT INTO fleet_asset_allocations (
+                asset_id, fleet_node_id, xboard_node_id, protocol_type,
+                allocation_status, vcpu_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (asset_id, fleet_node_id, 2002, "AnyTLS", "allocated", 2, timestamp, timestamp),
+        )
+        in_memory_sqlite_db.commit()
+
+        result = repo.get_node_by_xboard_node_id(2002)
+
+        assert result is not None
+        assert result.asset_type == "digitalocean"
+
     def test_get_nonexistent_node(self, in_memory_sqlite_db) -> None:
         """Should return None for non-existent node."""
         runtime_context = create_mock_runtime_context(in_memory_sqlite_db)

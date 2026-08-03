@@ -19,6 +19,7 @@ ENVIRONMENT_OVERRIDE_MAP: dict[str, tuple[str, ...]] = {
     "SHADOWFLEET_AWS_PROXY_AUTHORIZATION": ("aws_proxy", "authorization"),
     "SHADOWFLEET_AWS_PROXY_USERNAME": ("aws_proxy", "username"),
     "SHADOWFLEET_AWS_PROXY_PASSWORD": ("aws_proxy", "password"),
+    "SHADOWFLEET_AWS_PROXY_API_KEY": ("aws_proxy", "api_key"),
     "SHADOWFLEET_XBOARD_PASSWORD": ("xboard", "password"),
     "SHADOWFLEET_SENTINEL_PROBE_API_BASE_URL": ("app", "sentinel_probe_api_base_url"),
     "SHADOWFLEET_SENTINEL_PROBE_API_TOKEN": ("app", "sentinel_probe_api_token"),
@@ -90,6 +91,7 @@ def sanitize_config_for_logging(config: AppConfig) -> dict[str, Any]:
     aws_proxy_config["authorization"] = _mask_secret(aws_proxy_config.get("authorization"))
     aws_proxy_config["username"] = _mask_secret(aws_proxy_config.get("username"))
     aws_proxy_config["password"] = _mask_secret(aws_proxy_config.get("password"))
+    aws_proxy_config["api_key"] = _mask_secret(aws_proxy_config.get("api_key"))
 
     xboard_config = sanitized_config.get("xboard")
     if isinstance(xboard_config, dict):

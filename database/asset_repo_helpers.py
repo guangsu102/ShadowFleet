@@ -7,6 +7,7 @@ import sqlite3
 from database.asset_models import (
     AWS_SUPPORTED_PROTOCOLS,
     CDN_PROXY_SUPPORTED_PROTOCOLS,
+    DIGITALOCEAN_SUPPORTED_PROTOCOLS,
     DNS_REQUIRED_PROTOCOLS,
     SELF_HOSTED_SUPPORTED_PROTOCOLS,
     AssetCreateRequest,
@@ -29,6 +30,11 @@ def validate_asset_request(request: AssetCreateRequest) -> None:
             raise ValueError("aws_access_key is required for aws assets")
         if not request.aws_secret_key or not request.aws_secret_key.strip():
             raise ValueError("aws_secret_key is required for aws assets")
+    if request.asset_type == "digitalocean":
+        if not request.region or not request.region.strip():
+            raise ValueError("region is required for digitalocean assets")
+        if not request.aws_access_key or not request.aws_access_key.strip():
+            raise ValueError("digitalocean_token is required for digitalocean assets")
     if request.asset_type == "self_hosted":
         if not request.ssh_host or not request.ssh_host.strip():
             raise ValueError("ssh_host is required for self_hosted assets")
@@ -60,9 +66,12 @@ def validate_protocol_config_request(
     if request.vcpu is not None and request.vcpu <= 0:
         raise ValueError("vcpu must be greater than 0")
 
-    supported_protocols = (
-        AWS_SUPPORTED_PROTOCOLS if asset.asset_type == "aws" else SELF_HOSTED_SUPPORTED_PROTOCOLS
-    )
+    if asset.asset_type == "aws":
+        supported_protocols = AWS_SUPPORTED_PROTOCOLS
+    elif asset.asset_type == "digitalocean":
+        supported_protocols = DIGITALOCEAN_SUPPORTED_PROTOCOLS
+    else:
+        supported_protocols = SELF_HOSTED_SUPPORTED_PROTOCOLS
     if request.protocol_type not in supported_protocols:
         raise ValueError(
             f"Protocol {request.protocol_type} is not supported by asset type {asset.asset_type}"
@@ -100,6 +109,9 @@ def map_asset_record(row: sqlite3.Row) -> AssetRecord:
         default_architecture=row["default_architecture"],
         cpu_cores=row["cpu_cores"],
         memory_gb=row["memory_gb"],
+        provider_config=from_json_text(
+            row["provider_config_json"] if "provider_config_json" in row.keys() else None
+        ),
         remarks=row["remarks"],
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
@@ -158,6 +170,15 @@ def to_json_text(value: dict[str, object] | list[object] | str | int | float | b
     if value is None:
         return None
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+
+
+def from_json_text(value: str | None) -> dict[str, object] | None:
+    if value is None or not value.strip():
+        return None
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("provider_config_json must be a JSON object")
+    return parsed
 
 
 def utcnow_iso() -> str:

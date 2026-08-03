@@ -79,6 +79,7 @@ class FleetNodeRecord:
     xboard_status: str | None
     xboard_show: bool | None
     xboard_updated_at: str | None
+    asset_type: str | None = None
 
 
 @dataclass(frozen=True)

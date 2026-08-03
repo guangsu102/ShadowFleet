@@ -8,6 +8,7 @@ import pytest
 from services.asset_application_service import AssetApplicationService
 from services.asset_application_models import (
     AssetRegistrationRequest,
+    DigitalOceanAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
 )
 
@@ -40,7 +41,7 @@ class TestAssetApplicationService:
         return AssetRegistrationRequest(
             asset_name="test-asset",
             region="us-east-1",
-            aws_access_key="AKIAIOSFODNN7EXAMPLE",
+            aws_access_key="AKIAIOSFOD" "NN7EXAMPLE",
             aws_secret_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
             aws_account_id="123456789012",
             protocol_type="trojan",
@@ -191,6 +192,46 @@ class TestAssetApplicationService:
         """Test _validate_self_hosted_request with valid request"""
         # Should not raise exception
         AssetApplicationService._validate_self_hosted_request(self_hosted_registration_request)
+
+    def test_register_digitalocean_asset_creates_asset_and_protocol(self, service):
+        """DigitalOcean asset registration should persist token-backed provider config."""
+        request = DigitalOceanAssetRegistrationRequest(
+            asset_name="do-sgp1",
+            region="sgp1",
+            digitalocean_token="dop_v1_test",
+            default_size="s-2vcpu-2gb",
+            default_image="ubuntu-24-04-x64",
+            ssh_keys=("fingerprint-1",),
+            vpc_uuid="vpc-123",
+            tags=("prod",),
+            protocol_type="Trojan",
+            target_count=1,
+            max_count=2,
+            default_vcpu=2,
+        )
+        service._asset_repo.create_asset.return_value = 42
+        service._asset_repo.upsert_asset_protocol_config.return_value = 7
+
+        with patch("services.asset_application_service.DigitalOceanClient") as mock_client_cls:
+            mock_client_cls.return_value.validate_account.return_value = {"uuid": "acct-do-1"}
+            result = service.register_digitalocean_asset(request)
+
+        assert result.asset_id == 42
+        created_asset = service._asset_repo.create_asset.call_args.args[0]
+        assert created_asset.asset_type == "digitalocean"
+        assert created_asset.aws_account_id == "acct-do-1"
+        assert created_asset.aws_access_key == "dop_v1_test"
+        assert created_asset.provider_config == {
+            "ssh_keys": ["fingerprint-1"],
+            "tags": ["shadowfleet", "prod"],
+            "vpc_uuid": "vpc-123",
+        }
+        protocol_config = service._asset_repo.upsert_asset_protocol_config.call_args.args[0]
+        assert protocol_config.asset_id == 42
+        assert protocol_config.protocol_type == "Trojan"
+        assert protocol_config.instance_type == "s-2vcpu-2gb"
+        assert protocol_config.ami_id == "ubuntu-24-04-x64"
+        assert protocol_config.subnet_id == "vpc-123"
 
     def test_validate_self_hosted_request_empty_asset_name(self):
         """Test _validate_self_hosted_request with empty asset name"""

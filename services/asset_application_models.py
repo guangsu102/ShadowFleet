@@ -49,6 +49,26 @@ class AssetRegistrationResult:
 
 
 @dataclass(frozen=True)
+class DigitalOceanAssetRegistrationRequest:
+    asset_name: str
+    region: str
+    digitalocean_token: str
+    default_size: str = "s-2vcpu-2gb"
+    default_image: str = "ubuntu-24-04-x64"
+    ssh_keys: tuple[str, ...] = ()
+    vpc_uuid: str | None = None
+    tags: tuple[str, ...] = ()
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: tuple[str, ...] = ()
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = None
+
+
+@dataclass(frozen=True)
 class SelfHostedAssetRegistrationRequest:
     """Request model for registering self-hosted (自建) assets."""
     asset_name: str

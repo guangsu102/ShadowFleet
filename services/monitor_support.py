@@ -6,6 +6,13 @@ from database.state_repo import FleetNodeRecord
 from services.monitor_models import MonitorCandidate, XboardSentinelNodeRuntime
 
 
+def infer_node_asset_type(node_record: FleetNodeRecord) -> str:
+    asset_type = getattr(node_record, "asset_type", None)
+    if isinstance(asset_type, str) and asset_type.strip():
+        return asset_type.strip()
+    return "aws" if node_record.aws_account_id is not None else "self_hosted"
+
+
 def to_monitor_candidate(
     node_record: FleetNodeRecord,
     xboard_runtime: XboardSentinelNodeRuntime,
@@ -14,7 +21,7 @@ def to_monitor_candidate(
         xboard_node_id=node_record.xboard_node_id,
         node_name=node_record.node_name,
         node_type=node_record.node_type,
-        asset_type="aws" if node_record.aws_account_id is not None else "self_hosted",
+        asset_type=infer_node_asset_type(node_record),
         domain_name=node_record.domain_name,
         host=xboard_runtime.host,
         port=xboard_runtime.port,

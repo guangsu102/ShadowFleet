@@ -62,6 +62,7 @@ class FleetSchedulerUpdateRequest(BaseModel):
     max_tasks_per_cycle: int | None = None
     enabled_regions: list[str] | None = None
     enabled_protocols: list[str] | None = None
+    enabled_asset_types: list[str] | None = None
 
 
 class AppUpdateRequest(BaseModel):
@@ -178,6 +179,7 @@ async def update_fleet_scheduler(
         "max_tasks_per_cycle": request.max_tasks_per_cycle,
         "enabled_regions": request.enabled_regions,
         "enabled_protocols": request.enabled_protocols,
+        "enabled_asset_types": request.enabled_asset_types,
     }
     for key, value in fields.items():
         if value is not None:

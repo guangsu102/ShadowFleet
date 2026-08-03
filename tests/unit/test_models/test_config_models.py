@@ -10,6 +10,7 @@ from models.config_models import (
     AppConfig,
     AwsProxyConfig,
     CloudflareConfig,
+    FleetSchedulerConfig,
     FleetProtocolConfig,
     LoggingConfig,
     TelegramConfig,
@@ -147,23 +148,85 @@ class TestAwsProxyConfig:
         """Disabled proxy should have defaults."""
         config = AwsProxyConfig(enabled=False)
         assert config.enabled is False
-        assert config.provider == "decodo"
-        assert config.base_url == "https://api.decodo.com/v2"
+        assert config.provider == "evomi"
+        assert config.base_url == "https://api.evomi.com"
 
     def test_enabled_requires_authorization(self) -> None:
         """Enabled proxy requires authorization."""
         with pytest.raises(ValidationError, match="aws_proxy.authorization"):
-            AwsProxyConfig(enabled=True, username="user", password="pass")
+            AwsProxyConfig(enabled=True, provider="decodo", username="user", password="pass")
 
     def test_enabled_requires_username(self) -> None:
         """Enabled proxy requires username."""
         with pytest.raises(ValidationError, match="aws_proxy.username"):
-            AwsProxyConfig(enabled=True, authorization="auth", password="pass")
+            AwsProxyConfig(enabled=True, provider="decodo", authorization="auth", password="pass")
 
     def test_enabled_requires_password(self) -> None:
         """Enabled proxy requires password."""
         with pytest.raises(ValidationError, match="aws_proxy.password"):
-            AwsProxyConfig(enabled=True, authorization="auth", username="user")
+            AwsProxyConfig(enabled=True, provider="decodo", authorization="auth", username="user")
+
+    def test_evomi_requires_api_key(self) -> None:
+        """Evomi proxy requires api_key."""
+        with pytest.raises(ValidationError, match="aws_proxy.api_key"):
+            AwsProxyConfig(enabled=True, provider="evomi")
+
+    def test_evomi_valid_config(self) -> None:
+        """Evomi proxy config should validate with supported settings."""
+        config = AwsProxyConfig(
+            enabled=True,
+            provider="evomi",
+            api_key="evomi-key",
+            session_type="sticky",
+            session_duration=30,
+            adblock_enabled=True,
+            product="rp",
+        )
+        assert config.provider == "evomi"
+        assert config.api_key == "evomi-key"
+        assert config.session_duration_minutes == 30
+
+    def test_evomi_country_normalized(self) -> None:
+        """Evomi country code should normalize to uppercase."""
+        config = AwsProxyConfig(
+            enabled=True,
+            provider="evomi",
+            api_key="evomi-key",
+            country="us",
+        )
+        assert config.country == "US"
+
+    def test_evomi_region_requires_country(self) -> None:
+        """Evomi region targeting requires a country."""
+        with pytest.raises(ValidationError, match="aws_proxy.country"):
+            AwsProxyConfig(
+                enabled=True,
+                provider="evomi",
+                api_key="evomi-key",
+                region="california",
+            )
+
+    def test_evomi_adblock_requires_rp(self) -> None:
+        """Evomi adblock is only supported for RP product."""
+        with pytest.raises(ValidationError, match="aws_proxy.adblock_enabled"):
+            AwsProxyConfig(
+                enabled=True,
+                provider="evomi",
+                api_key="evomi-key",
+                product="rpc",
+                adblock_enabled=True,
+            )
+
+    def test_evomi_hard_session_disallows_custom_duration(self) -> None:
+        """Hard session should not accept a custom lifetime."""
+        with pytest.raises(ValidationError, match="aws_proxy.session_duration"):
+            AwsProxyConfig(
+                enabled=True,
+                provider="evomi",
+                api_key="evomi-key",
+                session_type="hard",
+                session_duration=30,
+            )
 
 
 class TestXboardDatabaseConfig:
@@ -209,6 +272,22 @@ class TestFleetProtocolConfig:
         """min_alert_threshold > desired_count should raise."""
         with pytest.raises(ValidationError, match="min_alert_threshold must not exceed"):
             FleetProtocolConfig(desired_count=5, min_alert_threshold=10)
+
+
+class TestFleetSchedulerConfig:
+    """Tests for FleetSchedulerConfig model."""
+
+    def test_default_asset_types_include_digitalocean_then_aws(self) -> None:
+        config = FleetSchedulerConfig()
+        assert config.enabled_asset_types == ["digitalocean", "aws"]
+
+    def test_enabled_asset_types_rejects_empty_list(self) -> None:
+        with pytest.raises(ValidationError, match="enabled_asset_types"):
+            FleetSchedulerConfig(enabled_asset_types=[])
+
+    def test_enabled_asset_types_rejects_unknown_provider(self) -> None:
+        with pytest.raises(ValidationError, match="enabled_asset_types"):
+            FleetSchedulerConfig(enabled_asset_types=["aws", "gcp"])
 
 
 class TestAppConfig:

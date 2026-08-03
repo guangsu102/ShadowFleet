@@ -5,7 +5,11 @@ from pydantic import BaseModel, Field
 
 from api.auth.dependencies import get_current_user, require_operator
 from api.deps import get_runtime_context
-from services.asset_application_models import AssetRegistrationRequest, SelfHostedAssetRegistrationRequest
+from services.asset_application_models import (
+    AssetRegistrationRequest,
+    DigitalOceanAssetRegistrationRequest,
+    SelfHostedAssetRegistrationRequest,
+)
 from services.asset_application_service import AssetApplicationService
 from services.dashboard_service import DashboardService
 from services.runtime_service import RuntimeContext
@@ -78,6 +82,25 @@ class SelfHostedAssetCreateRequest(BaseModel):
     priority: int = 100
     cpu_cores: int | None = None
     memory_gb: float | None = None
+
+
+class DigitalOceanAssetCreateRequest(BaseModel):
+    asset_name: str = Field(..., min_length=1, max_length=128)
+    region: str = Field(..., min_length=1)
+    digitalocean_token: str = Field(..., min_length=1)
+    default_size: str = Field(default="s-2vcpu-2gb", min_length=1)
+    default_image: str = Field(default="ubuntu-24-04-x64", min_length=1)
+    ssh_keys: list[str] = Field(default_factory=list)
+    vpc_uuid: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: list[str] = Field(default_factory=list)
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = None
 
 
 def _to_response(row: AssetHealthRow) -> AssetResponse:
@@ -167,6 +190,45 @@ async def register_self_hosted_asset(
     return AssetResponse(asset_id=result.asset_id, asset_name=result.asset_name, asset_type="self_hosted", region=request.region, status="active")
 
 
+@router.post("/digitalocean", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
+async def register_digitalocean_asset(
+    request: DigitalOceanAssetCreateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> AssetResponse:
+    service = AssetApplicationService(ctx)
+    try:
+        result = service.register_digitalocean_asset(
+            DigitalOceanAssetRegistrationRequest(
+                asset_name=request.asset_name,
+                region=request.region,
+                digitalocean_token=request.digitalocean_token,
+                default_size=request.default_size,
+                default_image=request.default_image,
+                ssh_keys=tuple(request.ssh_keys),
+                vpc_uuid=request.vpc_uuid,
+                tags=tuple(request.tags),
+                remarks=request.remarks,
+                protocol_type=request.protocol_type,
+                additional_protocol_types=tuple(request.additional_protocol_types),
+                target_count=request.target_count,
+                max_count=request.max_count,
+                priority=request.priority,
+                allow_cdn_proxy=request.allow_cdn_proxy,
+                default_vcpu=request.default_vcpu,
+            )
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return AssetResponse(
+        asset_id=result.asset_id,
+        asset_name=result.asset_name,
+        asset_type="digitalocean",
+        region=request.region,
+        status="active",
+    )
+
+
 @router.get("/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     asset_id: int,
@@ -183,8 +245,8 @@ async def get_asset(
         region=asset.region,
         status=asset.status,
         aws_account_id=asset.aws_account_id,
-        aws_access_key=asset.aws_access_key,
-        aws_secret_key=asset.aws_secret_key,
+        aws_access_key=asset.aws_access_key if asset.asset_type == "aws" else None,
+        aws_secret_key=asset.aws_secret_key if asset.asset_type == "aws" else None,
         account_total_vcpu=asset.account_total_vcpu,
         allocated_count=0,
         target_count=0,
@@ -308,6 +370,11 @@ class AmiQueryRequest(BaseModel):
     limit: int = 30
 
 
+class DigitalOceanCatalogRequest(BaseModel):
+    digitalocean_token: str = Field(..., min_length=1)
+    limit: int = 100
+
+
 @router.post("/query-amis")
 async def query_amis(
     request: AmiQueryRequest,
@@ -341,6 +408,74 @@ async def query_amis(
             for a in amis
         ],
     }
+
+
+@router.post("/digitalocean/query-images")
+async def query_digitalocean_images(
+    request: DigitalOceanCatalogRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> dict[str, object]:
+    service = AssetApplicationService(ctx)
+    try:
+        images = service.query_digitalocean_images(
+            digitalocean_token=request.digitalocean_token,
+            limit=request.limit,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"DigitalOcean image query failed: {e}",
+        ) from e
+
+    return {
+        "images": [
+            {
+                "id": image.get("id"),
+                "name": image.get("name"),
+                "slug": image.get("slug"),
+                "distribution": image.get("distribution"),
+                "regions": image.get("regions", []),
+            }
+            for image in images
+        ]
+    }
+
+
+@router.post("/digitalocean/query-sizes")
+async def query_digitalocean_sizes(
+    request: DigitalOceanCatalogRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> dict[str, object]:
+    service = AssetApplicationService(ctx)
+    try:
+        sizes = service.query_digitalocean_sizes(
+            digitalocean_token=request.digitalocean_token,
+            limit=request.limit,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"DigitalOcean size query failed: {e}",
+        ) from e
+
+    return {
+        "sizes": [
+            {
+                "slug": size.get("slug"),
+                "memory": size.get("memory"),
+                "vcpus": size.get("vcpus"),
+                "disk": size.get("disk"),
+                "transfer": size.get("transfer"),
+                "price_monthly": size.get("price_monthly"),
+                "regions": size.get("regions", []),
+                "available": size.get("available"),
+            }
+            for size in sizes
+        ]
+    }
+
 
 
 class HardwareProbeRequest(BaseModel):

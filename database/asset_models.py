@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-AssetType = Literal["aws", "self_hosted"]
+AssetType = Literal["aws", "digitalocean", "self_hosted"]
 AssetStatus = Literal["active", "full", "banned", "offline", "deploying"]
 ProtocolType = Literal["AnyTLS", "Trojan", "vless", "vmess", "Hysteria2"]
 AllocationStatus = Literal["allocated", "released", "failed"]
@@ -12,6 +12,12 @@ AllocationStatus = Literal["allocated", "released", "failed"]
 DNS_REQUIRED_PROTOCOLS: set[ProtocolType] = {"AnyTLS", "Trojan", "vless", "vmess"}
 CDN_PROXY_SUPPORTED_PROTOCOLS: set[ProtocolType] = {"Trojan", "vless", "vmess"}
 AWS_SUPPORTED_PROTOCOLS: set[ProtocolType] = {"AnyTLS", "Trojan", "vless", "vmess"}
+DIGITALOCEAN_SUPPORTED_PROTOCOLS: set[ProtocolType] = {
+    "AnyTLS",
+    "Trojan",
+    "vless",
+    "vmess",
+}
 SELF_HOSTED_SUPPORTED_PROTOCOLS: set[ProtocolType] = {
     "AnyTLS",
     "Trojan",
@@ -49,6 +55,7 @@ class AssetCreateRequest:
     default_architecture: str | None = None
     cpu_cores: int | None = None
     memory_gb: float | None = None
+    provider_config: dict[str, object] | None = None
     remarks: str | None = None
 
 
@@ -93,6 +100,7 @@ class AssetRecord:
     default_architecture: str | None
     cpu_cores: int | None = None
     memory_gb: float | None = None
+    provider_config: dict[str, object] | None = None
     remarks: str | None = None
     created_at: str = ""
     updated_at: str = ""

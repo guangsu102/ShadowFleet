@@ -20,7 +20,7 @@ FLEET_NODE_STATUSES = (
     "deleted",
     "failed",
 )
-FLEET_ASSET_TYPES = ("aws", "self_hosted")
+FLEET_ASSET_TYPES = ("aws", "digitalocean", "self_hosted")
 FLEET_ASSET_STATUSES = ("active", "full", "banned", "offline", "deploying")
 FLEET_PROTOCOL_TYPES = ("AnyTLS", "Trojan", "vless", "vmess", "Hysteria2")
 FLEET_ALLOCATION_STATUSES = ("allocated", "released", "failed")
@@ -209,6 +209,9 @@ class SqliteConnectionManager:
                 ALTER TABLE fleet_nodes ADD COLUMN xboard_show INTEGER;
                 ALTER TABLE fleet_nodes ADD COLUMN xboard_updated_at TEXT;
             """),
+            ("add_asset_provider_config_json", """
+                ALTER TABLE fleet_assets ADD COLUMN provider_config_json TEXT;
+            """),
         ]
         applied = connection.execute(
             "SELECT name FROM schema_migrations"
@@ -225,7 +228,125 @@ class SqliteConnectionManager:
                     except sqlite3.OperationalError:
                         pass
             connection.execute("INSERT INTO schema_migrations (name) VALUES (?)", (name,))
+        self._ensure_fleet_assets_supports_digitalocean(connection)
         connection.commit()
+
+    def _ensure_fleet_assets_supports_digitalocean(self, connection: sqlite3.Connection) -> None:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='fleet_assets'"
+        ).fetchone()
+        if row is None:
+            return
+        ddl = str(row["sql"])
+        columns = {
+            column["name"]
+            for column in connection.execute("PRAGMA table_info(fleet_assets)").fetchall()
+        }
+        if "provider_config_json" not in columns:
+            connection.execute("ALTER TABLE fleet_assets ADD COLUMN provider_config_json TEXT")
+            columns.add("provider_config_json")
+        if "'digitalocean'" in ddl:
+            return
+
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute(
+            """
+            CREATE TABLE fleet_assets_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'digitalocean', 'self_hosted')),
+                asset_name TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('active', 'full', 'banned', 'offline', 'deploying')),
+                region TEXT,
+                aws_account_id TEXT,
+                aws_access_key TEXT,
+                aws_secret_key TEXT,
+                ssh_host TEXT,
+                ssh_port INTEGER,
+                ssh_username TEXT,
+                ssh_password TEXT,
+                ssh_private_key TEXT,
+                default_instance_type TEXT,
+                default_vcpu INTEGER,
+                account_total_vcpu INTEGER,
+                default_architecture TEXT,
+                cpu_cores INTEGER,
+                memory_gb REAL,
+                provider_config_json TEXT,
+                remarks TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO fleet_assets_new (
+                id,
+                asset_type,
+                asset_name,
+                status,
+                region,
+                aws_account_id,
+                aws_access_key,
+                aws_secret_key,
+                ssh_host,
+                ssh_port,
+                ssh_username,
+                ssh_password,
+                ssh_private_key,
+                default_instance_type,
+                default_vcpu,
+                account_total_vcpu,
+                default_architecture,
+                cpu_cores,
+                memory_gb,
+                provider_config_json,
+                remarks,
+                created_at,
+                updated_at
+            )
+            SELECT
+                id,
+                asset_type,
+                asset_name,
+                status,
+                region,
+                aws_account_id,
+                aws_access_key,
+                aws_secret_key,
+                ssh_host,
+                ssh_port,
+                ssh_username,
+                ssh_password,
+                ssh_private_key,
+                default_instance_type,
+                default_vcpu,
+                account_total_vcpu,
+                default_architecture,
+                cpu_cores,
+                memory_gb,
+                provider_config_json,
+                remarks,
+                created_at,
+                updated_at
+            FROM fleet_assets
+            """
+        )
+        connection.execute("DROP TABLE fleet_assets")
+        connection.execute("ALTER TABLE fleet_assets_new RENAME TO fleet_assets")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fleet_assets_asset_type_status ON fleet_assets (asset_type, status)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fleet_assets_region ON fleet_assets (region)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fleet_assets_aws_account_id ON fleet_assets (aws_account_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fleet_assets_ssh_host ON fleet_assets (ssh_host)"
+        )
+        connection.execute("PRAGMA foreign_keys=ON")
 
     def _resolve_database_path(self) -> Path:
         sqlite_path = Path(self._runtime_context.config.app.sqlite_path)
@@ -368,6 +489,7 @@ class SqliteConnectionManager:
             default_architecture TEXT,
             cpu_cores INTEGER,
             memory_gb REAL,
+            provider_config_json TEXT,
             remarks TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
