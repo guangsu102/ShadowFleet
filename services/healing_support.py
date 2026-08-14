@@ -13,6 +13,7 @@ from services.monitor_support import infer_node_asset_type
 AWS_HEALABLE_PROTOCOLS = {"AnyTLS", "Trojan", "vless", "vmess"}
 AZURE_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 VULTR_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
+OCI_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 SELF_HOSTED_PROXY_PROTOCOLS = {"Trojan", "vless", "vmess"}
 AWS_ACCOUNT_BANNED_ERROR_CODES = {
     "AuthFailure",
@@ -52,6 +53,8 @@ def determine_heal_strategy(node_record: FleetNodeRecord, request: HealRequest) 
         return "aws_ipv6_rotate"
     if asset_type == "azure" and node_record.node_type in AZURE_HEALABLE_PROTOCOLS:
         return "azure_ipv6_rotate"
+    if asset_type == "oci" and node_record.node_type in OCI_HEALABLE_PROTOCOLS:
+        return "oci_ipv6_rotate"
     if asset_type == "vultr" and node_record.node_type in VULTR_HEALABLE_PROTOCOLS:
         return "vultr_instance_replace"
     if asset_type == "self_hosted" and node_record.node_type in SELF_HOSTED_PROXY_PROTOCOLS:
@@ -91,6 +94,19 @@ def ensure_azure_healing_eligible(node_record: FleetNodeRecord) -> None:
         raise ManualReviewRequiredError("Azure node is missing domain_name")
 
 
+def ensure_oci_healing_eligible(node_record: FleetNodeRecord) -> None:
+    if infer_node_asset_type(node_record) != "oci":
+        raise ManualReviewRequiredError("OCI healing received a non-OCI node")
+    if node_record.node_type not in OCI_HEALABLE_PROTOCOLS:
+        raise ManualReviewRequiredError(
+            f"OCI node type is not supported for IPv6 healing: {node_record.node_type}"
+        )
+    if not node_record.aws_instance_id:
+        raise ManualReviewRequiredError("OCI node is missing instance ID")
+    if node_record.domain_name is None or not node_record.domain_name.strip():
+        raise ManualReviewRequiredError("OCI node is missing domain_name")
+
+
 def ensure_vultr_healing_eligible(node_record: FleetNodeRecord) -> None:
     if infer_node_asset_type(node_record) != "vultr":
         raise ManualReviewRequiredError(
@@ -126,7 +142,7 @@ def build_heal_lock(
 ) -> FleetOperationLockRequest:
     expires_in_seconds = (
         AZURE_HEAL_LOCK_EXPIRY_SECONDS
-        if strategy in {"azure_ipv6_rotate", "vultr_instance_replace"}
+        if strategy in {"azure_ipv6_rotate", "oci_ipv6_rotate", "vultr_instance_replace"}
         else HEAL_LOCK_EXPIRY_SECONDS
     )
     return FleetOperationLockRequest(

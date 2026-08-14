@@ -15,6 +15,7 @@ from database.state_repo import StateRepo
 from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.azure import AzureClient, AzureClientError, AzureCredentials
 from infrastructure.vultr import VultrClient, VultrClientError
+from infrastructure.oci import OCIClient, OCIClientError, OCICredentials
 from services.monitor_support import infer_node_asset_type
 from services.orphan_azure_support import (
     AZURE_NETWORK_RESOURCE_SPECS,
@@ -135,6 +136,9 @@ class OrphanResourceScanService:
 
             azure_orphans = self._scan_azure_orphans()
             orphans.extend(azure_orphans)
+            oci_orphans = self._scan_oci_orphans()
+            orphans.extend(oci_orphans)
+
 
             # 3. 扫描节点孤儿
             node_orphans = self._scan_node_orphans()
@@ -400,6 +404,76 @@ class OrphanResourceScanService:
             self._logger.exception("Failed to scan Vultr orphans: %s", exc)
         return orphans
 
+    def _scan_oci_orphans(self) -> list[OrphanResourceInfo]:
+        orphans: list[OrphanResourceInfo] = []
+        try:
+            assets = self._asset_repo.list_assets_by_status("active")
+            known_ids = {
+                node.aws_instance_id
+                for node in self._state_repo.list_active_nodes()
+                if node.aws_instance_id
+            }
+            scanned_scopes: set[tuple[str, str, str]] = set()
+            for asset in assets:
+                if asset.asset_type != "oci":
+                    continue
+                config = asset.provider_config
+                if not isinstance(config, dict) or not asset.region:
+                    continue
+                tenancy_ocid = str(config.get("tenancy_ocid") or "").strip()
+                compartment_ocid = str(config.get("compartment_ocid") or "").strip()
+                if not tenancy_ocid or not compartment_ocid:
+                    continue
+                scope = (
+                    tenancy_ocid.casefold(),
+                    compartment_ocid.casefold(),
+                    asset.region.casefold(),
+                )
+                if scope in scanned_scopes:
+                    continue
+                try:
+                    client = self._build_oci_client(asset)
+                    instances = client.list_instances(compartment_ocid)
+                    scanned_scopes.add(scope)
+                    for instance in instances:
+                        instance_id = str(instance.get("id") or "").strip()
+                        tags = instance.get("freeformTags")
+                        managed = (
+                            isinstance(tags, dict)
+                            and str(tags.get("ManagedBy") or "") == "ShadowFleet"
+                        )
+                        state = str(instance.get("lifecycleState") or "unknown")
+                        if (
+                            not instance_id
+                            or not managed
+                            or instance_id in known_ids
+                            or state.upper() in {"TERMINATED", "TERMINATING"}
+                        ):
+                            continue
+                        created_at = str(instance.get("timeCreated") or "").strip()
+                        if not self._resource_age_exceeded(created_at):
+                            continue
+                        orphans.append(
+                            OrphanResourceInfo(
+                                resource_type="oci_instance",
+                                resource_id=instance_id,
+                                region=asset.region,
+                                aws_account_id=asset.aws_account_id,
+                                asset_id=asset.id,
+                                reason="Instance exists in OCI but not in SQLite",
+                                discovered_at=datetime.utcnow().isoformat(),
+                            )
+                        )
+                except Exception as exc:
+                    self._logger.warning(
+                        "Failed to scan OCI orphans for asset %s: %s",
+                        asset.asset_name,
+                        exc,
+                    )
+        except Exception as exc:
+            self._logger.exception("Failed to scan OCI orphans: %s", exc)
+        return orphans
+
     def _scan_azure_orphans(self) -> list[OrphanResourceInfo]:
         orphans: list[OrphanResourceInfo] = []
         try:
@@ -578,6 +652,19 @@ class OrphanResourceScanService:
                             exc,
                         )
                     continue
+                if asset_type == "oci":
+                    try:
+                        orphan = self._scan_oci_node_orphan(node)
+                        if orphan is not None:
+                            orphans.append(orphan)
+                    except Exception as exc:
+                        self._logger.warning(
+                            "OCI node scan is indeterminate for node %s instance %s: %s",
+                            node.xboard_node_id,
+                            node.aws_instance_id,
+                            exc,
+                        )
+                    continue
                 if asset_type != "aws":
                     continue
 
@@ -730,6 +817,52 @@ class OrphanResourceScanService:
             )
         return None
 
+    def _scan_oci_node_orphan(
+        self,
+        node: FleetNodeRecord,
+    ) -> OrphanResourceInfo | None:
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node.xboard_node_id)
+        if asset is None and node.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node.aws_account_id
+                    )
+                    if candidate.asset_type == "oci"
+                ),
+                None,
+            )
+        if asset is None or asset.asset_type != "oci":
+            self._logger.warning(
+                "OCI node scan is indeterminate because asset credentials were not found: "
+                "node=%s account=%s",
+                node.xboard_node_id,
+                node.aws_account_id,
+            )
+            return None
+        try:
+            instance = self._build_oci_client(asset).get_instance(
+                node.aws_instance_id or ""
+            )
+            state = str(instance.get("lifecycleState") or "").upper()
+            if state not in {"TERMINATED", "TERMINATING"}:
+                return None
+            reason = f"OCI instance state is {state}"
+        except OCIClientError as exc:
+            if exc.status_code != 404:
+                raise
+            reason = "OCI instance not found"
+        return OrphanResourceInfo(
+            resource_type="xboard_node",
+            resource_id=str(node.xboard_node_id),
+            region=node.aws_region,
+            aws_account_id=node.aws_account_id,
+            xboard_node_id=node.xboard_node_id,
+            reason=reason,
+            discovered_at=datetime.utcnow().isoformat(),
+        )
+
     def _scan_allocation_orphans(self) -> list[OrphanResourceInfo]:
         """
         扫描资产分配孤儿
@@ -807,6 +940,8 @@ class OrphanResourceScanService:
                 return self._cleanup_ec2_orphan(orphan)
             elif orphan.resource_type == "vultr_instance":
                 return self._cleanup_vultr_orphan(orphan)
+            elif orphan.resource_type == "oci_instance":
+                return self._cleanup_oci_orphan(orphan)
             elif orphan.resource_type == "azure_vm":
                 return self._cleanup_azure_orphan(orphan)
             elif orphan.resource_type in AZURE_NETWORK_RESOURCE_TYPES:
@@ -857,6 +992,25 @@ class OrphanResourceScanService:
             )
             return False
 
+    def _cleanup_oci_orphan(self, orphan: OrphanResourceInfo) -> bool:
+        if orphan.asset_id is None:
+            self._logger.warning("Cannot cleanup OCI orphan: no asset_id")
+            return False
+        try:
+            asset = self._asset_repo.get_asset_by_id(orphan.asset_id)
+            if asset.asset_type != "oci":
+                return False
+            self._build_oci_client(asset).delete_instance(orphan.resource_id)
+            set_event_type("orphan_oci_instance_deleted")
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to delete orphan OCI instance %s: %s",
+                orphan.resource_id,
+                exc,
+            )
+            return False
+
     def _cleanup_azure_orphan(self, orphan: OrphanResourceInfo) -> bool:
         if orphan.asset_id is None:
             self._logger.warning("Cannot cleanup Azure orphan: no asset_id")
@@ -900,6 +1054,36 @@ class OrphanResourceScanService:
                 exc,
             )
             return False
+
+    def _build_oci_client(self, asset) -> OCIClient:
+        config = asset.provider_config
+        if (
+            asset.asset_type != "oci"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not asset.region
+            or not isinstance(config, dict)
+        ):
+            raise ValueError("OCI credentials are incomplete")
+        tenancy_ocid = str(config.get("tenancy_ocid") or "").strip()
+        fingerprint = str(config.get("fingerprint") or "").strip()
+        if not tenancy_ocid or not fingerprint:
+            raise ValueError("OCI tenancy_ocid or fingerprint is missing")
+        return OCIClient(
+            self._runtime_context,
+            credentials=OCICredentials(
+                tenancy_ocid=tenancy_ocid,
+                user_ocid=asset.aws_access_key,
+                fingerprint=fingerprint,
+                private_key=asset.aws_secret_key,
+                private_key_passphrase=(
+                    str(config["private_key_passphrase"])
+                    if config.get("private_key_passphrase") is not None
+                    else None
+                ),
+            ),
+            region=asset.region,
+        )
 
     def _build_azure_client(self, asset) -> AzureClient:
         config = asset.provider_config

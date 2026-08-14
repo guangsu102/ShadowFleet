@@ -10,6 +10,7 @@ from database.asset_models import (
     CDN_PROXY_SUPPORTED_PROTOCOLS,
     DIGITALOCEAN_SUPPORTED_PROTOCOLS,
     DNS_REQUIRED_PROTOCOLS,
+    OCI_SUPPORTED_PROTOCOLS,
     SELF_HOSTED_SUPPORTED_PROTOCOLS,
     VULTR_SUPPORTED_PROTOCOLS,
     AssetCreateRequest,
@@ -51,6 +52,15 @@ def validate_asset_request(request: AssetCreateRequest) -> None:
             raise ValueError("client_id is required for azure assets")
         if not request.aws_secret_key or not request.aws_secret_key.strip():
             raise ValueError("client_secret is required for azure assets")
+    if request.asset_type == "oci":
+        if not request.region or not request.region.strip():
+            raise ValueError("region is required for oci assets")
+        if not request.aws_account_id or not request.aws_account_id.strip():
+            raise ValueError("tenancy_ocid is required for oci assets")
+        if not request.aws_access_key or not request.aws_access_key.strip():
+            raise ValueError("user_ocid is required for oci assets")
+        if not request.aws_secret_key or not request.aws_secret_key.strip():
+            raise ValueError("private_key is required for oci assets")
     if request.asset_type == "self_hosted":
         if not request.ssh_host or not request.ssh_host.strip():
             raise ValueError("ssh_host is required for self_hosted assets")
@@ -90,6 +100,8 @@ def validate_protocol_config_request(
         supported_protocols = VULTR_SUPPORTED_PROTOCOLS
     elif asset.asset_type == "azure":
         supported_protocols = AZURE_SUPPORTED_PROTOCOLS
+    elif asset.asset_type == "oci":
+        supported_protocols = OCI_SUPPORTED_PROTOCOLS
     else:
         supported_protocols = SELF_HOSTED_SUPPORTED_PROTOCOLS
     if request.protocol_type not in supported_protocols:

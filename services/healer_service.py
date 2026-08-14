@@ -6,6 +6,7 @@ from database.asset_repo import AssetRepo
 from services.account_abandonment_service import AccountAbandonmentService
 from services.healing_aws_flow import heal_aws_node
 from services.healing_azure_flow import heal_azure_node
+from services.healing_oci_flow import heal_oci_node
 from services.healing_failure_handler import handle_healing_failure
 from services.healing_vultr_flow import heal_vultr_node
 from services.healing_models import AwsAccountBannedError, HealRequest, HealResult, HealerServiceError, InstanceNotFoundError
@@ -18,6 +19,7 @@ from services.healing_support import (
     determine_heal_strategy,
     ensure_aws_healing_eligible,
     ensure_azure_healing_eligible,
+    ensure_oci_healing_eligible,
     ensure_self_hosted_healing_eligible,
     ensure_vultr_healing_eligible,
     get_duration_ms,
@@ -206,6 +208,17 @@ class HealerService:
             if strategy == "azure_ipv6_rotate":
                 ensure_azure_healing_eligible(node_record)
                 return heal_azure_node(
+                    runtime_context=self._runtime_context,
+                    asset_repo=self._asset_repo,
+                    state_repo=self._state_repo,
+                    xboard_repo=self._xboard_repo,
+                    node_record=node_record,
+                    request=request,
+                    started_monotonic=context.started_monotonic,
+                )
+            if strategy == "oci_ipv6_rotate":
+                ensure_oci_healing_eligible(node_record)
+                return heal_oci_node(
                     runtime_context=self._runtime_context,
                     asset_repo=self._asset_repo,
                     state_repo=self._state_repo,

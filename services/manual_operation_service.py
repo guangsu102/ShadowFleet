@@ -9,7 +9,7 @@ from database.state_repo import FleetNodeEventCreateRequest, StateRepo
 from database.xboard_repo import XboardRepo
 from services.healer_service import HealerService
 from services.healing_models import HealRequest
-from services.healing_support import AWS_HEALABLE_PROTOCOLS, SELF_HOSTED_PROXY_PROTOCOLS
+from services.healing_support import AWS_HEALABLE_PROTOCOLS, OCI_HEALABLE_PROTOCOLS, SELF_HOSTED_PROXY_PROTOCOLS
 from services.monitor_models import MonitorCandidate
 from services.monitor_support import infer_node_asset_type, is_in_heal_cooldown, to_monitor_candidate, utcnow
 from services.node_registry_service import NodeRegistryService
@@ -162,7 +162,7 @@ class ManualOperationService:
             "xboard_node_id": result.xboard_node_id,
             "status": result.status,
             "local_node_id": result.local_node_id,
-            "cloud_instance_deleted": infer_node_asset_type(node_record) in {"vultr", "azure"},
+            "cloud_instance_deleted": infer_node_asset_type(node_record) in {"vultr", "azure", "oci"},
         }
 
     def _execute_reprobe(self, task_record: ManualOperationTaskRecord) -> dict[str, object]:
@@ -251,9 +251,11 @@ class ManualOperationService:
             raise ValueError(f"Vultr 节点协议不支持 Cloudflare 保底: {node_type}")
         if resolved_asset_type == "azure" and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
             raise ValueError(f"Azure 节点协议不支持 Cloudflare 保底: {node_type}")
+        if resolved_asset_type == "oci" and node_type not in OCI_HEALABLE_PROTOCOLS:
+            raise ValueError(f"OCI 节点协议不支持原生 IPv6 轮换: {node_type}")
         if resolved_asset_type == "self_hosted" and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
             raise ValueError(f"自建节点协议不支持 Cloudflare 保底: {node_type}")
-        if resolved_asset_type not in {"aws", "azure", "vultr", "self_hosted"}:
+        if resolved_asset_type not in {"aws", "azure", "oci", "vultr", "self_hosted"}:
             raise ValueError(f"{resolved_asset_type} 节点暂不支持强制自愈")
 
     @staticmethod

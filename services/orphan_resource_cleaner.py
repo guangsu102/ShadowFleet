@@ -20,6 +20,7 @@ from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.cloudflare.cf_client import CFClient
 from infrastructure.vultr import VultrClient
+from infrastructure.oci import OCIClient, OCICredentials
 from models.aws_credentials import AwsCredentials
 from services.orphan_resource_detector import (
     OrphanAssetAllocation,
@@ -28,6 +29,7 @@ from services.orphan_resource_detector import (
     OrphanDnsRecord,
     OrphanEc2Instance,
     OrphanResourceReport,
+    OrphanOCIInstance,
     OrphanVultrInstance,
     OrphanXboardNode,
 )
@@ -81,6 +83,7 @@ class OrphanResourceCleaner:
         dry_run: bool = False,
         cleanup_vultr: bool = True,
         cleanup_azure: bool = True,
+        cleanup_oci: bool = True,
     ) -> CleanupReport:
         """
         清理孤儿资源
@@ -120,6 +123,9 @@ class OrphanResourceCleaner:
                         dry_run,
                     )
                 )
+
+            if cleanup_oci:
+                results.extend(self._cleanup_oci_instances(report.oci_instances, dry_run))
 
             if cleanup_dns:
                 results.extend(self._cleanup_dns_records(report.dns_records, dry_run))
@@ -273,6 +279,42 @@ class OrphanResourceCleaner:
                 )
         return results
 
+    def _cleanup_oci_instances(
+        self,
+        instances: list[OrphanOCIInstance],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        results: list[CleanupResult] = []
+        for instance in instances:
+            try:
+                if not dry_run:
+                    self._build_oci_client(instance.asset_id).delete_instance(
+                        instance.instance_id
+                    )
+                results.append(
+                    CleanupResult(
+                        resource_type="oci_instance",
+                        resource_id=instance.instance_id,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to cleanup OCI instance %s: %s",
+                    instance.instance_id,
+                    exc,
+                )
+                results.append(
+                    CleanupResult(
+                        resource_type="oci_instance",
+                        resource_id=instance.instance_id,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
+
+
     def _cleanup_azure_vms(
         self,
         vms: list[OrphanAzureVm],
@@ -352,6 +394,41 @@ class OrphanResourceCleaner:
                     )
                 )
         return results
+
+    def _build_oci_client(self, asset_id: int) -> OCIClient:
+        asset = self._asset_repo.get_asset_by_id(asset_id)
+        config = asset.provider_config
+        if (
+            asset.asset_type != "oci"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not asset.region
+            or not isinstance(config, dict)
+        ):
+            raise OrphanResourceCleanerError(
+                f"OCI credentials missing for asset_id={asset_id}"
+            )
+        tenancy_ocid = str(config.get("tenancy_ocid") or "").strip()
+        fingerprint = str(config.get("fingerprint") or "").strip()
+        if not tenancy_ocid or not fingerprint:
+            raise OrphanResourceCleanerError(
+                f"OCI tenancy or fingerprint missing for asset_id={asset_id}"
+            )
+        return OCIClient(
+            self._runtime,
+            credentials=OCICredentials(
+                tenancy_ocid=tenancy_ocid,
+                user_ocid=asset.aws_access_key,
+                fingerprint=fingerprint,
+                private_key=asset.aws_secret_key,
+                private_key_passphrase=(
+                    str(config["private_key_passphrase"])
+                    if config.get("private_key_passphrase") is not None
+                    else None
+                ),
+            ),
+            region=asset.region,
+        )
 
     def _build_azure_client(self, asset_id: int) -> AzureClient:
         asset = self._asset_repo.get_asset_by_id(asset_id)

@@ -169,7 +169,11 @@ const showNetworkField = computed(() => ['Trojan', 'vmess', 'vless'].includes(pr
 const showFlowField = computed(() => protocolType.value === 'vless')
 
 // ── Options ──────────────────────────────────────────────────────────────────
-const protocolOptions: SelectOption[] = PROTOCOLS.map(p => ({ label: p, value: p }))
+const protocolOptions = computed<SelectOption[]>(() =>
+  PROTOCOLS
+    .filter(protocol => assetType.value === 'self_hosted' || protocol !== 'Hysteria2')
+    .map(protocol => ({ label: protocol, value: protocol }))
+)
 const regionOptions: SelectOption[] = REGIONS.map(r => ({ label: `${REGION_MAP[r]} (${r})`, value: r }))
 const vultrRegionOptions: SelectOption[] = [
   { label: '新加坡 (sgp)', value: 'sgp' },
@@ -194,15 +198,30 @@ const azureRegionOptions: SelectOption[] = [
   { label: '德国中西部 (germanywestcentral)', value: 'germanywestcentral' },
   { label: '澳大利亚东部 (australiaeast)', value: 'australiaeast' },
 ]
+const ociRegionOptions: SelectOption[] = [
+  { label: '东京 (ap-tokyo-1)', value: 'ap-tokyo-1' },
+  { label: '大阪 (ap-osaka-1)', value: 'ap-osaka-1' },
+  { label: '首尔 (ap-seoul-1)', value: 'ap-seoul-1' },
+  { label: '春川 (ap-chuncheon-1)', value: 'ap-chuncheon-1' },
+  { label: '新加坡 (ap-singapore-1)', value: 'ap-singapore-1' },
+  { label: '悉尼 (ap-sydney-1)', value: 'ap-sydney-1' },
+  { label: '圣何塞 (us-sanjose-1)', value: 'us-sanjose-1' },
+  { label: '凤凰城 (us-phoenix-1)', value: 'us-phoenix-1' },
+  { label: '阿什本 (us-ashburn-1)', value: 'us-ashburn-1' },
+  { label: '伦敦 (uk-london-1)', value: 'uk-london-1' },
+  { label: '法兰克福 (eu-frankfurt-1)', value: 'eu-frankfurt-1' },
+]
 const selectedRegionOptions = computed(() => {
   if (assetType.value === 'vultr') return vultrRegionOptions
   if (assetType.value === 'azure') return azureRegionOptions
+  if (assetType.value === 'oci') return ociRegionOptions
   return regionOptions
 })
 const assetTypeOptions: SelectOption[] = [
   { label: 'AWS', value: 'aws' },
   { label: 'Vultr', value: 'vultr' },
   { label: 'Microsoft Azure', value: 'azure' },
+  { label: 'Oracle Cloud', value: 'oci' },
   { label: '自建服务器', value: 'self_hosted' },
 ]
 watch(assetType, (nextAssetType, previousAssetType) => {
@@ -210,6 +229,10 @@ watch(assetType, (nextAssetType, previousAssetType) => {
     aws: 'ap-northeast-1',
     vultr: 'sgp',
     azure: 'japaneast',
+    oci: 'ap-tokyo-1',
+  }
+  if (nextAssetType !== 'self_hosted' && protocolType.value === 'Hysteria2') {
+    protocolType.value = 'AnyTLS'
   }
   if (nextAssetType !== previousAssetType && defaultRegions[nextAssetType]) {
     region.value = defaultRegions[nextAssetType]
@@ -427,7 +450,7 @@ async function handleSubmit() {
     server_port: serverPort.value,
     rate: rate.value ?? 1.0,
     asset_type: assetType.value,
-    region: ['aws', 'vultr', 'azure'].includes(assetType.value) ? region.value : undefined,
+    region: ['aws', 'vultr', 'azure', 'oci'].includes(assetType.value) ? region.value : undefined,
     require_cdn_proxy: requireCdnProxy.value,
     show: showNode.value,
     parent_id: undefined,
@@ -747,12 +770,12 @@ export default { name: 'ProvisionerView' }
                 <NInput v-model:value="nodeName" placeholder="sf-xxx" clearable />
               </NFormItem>
             </NGi>
-            <NGi v-if="['aws', 'vultr', 'azure'].includes(assetType)">
+            <NGi v-if="['aws', 'vultr', 'azure', 'oci'].includes(assetType)">
               <NFormItem label="目标区域">
                 <NSelect v-model:value="region" :options="selectedRegionOptions" />
               </NFormItem>
             </NGi>
-            <NGi v-if="['aws', 'vultr', 'azure'].includes(assetType)">
+            <NGi v-if="['aws', 'vultr', 'azure', 'oci'].includes(assetType)">
               <NFormItem label="服务监听端口">
                 <NInputNumber v-model:value="serverPort" :min="1" :max="65535" style="width: 100%" />
               </NFormItem>

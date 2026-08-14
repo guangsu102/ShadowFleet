@@ -131,7 +131,7 @@ def in_memory_sqlite_db() -> Generator[sqlite3.Connection, None, None]:
     cursor.execute("""
         CREATE TABLE fleet_assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'azure', 'digitalocean', 'vultr', 'self_hosted')),
+            asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'azure', 'digitalocean', 'oci', 'vultr', 'self_hosted')),
             asset_name TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active','full','banned','offline','deploying')),

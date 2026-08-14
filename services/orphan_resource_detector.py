@@ -21,6 +21,7 @@ from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.cloudflare.cf_client import CFClient
 from infrastructure.vultr import VultrClient
+from infrastructure.oci import OCIClient, OCICredentials
 from models.aws_credentials import AwsCredentials
 from services.orphan_azure_support import (
     AZURE_NETWORK_RESOURCE_SPECS,
@@ -70,6 +71,17 @@ class OrphanAzureVm:
     asset_id: int
     location: str
     name: str
+    created_at: str
+    state: str
+    tags: dict[str, str]
+
+
+@dataclass(frozen=True)
+class OrphanOCIInstance:
+    instance_id: str
+    asset_id: int
+    region: str
+    display_name: str
     created_at: str
     state: str
     tags: dict[str, str]
@@ -129,6 +141,7 @@ class OrphanResourceReport:
     total_count: int
     vultr_instances: list[OrphanVultrInstance] = field(default_factory=list)
     azure_vms: list[OrphanAzureVm] = field(default_factory=list)
+    oci_instances: list[OrphanOCIInstance] = field(default_factory=list)
     azure_network_resources: list[OrphanAzureNetworkResource] = field(
         default_factory=list
     )
@@ -156,6 +169,7 @@ class OrphanResourceDetector:
         scan_xboard: bool = True,
         scan_vultr: bool = True,
         scan_azure: bool = True,
+        scan_oci: bool = True,
     ) -> OrphanResourceReport:
         """
         扫描所有孤儿资源
@@ -176,6 +190,7 @@ class OrphanResourceDetector:
         orphan_vultr_instances: list[OrphanVultrInstance] = []
         orphan_azure_vms: list[OrphanAzureVm] = []
         orphan_azure_network_resources: list[OrphanAzureNetworkResource] = []
+        orphan_oci_instances: list[OrphanOCIInstance] = []
         orphan_dns_records: list[OrphanDnsRecord] = []
         orphan_allocations: list[OrphanAssetAllocation] = []
         orphan_xboard_nodes: list[OrphanXboardNode] = []
@@ -188,6 +203,10 @@ class OrphanResourceDetector:
             if scan_vultr:
                 orphan_vultr_instances = self._scan_orphan_vultr_instances()
                 self._logger.info("Found %d orphan Vultr instances", len(orphan_vultr_instances))
+            if scan_oci:
+                orphan_oci_instances = self._scan_orphan_oci_instances()
+                self._logger.info("Found %d orphan OCI instances", len(orphan_oci_instances))
+
 
             if scan_azure:
                 orphan_azure_vms = self._scan_orphan_azure_vms()
@@ -217,6 +236,7 @@ class OrphanResourceDetector:
                 + len(orphan_vultr_instances)
                 + len(orphan_azure_vms)
                 + len(orphan_azure_network_resources)
+                + len(orphan_oci_instances)
                 + len(orphan_dns_records)
                 + len(orphan_allocations)
                 + len(orphan_xboard_nodes)
@@ -228,6 +248,7 @@ class OrphanResourceDetector:
                 vultr_instances=orphan_vultr_instances,
                 azure_vms=orphan_azure_vms,
                 azure_network_resources=orphan_azure_network_resources,
+                oci_instances=orphan_oci_instances,
                 dns_records=orphan_dns_records,
                 asset_allocations=orphan_allocations,
                 xboard_nodes=orphan_xboard_nodes,
@@ -362,6 +383,97 @@ class OrphanResourceDetector:
                     exc,
                 )
         return orphan_instances
+
+    def _scan_orphan_oci_instances(self) -> list[OrphanOCIInstance]:
+        orphan_instances: list[OrphanOCIInstance] = []
+        active_assets = self._asset_repo.list_assets_by_status("active")
+        known_ids = {
+            node.aws_instance_id
+            for node in self._state_repo.list_active_nodes()
+            if node.aws_instance_id
+        }
+        scanned_scopes: set[tuple[str, str, str]] = set()
+        for asset in active_assets:
+            if asset.asset_type != "oci":
+                continue
+            config = asset.provider_config
+            if (
+                not asset.aws_access_key
+                or not asset.aws_secret_key
+                or not asset.region
+                or not isinstance(config, dict)
+            ):
+                continue
+            tenancy_ocid = str(config.get("tenancy_ocid") or "").strip()
+            fingerprint = str(config.get("fingerprint") or "").strip()
+            compartment_ocid = str(config.get("compartment_ocid") or "").strip()
+            if not tenancy_ocid or not fingerprint or not compartment_ocid:
+                continue
+            scope = (
+                tenancy_ocid.casefold(),
+                compartment_ocid.casefold(),
+                asset.region.casefold(),
+            )
+            if scope in scanned_scopes:
+                continue
+            try:
+                client = OCIClient(
+                    self._runtime,
+                    credentials=OCICredentials(
+                        tenancy_ocid=tenancy_ocid,
+                        user_ocid=asset.aws_access_key,
+                        fingerprint=fingerprint,
+                        private_key=asset.aws_secret_key,
+                        private_key_passphrase=(
+                            str(config["private_key_passphrase"])
+                            if config.get("private_key_passphrase") is not None
+                            else None
+                        ),
+                    ),
+                    region=asset.region,
+                )
+                instances = client.list_instances(compartment_ocid)
+                scanned_scopes.add(scope)
+                for instance in instances:
+                    instance_id = str(instance.get("id") or "").strip()
+                    tags = (
+                        {
+                            str(key): str(value)
+                            for key, value in instance["freeformTags"].items()
+                        }
+                        if isinstance(instance.get("freeformTags"), dict)
+                        else {}
+                    )
+                    state = str(instance.get("lifecycleState") or "unknown")
+                    if (
+                        not instance_id
+                        or tags.get("ManagedBy") != "ShadowFleet"
+                        or instance_id in known_ids
+                        or state.upper() in {"TERMINATED", "TERMINATING"}
+                    ):
+                        continue
+                    created_at = str(instance.get("timeCreated") or "").strip()
+                    if not _is_older_than(created_at, timedelta(hours=1)):
+                        continue
+                    orphan_instances.append(
+                        OrphanOCIInstance(
+                            instance_id=instance_id,
+                            asset_id=asset.id,
+                            region=str(instance.get("region") or asset.region),
+                            display_name=str(instance.get("displayName") or ""),
+                            created_at=created_at,
+                            state=state,
+                            tags=tags,
+                        )
+                    )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan OCI instances for asset_id=%s: %s",
+                    asset.id,
+                    exc,
+                )
+        return orphan_instances
+
 
     def _scan_orphan_azure_vms(self) -> list[OrphanAzureVm]:
         orphan_vms: list[OrphanAzureVm] = []

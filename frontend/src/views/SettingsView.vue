@@ -296,7 +296,7 @@ const schedulerCooldown = ref(60.0)
 const schedulerMaxTasks = ref(5)
 const schedulerEnabledRegions = ref<string[]>(['*'])
 const schedulerEnabledProtocols = ref<string[]>(['*'])
-const schedulerEnabledAssetTypes = ref<string[]>(['digitalocean', 'vultr', 'azure', 'aws'])
+const schedulerEnabledAssetTypes = ref<string[]>(['digitalocean', 'vultr', 'azure', 'oci', 'aws'])
 
 const regionListOptions: SelectOption[] = [
   { label: '全部区域 (*)', value: '*' },
@@ -316,6 +316,7 @@ const cloudAssetTypeOptions: SelectOption[] = [
   { label: 'DigitalOcean', value: 'digitalocean' },
   { label: 'Vultr', value: 'vultr' },
   { label: 'Microsoft Azure', value: 'azure' },
+  { label: 'Oracle Cloud', value: 'oci' },
   { label: 'AWS', value: 'aws' },
 ]
 
@@ -328,7 +329,7 @@ function buildFleetSchedulerForm() {
   schedulerMaxTasks.value = (scheduler.max_tasks_per_cycle as number) ?? 5
   schedulerEnabledRegions.value = (scheduler.enabled_regions as string[]) ?? ['*']
   schedulerEnabledProtocols.value = (scheduler.enabled_protocols as string[]) ?? ['*']
-  schedulerEnabledAssetTypes.value = (scheduler.enabled_asset_types as string[]) ?? ['digitalocean', 'vultr', 'azure', 'aws']
+  schedulerEnabledAssetTypes.value = (scheduler.enabled_asset_types as string[]) ?? ['digitalocean', 'vultr', 'azure', 'oci', 'aws']
 }
 
 // ---------------------------------------------------------------------------

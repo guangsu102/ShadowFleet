@@ -188,6 +188,7 @@ class TestFleetAssetsSchema:
         assert "'aws'" in ddl
         assert "'digitalocean'" in ddl
         assert "'vultr'" in ddl
+        assert "'oci'" in ddl
         assert "'self_hosted'" in ddl
 
 

@@ -17,6 +17,7 @@ from database.xboard_repo import (
 )
 from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.vultr import VultrClient
+from infrastructure.oci import OCIClient, OCICredentials
 from services.node_registry_helpers import (
     compensate_registration_failure,
     require_registered_node,
@@ -416,6 +417,7 @@ class NodeRegistryService:
         try:
             self._delete_vultr_instance(node_record)
             self._delete_azure_instance(node_record)
+            self._delete_oci_instance(node_record)
             self._xboard_repo.delete_node(xboard_node_id)
             self._state_repo.update_node_status(
                 xboard_node_id=xboard_node_id,
@@ -603,6 +605,68 @@ class NodeRegistryService:
                 to_status="deleting",
                 message="Azure VM and dedicated network resources deleted before Xboard node removal.",
                 payload={"asset_id": asset.id, "vm_id": node_record.aws_instance_id},
+            )
+        )
+
+    def _delete_oci_instance(self, node_record: FleetNodeRecord) -> None:
+        if infer_node_asset_type(node_record) != "oci":
+            return
+        if not node_record.aws_instance_id:
+            raise NodeRegistryServiceError("OCI node is missing instance ID")
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node_record.xboard_node_id)
+        if asset is None and node_record.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node_record.aws_account_id
+                    )
+                    if candidate.asset_type == "oci"
+                ),
+                None,
+            )
+        config = asset.provider_config if asset is not None else None
+        if (
+            asset is None
+            or asset.asset_type != "oci"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not asset.region
+            or not isinstance(config, dict)
+        ):
+            raise NodeRegistryServiceError("OCI credentials not found for node allocation")
+        tenancy_ocid = str(config.get("tenancy_ocid") or "").strip()
+        fingerprint = str(config.get("fingerprint") or "").strip()
+        if not tenancy_ocid or not fingerprint:
+            raise NodeRegistryServiceError("OCI tenancy_ocid or fingerprint is missing")
+        OCIClient(
+            self._runtime_context,
+            credentials=OCICredentials(
+                tenancy_ocid=tenancy_ocid,
+                user_ocid=asset.aws_access_key,
+                fingerprint=fingerprint,
+                private_key=asset.aws_secret_key,
+                private_key_passphrase=(
+                    str(config["private_key_passphrase"])
+                    if config.get("private_key_passphrase") is not None
+                    else None
+                ),
+            ),
+            region=asset.region,
+        ).delete_instance(node_record.aws_instance_id)
+        self._state_repo.create_event(
+            FleetNodeEventCreateRequest(
+                node_id=node_record.id,
+                xboard_node_id=node_record.xboard_node_id,
+                event_type="oci_instance_deleted",
+                correlation_id=self._runtime_context.correlation_id,
+                from_status="deleting",
+                to_status="deleting",
+                message="OCI instance terminated before Xboard node removal.",
+                payload={
+                    "asset_id": asset.id,
+                    "instance_id": node_record.aws_instance_id,
+                },
             )
         )
 

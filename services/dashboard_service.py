@@ -238,6 +238,8 @@ class DashboardService:
                               OR lower(trim(n.aws_account_id)) LIKE 'vultr:%' THEN 'vultr'
                             WHEN lower(trim(n.aws_account_id)) = 'azure'
                               OR lower(trim(n.aws_account_id)) LIKE 'azure:%' THEN 'azure'
+                            WHEN lower(trim(n.aws_account_id)) = 'oci'
+                              OR lower(trim(n.aws_account_id)) LIKE 'oci:%' THEN 'oci'
                             ELSE 'aws'
                         END
                     ) AS asset_type,

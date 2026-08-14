@@ -9,6 +9,7 @@ from services.asset_application_models import (
     AssetRegistrationRequest,
     AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    OCIAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
     VultrAssetRegistrationRequest,
 )
@@ -152,6 +153,33 @@ class AzureAssetCreateRequest(BaseModel):
     priority: int = 100
     allow_cdn_proxy: bool = False
     default_vcpu: int | None = None
+
+class OCIAssetCreateRequest(BaseModel):
+    asset_name: str = Field(..., min_length=1, max_length=128)
+    region: str = Field(..., min_length=1)
+    tenancy_ocid: str = Field(..., min_length=1)
+    user_ocid: str = Field(..., min_length=1)
+    fingerprint: str = Field(..., min_length=1)
+    private_key: str = Field(..., min_length=1)
+    private_key_passphrase: str | None = None
+    compartment_ocid: str = Field(..., min_length=1)
+    subnet_ocid: str = Field(..., min_length=1)
+    network_security_group_ocid: str = Field(..., min_length=1)
+    image_ocid: str = Field(..., min_length=1)
+    shape: str = Field(default="VM.Standard.E4.Flex", min_length=1)
+    ssh_public_key: str = Field(..., min_length=1)
+    availability_domain: str | None = None
+    ocpus: float | None = Field(default=None, gt=0)
+    memory_in_gbs: float | None = Field(default=None, gt=0)
+    tags: list[str] = Field(default_factory=list)
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: list[str] = Field(default_factory=list)
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = Field(default=None, gt=0)
 
 
 def _to_response(row: AssetHealthRow) -> AssetResponse:
@@ -368,6 +396,53 @@ async def register_azure_asset(
         aws_account_id=f"azure:{request.subscription_id.strip().lower()}",
     )
 
+@router.post("/oci", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
+async def register_oci_asset(
+    request: OCIAssetCreateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> AssetResponse:
+    try:
+        result = AssetApplicationService(ctx).register_oci_asset(
+            OCIAssetRegistrationRequest(
+                asset_name=request.asset_name,
+                region=request.region,
+                tenancy_ocid=request.tenancy_ocid,
+                user_ocid=request.user_ocid,
+                fingerprint=request.fingerprint,
+                private_key=request.private_key,
+                private_key_passphrase=request.private_key_passphrase,
+                compartment_ocid=request.compartment_ocid,
+                subnet_ocid=request.subnet_ocid,
+                network_security_group_ocid=request.network_security_group_ocid,
+                image_ocid=request.image_ocid,
+                shape=request.shape,
+                ssh_public_key=request.ssh_public_key,
+                availability_domain=request.availability_domain,
+                ocpus=request.ocpus,
+                memory_in_gbs=request.memory_in_gbs,
+                tags=tuple(request.tags),
+                remarks=request.remarks,
+                protocol_type=request.protocol_type,
+                additional_protocol_types=tuple(request.additional_protocol_types),
+                target_count=request.target_count,
+                max_count=request.max_count,
+                priority=request.priority,
+                allow_cdn_proxy=request.allow_cdn_proxy,
+                default_vcpu=request.default_vcpu,
+            )
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return AssetResponse(
+        asset_id=result.asset_id,
+        asset_name=result.asset_name,
+        asset_type="oci",
+        region=request.region,
+        status="active",
+        aws_account_id=f"oci:{request.tenancy_ocid.strip()}",
+    )
+
 
 @router.get("/{asset_id}", response_model=AssetResponse)
 async def get_asset(
@@ -528,6 +603,17 @@ class AzureCatalogRequest(BaseModel):
     location: str | None = None
 
 
+class OCICatalogRequest(BaseModel):
+    region: str = Field(..., min_length=1)
+    tenancy_ocid: str = Field(..., min_length=1)
+    user_ocid: str = Field(..., min_length=1)
+    fingerprint: str = Field(..., min_length=1)
+    private_key: str = Field(..., min_length=1)
+    compartment_ocid: str = Field(..., min_length=1)
+    private_key_passphrase: str | None = None
+    availability_domain: str | None = None
+    operating_system: str | None = "Canonical Ubuntu"
+
 @router.post("/query-amis")
 async def query_amis(
     request: AmiQueryRequest,
@@ -663,6 +749,30 @@ async def query_azure_catalog(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Azure catalog query failed: {e}",
+        ) from e
+
+@router.post("/oci/query-catalog")
+async def query_oci_catalog(
+    request: OCICatalogRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> dict[str, object]:
+    try:
+        return AssetApplicationService(ctx).query_oci_catalog(
+            region=request.region,
+            tenancy_ocid=request.tenancy_ocid,
+            user_ocid=request.user_ocid,
+            fingerprint=request.fingerprint,
+            private_key=request.private_key,
+            private_key_passphrase=request.private_key_passphrase,
+            compartment_ocid=request.compartment_ocid,
+            availability_domain=request.availability_domain,
+            operating_system=request.operating_system,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OCI catalog query failed: {e}",
         ) from e
 
 

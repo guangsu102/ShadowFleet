@@ -32,6 +32,7 @@ class OrphanResourceReportResponse(BaseModel):
     total_count: int
     ec2_instances: list[dict]
     vultr_instances: list[dict]
+    oci_instances: list[dict]
     azure_vms: list[dict]
     azure_network_resources: list[dict]
     dns_records: list[dict]
@@ -42,6 +43,7 @@ class OrphanResourceReportResponse(BaseModel):
 class CleanupRequest(BaseModel):
     cleanup_ec2: bool = True
     cleanup_vultr: bool = True
+    cleanup_oci: bool = True
     cleanup_azure: bool = True
     cleanup_dns: bool = True
     cleanup_allocations: bool = True
@@ -124,6 +126,18 @@ async def scan_orphan_resources(
             }
             for inst in report.vultr_instances
         ],
+        oci_instances=[
+            {
+                "instance_id": inst.instance_id,
+                "asset_id": inst.asset_id,
+                "region": inst.region,
+                "display_name": inst.display_name,
+                "created_at": inst.created_at,
+                "state": inst.state,
+                "tags": inst.tags,
+            }
+            for inst in report.oci_instances
+        ],
         azure_vms=[
             {
                 "vm_id": vm.vm_id,
@@ -201,6 +215,7 @@ async def cleanup_orphan_resources(
         orphan_report,
         cleanup_ec2=request.cleanup_ec2,
         cleanup_vultr=request.cleanup_vultr,
+        cleanup_oci=request.cleanup_oci,
         cleanup_azure=request.cleanup_azure,
         cleanup_dns=request.cleanup_dns,
         cleanup_allocations=request.cleanup_allocations,
@@ -304,6 +319,7 @@ async def check_system_health(
             "total_count": report.orphan_resource_report.total_count,
             "ec2_instances": len(report.orphan_resource_report.ec2_instances),
             "vultr_instances": len(report.orphan_resource_report.vultr_instances),
+            "oci_instances": len(report.orphan_resource_report.oci_instances),
             "azure_vms": len(report.orphan_resource_report.azure_vms),
             "azure_network_resources": len(
                 report.orphan_resource_report.azure_network_resources

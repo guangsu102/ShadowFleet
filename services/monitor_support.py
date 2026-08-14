@@ -29,6 +29,15 @@ def infer_node_asset_type(node_record: FleetNodeRecord) -> str:
             or asset_type.strip() == "aws"
         ):
             return "azure"
+        if (
+            normalized_account_id == "oci"
+            or normalized_account_id.startswith("oci:")
+        ) and (
+            not isinstance(asset_type, str)
+            or not asset_type.strip()
+            or asset_type.strip() == "aws"
+        ):
+            return "oci"
     if isinstance(asset_type, str) and asset_type.strip():
         return asset_type.strip()
     return "aws" if account_id is not None else "self_hosted"

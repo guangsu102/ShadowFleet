@@ -404,11 +404,11 @@ class FleetSchedulerService:
     def _enabled_cloud_asset_types(self) -> tuple[str, ...]:
         configured = getattr(self._config, "enabled_asset_types", None)
         if not isinstance(configured, (list, tuple)):
-            return ("digitalocean", "vultr", "azure", "aws")
+            return ("digitalocean", "vultr", "azure", "oci", "aws")
 
         enabled: list[str] = []
         for asset_type in configured:
-            if asset_type not in ("digitalocean", "vultr", "azure", "aws"):
+            if asset_type not in ("digitalocean", "vultr", "azure", "oci", "aws"):
                 continue
             if asset_type not in enabled:
                 enabled.append(asset_type)

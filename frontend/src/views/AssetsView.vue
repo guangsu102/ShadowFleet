@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, h } from 'vue'
+import { ref, computed, onMounted, h, watch } from 'vue'
 import {
   NDataTable,
   NTag,
@@ -42,12 +42,14 @@ import type {
   VultrCatalogResponse,
   AzureAssetCreateRequest,
   AzureCatalogResponse,
+  OCIAssetCreateRequest,
+  OCICatalogResponse,
   AmiQueryResponse,
   AmiInfo,
 } from '@/types/api'
 
-type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'vultr' | 'azure' | 'self_hosted'
-type AssetModalTab = 'aws' | 'digitalocean' | 'vultr' | 'azure' | 'self'
+type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'vultr' | 'azure' | 'oci' | 'self_hosted'
+type AssetModalTab = 'aws' | 'digitalocean' | 'vultr' | 'azure' | 'oci' | 'self'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function statusTagType(status: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
@@ -83,6 +85,7 @@ function assetTypeLabel(assetType: string): string {
   if (assetType === 'digitalocean') return 'DO'
   if (assetType === 'vultr') return 'Vultr'
   if (assetType === 'azure') return 'Azure'
+  if (assetType === 'oci') return 'OCI'
   if (assetType === 'self_hosted') return '自建'
   return assetType
 }
@@ -92,6 +95,7 @@ function assetTypeTagType(assetType: string): 'success' | 'warning' | 'error' | 
   if (assetType === 'digitalocean') return 'success'
   if (assetType === 'vultr') return 'error'
   if (assetType === 'azure') return 'info'
+  if (assetType === 'oci') return 'warning'
   if (assetType === 'self_hosted') return 'warning'
   return 'default'
 }
@@ -101,6 +105,7 @@ function modalTitle(tab: AssetModalTab): string {
   if (tab === 'digitalocean') return '新增 DigitalOcean 资产'
   if (tab === 'vultr') return '新增 Vultr 资产'
   if (tab === 'azure') return '新增 Microsoft Azure 资产'
+  if (tab === 'oci') return '新增 Oracle Cloud 资产'
   return '新增自建资产'
 }
 
@@ -197,6 +202,7 @@ const awsAssets  = computed(() => assets.value.filter(a => a.asset_type === 'aws
 const digitalOceanAssets = computed(() => assets.value.filter(a => a.asset_type === 'digitalocean'))
 const vultrAssets = computed(() => assets.value.filter(a => a.asset_type === 'vultr'))
 const azureAssets = computed(() => assets.value.filter(a => a.asset_type === 'azure'))
+const ociAssets = computed(() => assets.value.filter(a => a.asset_type === 'oci'))
 const selfAssets = computed(() => assets.value.filter(a => a.asset_type === 'self_hosted'))
 const filteredAssets = computed(() => {
   if (activeAssetFilter.value === 'all') return assets.value
@@ -944,6 +950,211 @@ async function submitAzureForm() {
     submittingAzure.value = false
   }
 }
+// -- Oracle Cloud Infrastructure Registration Form --------------------------
+const ociForm = ref({
+  asset_name: '',
+  region: 'ap-tokyo-1',
+  tenancy_ocid: '',
+  user_ocid: '',
+  fingerprint: '',
+  private_key: '',
+  private_key_passphrase: '',
+  compartment_ocid: '',
+  subnet_ocid: '',
+  network_security_group_ocid: '',
+  image_ocid: '',
+  shape: 'VM.Standard.E4.Flex',
+  ssh_public_key: '',
+  availability_domain: '',
+  ocpus: 1 as number | null,
+  memory_in_gbs: 6 as number | null,
+  tags_raw: '',
+  remarks: '',
+  protocol_types: ['AnyTLS'] as string[],
+  target_count: 1,
+  max_count: 0,
+  priority: 100,
+  allow_cdn_proxy: false,
+})
+
+const ociCatalog = ref<OCICatalogResponse | null>(null)
+const queryingOciCatalog = ref(false)
+const ociCatalogError = ref<string | null>(null)
+const submittingOci = ref(false)
+const ociAvailabilityDomains = computed<SelectOption[]>(() =>
+  (ociCatalog.value?.availability_domains ?? [])
+    .filter(item => item.name)
+    .map(item => ({ label: item.name as string, value: item.name as string }))
+)
+const ociImages = computed<SelectOption[]>(() =>
+  (ociCatalog.value?.images ?? [])
+    .filter(item => item.id && item.lifecycleState !== 'DELETED')
+    .map(item => ({
+      label: `${item.displayName || item.id} · ${item.operatingSystem || ''} ${item.operatingSystemVersion || ''}`.trim(),
+      value: item.id as string,
+    }))
+)
+const ociShapes = computed<SelectOption[]>(() =>
+  (ociCatalog.value?.shapes ?? [])
+    .filter(item => item.shape)
+    .map(item => ({
+      label: `${item.shape} · ${item.ocpus ?? '?'} OCPU · ${item.memoryInGBs ?? '?'} GB`,
+      value: item.shape as string,
+    }))
+)
+const ociSelectedShape = computed(() =>
+  (ociCatalog.value?.shapes ?? []).find(item => item.shape === ociForm.value.shape)
+)
+function applyOciShapeConfiguration(shape: string) {
+  const selected = (ociCatalog.value?.shapes ?? []).find(item => item.shape === shape)
+  if (!selected) return
+  if (selected.isFlexible === false) {
+    ociForm.value.ocpus = null
+    ociForm.value.memory_in_gbs = null
+    return
+  }
+  if (selected.isFlexible) {
+    ociForm.value.ocpus = ociForm.value.ocpus ?? selected.ocpus ?? 1
+    ociForm.value.memory_in_gbs = ociForm.value.memory_in_gbs ?? selected.memoryInGBs ?? 6
+  }
+}
+watch(() => ociForm.value.shape, applyOciShapeConfiguration)
+const ociSubnets = computed<SelectOption[]>(() =>
+  (ociCatalog.value?.subnets ?? [])
+    .filter(item => item.id)
+    .map(item => ({
+      label: `${item.displayName || item.id} · ${item.ipv6CidrBlock || item.ipv6CidrBlocks?.[0] || '未启用 IPv6'}`,
+      value: item.id as string,
+    }))
+)
+const ociNetworkSecurityGroups = computed<SelectOption[]>(() =>
+  (ociCatalog.value?.network_security_groups ?? [])
+    .filter(item => item.id)
+    .map(item => ({ label: item.displayName || item.id, value: item.id as string }))
+)
+
+function resetOciForm() {
+  ociForm.value = {
+    asset_name: '', region: 'ap-tokyo-1', tenancy_ocid: '', user_ocid: '',
+    fingerprint: '', private_key: '', private_key_passphrase: '', compartment_ocid: '',
+    subnet_ocid: '', network_security_group_ocid: '', image_ocid: '',
+    shape: 'VM.Standard.E4.Flex', ssh_public_key: '', availability_domain: '',
+    ocpus: 1, memory_in_gbs: 6, tags_raw: '', remarks: '',
+    protocol_types: ['AnyTLS'], target_count: 1, max_count: 0, priority: 100,
+    allow_cdn_proxy: false,
+  }
+  ociCatalog.value = null
+  ociCatalogError.value = null
+}
+
+function ociCatalogCredentialsComplete(): boolean {
+  return [
+    ociForm.value.region,
+    ociForm.value.tenancy_ocid,
+    ociForm.value.user_ocid,
+    ociForm.value.fingerprint,
+    ociForm.value.private_key,
+    ociForm.value.compartment_ocid,
+  ].every(value => value.trim())
+}
+
+async function queryOciCatalog() {
+  if (!ociCatalogCredentialsComplete()) {
+    message.warning('请填写 Region、Tenancy/User OCID、Fingerprint、PEM 私钥和 Compartment OCID')
+    return
+  }
+  queryingOciCatalog.value = true
+  ociCatalogError.value = null
+  try {
+    const { data } = await apiClient.post<OCICatalogResponse>('/assets/oci/query-catalog', {
+      region: ociForm.value.region.trim(),
+      tenancy_ocid: ociForm.value.tenancy_ocid.trim(),
+      user_ocid: ociForm.value.user_ocid.trim(),
+      fingerprint: ociForm.value.fingerprint.trim(),
+      private_key: ociForm.value.private_key.trim(),
+      private_key_passphrase: ociForm.value.private_key_passphrase || undefined,
+      compartment_ocid: ociForm.value.compartment_ocid.trim(),
+      availability_domain: ociForm.value.availability_domain || undefined,
+      operating_system: 'Canonical Ubuntu',
+    })
+    ociCatalog.value = data
+    applyOciShapeConfiguration(ociForm.value.shape)
+    if (!ociForm.value.availability_domain && ociAvailabilityDomains.value[0]) {
+      ociForm.value.availability_domain = String(ociAvailabilityDomains.value[0].value)
+    }
+    message.success('OCI 凭据验证成功，资源目录已加载')
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { detail?: string } } }
+    ociCatalogError.value = e.response?.data?.detail || 'OCI 资源目录查询失败'
+    message.error(ociCatalogError.value)
+  } finally {
+    queryingOciCatalog.value = false
+  }
+}
+
+async function submitOciForm() {
+  const required: Array<[string, string]> = [
+    ['资产名称', ociForm.value.asset_name],
+    ['Region', ociForm.value.region],
+    ['Tenancy OCID', ociForm.value.tenancy_ocid],
+    ['User OCID', ociForm.value.user_ocid],
+    ['Fingerprint', ociForm.value.fingerprint],
+    ['PEM 私钥', ociForm.value.private_key],
+    ['Compartment OCID', ociForm.value.compartment_ocid],
+    ['Subnet OCID', ociForm.value.subnet_ocid],
+    ['NSG OCID', ociForm.value.network_security_group_ocid],
+    ['Image OCID', ociForm.value.image_ocid],
+    ['Shape', ociForm.value.shape],
+    ['SSH 公钥', ociForm.value.ssh_public_key],
+  ]
+  const missing = required.find(([, value]) => !value.trim())
+  if (missing) {
+    message.warning(`请填写${missing[0]}`)
+    return
+  }
+
+  submittingOci.value = true
+  try {
+    const body: OCIAssetCreateRequest = {
+      asset_name: ociForm.value.asset_name.trim(),
+      region: ociForm.value.region.trim(),
+      tenancy_ocid: ociForm.value.tenancy_ocid.trim(),
+      user_ocid: ociForm.value.user_ocid.trim(),
+      fingerprint: ociForm.value.fingerprint.trim(),
+      private_key: ociForm.value.private_key.trim(),
+      private_key_passphrase: ociForm.value.private_key_passphrase || undefined,
+      compartment_ocid: ociForm.value.compartment_ocid.trim(),
+      subnet_ocid: ociForm.value.subnet_ocid.trim(),
+      network_security_group_ocid: ociForm.value.network_security_group_ocid.trim(),
+      image_ocid: ociForm.value.image_ocid.trim(),
+      shape: ociForm.value.shape.trim(),
+      ssh_public_key: ociForm.value.ssh_public_key.trim(),
+      availability_domain: ociForm.value.availability_domain || undefined,
+      ocpus: ociForm.value.ocpus ?? undefined,
+      memory_in_gbs: ociForm.value.memory_in_gbs ?? undefined,
+      tags: splitList(ociForm.value.tags_raw),
+      remarks: ociForm.value.remarks || undefined,
+      protocol_type: ociForm.value.protocol_types[0] ?? null,
+      additional_protocol_types: ociForm.value.protocol_types.slice(1),
+      target_count: ociForm.value.target_count,
+      max_count: ociForm.value.max_count,
+      priority: ociForm.value.priority,
+      allow_cdn_proxy: ociForm.value.allow_cdn_proxy,
+      default_vcpu: Math.max(1, Math.ceil(ociForm.value.ocpus ?? 1)),
+    }
+    await apiClient.post<AssetResponse>('/assets/oci', body)
+    message.success('Oracle Cloud 资产注册成功')
+    closeModal()
+    resetOciForm()
+    await fetchAssets()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string; message?: string } } }
+    message.error(e.response?.data?.error || e.response?.data?.detail || e.response?.data?.message || '注册失败')
+  } finally {
+    submittingOci.value = false
+  }
+}
+
 
 // ── Self-Hosted Registration Form ──────────────────────────────────────────────
 const selfForm = ref({
@@ -1057,7 +1268,7 @@ onMounted(fetchAssets)
     <div class="page-header">
       <div class="header-left">
         <h1 class="page-title">账号与资产池</h1>
-        <p class="page-subtitle">管理 AWS、DigitalOcean、Vultr、Microsoft Azure 与自建资产，统一调度节点配额与协议</p>
+        <p class="page-subtitle">管理 AWS、DigitalOcean、Vultr、Microsoft Azure、Oracle Cloud 与自建资产，统一调度节点配额与协议</p>
       </div>
       <div class="header-right">
         <NSpace>
@@ -1097,6 +1308,10 @@ onMounted(fetchAssets)
       <div class="stat-card stat-azure">
         <div class="stat-value">{{ azureAssets.length }}</div>
         <div class="stat-label">Azure 资产</div>
+      </div>
+      <div class="stat-card stat-oci">
+        <div class="stat-value">{{ ociAssets.length }}</div>
+        <div class="stat-label">OCI 资产</div>
       </div>
       <div class="stat-card stat-self">
         <div class="stat-value">{{ selfAssets.length }}</div>
@@ -1159,6 +1374,14 @@ onMounted(fetchAssets)
           >
             Azure
             <span class="tab-badge tab-badge-azure">{{ azureAssets.length }}</span>
+          </button>
+          <button
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'oci' }"
+            @click="activeAssetFilter = 'oci'"
+          >
+            OCI
+            <span class="tab-badge tab-badge-oci">{{ ociAssets.length }}</span>
           </button>
           <button
             class="tab-btn"
@@ -1816,6 +2039,195 @@ onMounted(fetchAssets)
             </div>
           </div>
         </NTabPane>
+        <!-- Oracle Cloud Infrastructure Tab -->
+        <NTabPane name="oci" tab="Oracle Cloud 资产">
+          <div class="modal-form">
+            <NForm label-placement="left" label-width="150" size="medium">
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="资产名称" required>
+                    <NInput v-model:value="ociForm.asset_name" placeholder="my-oci-asset-01" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Region" required>
+                    <NInput v-model:value="ociForm.region" placeholder="ap-tokyo-1" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Tenancy OCID" required>
+                    <NInput v-model:value="ociForm.tenancy_ocid" placeholder="ocid1.tenancy.oc1..." />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="User OCID" required>
+                    <NInput v-model:value="ociForm.user_ocid" placeholder="ocid1.user.oc1..." />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Fingerprint" required>
+                    <NInput v-model:value="ociForm.fingerprint" placeholder="aa:bb:cc:..." />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="私钥密码">
+                    <NInput v-model:value="ociForm.private_key_passphrase" type="password" show-password-on="click" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="PEM 私钥" required>
+                    <NInput
+                      v-model:value="ociForm.private_key"
+                      type="textarea"
+                      :autosize="{ minRows: 4, maxRows: 8 }"
+                      placeholder="-----BEGIN PRIVATE KEY-----"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Compartment OCID" required>
+                    <NSpace vertical style="width: 100%">
+                      <NInput v-model:value="ociForm.compartment_ocid" placeholder="ocid1.compartment.oc1..." />
+                      <NButton
+                        :loading="queryingOciCatalog"
+                        :disabled="!ociCatalogCredentialsComplete()"
+                        @click="queryOciCatalog"
+                      >
+                        验证凭据并查询资源
+                      </NButton>
+                      <NAlert
+                        v-if="ociCatalogError"
+                        type="error"
+                        :title="ociCatalogError"
+                        closable
+                        @close="ociCatalogError = null"
+                      />
+                    </NSpace>
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>计算与网络</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="2">
+                  <NFormItem label="Availability Domain">
+                    <NSelect
+                      v-model:value="ociForm.availability_domain"
+                      :options="ociAvailabilityDomains"
+                      filterable
+                      tag
+                      clearable
+                      placeholder="留空时自动选择第一个"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Subnet OCID" required>
+                    <NSelect v-model:value="ociForm.subnet_ocid" :options="ociSubnets" filterable tag />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="NSG OCID" required>
+                    <NSelect
+                      v-model:value="ociForm.network_security_group_ocid"
+                      :options="ociNetworkSecurityGroups"
+                      filterable
+                      tag
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Image OCID" required>
+                    <NSelect v-model:value="ociForm.image_ocid" :options="ociImages" filterable tag />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Shape" required>
+                    <NSelect v-model:value="ociForm.shape" :options="ociShapes" filterable tag />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="OCPU">
+                    <NInputNumber v-model:value="ociForm.ocpus" :min="1" :step="1" :disabled="ociSelectedShape?.isFlexible === false" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="内存 (GB)">
+                    <NInputNumber v-model:value="ociForm.memory_in_gbs" :min="1" :step="1" :disabled="ociSelectedShape?.isFlexible === false" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="SSH 公钥" required>
+                    <NInput
+                      v-model:value="ociForm.ssh_public_key"
+                      type="textarea"
+                      :autosize="{ minRows: 2, maxRows: 4 }"
+                      placeholder="ssh-ed25519 AAAA..."
+                    />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>协议与容量配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="2">
+                  <NFormItem label="支持协议">
+                    <NCheckboxGroup v-model:value="ociForm.protocol_types">
+                      <NSpace>
+                        <NCheckbox v-for="opt in awsProtocolOptions" :key="String(opt.value)" :value="opt.value" :label="String(opt.label)" />
+                      </NSpace>
+                    </NCheckboxGroup>
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="目标节点数">
+                    <NInputNumber v-model:value="ociForm.target_count" :min="0" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="最大节点数">
+                    <NInputNumber v-model:value="ociForm.max_count" :min="0" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NCollapse>
+                <NCollapseItem title="高级设置" name="oci-advanced">
+                  <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                    <NGi span="1">
+                      <NFormItem label="优先级">
+                        <NInputNumber v-model:value="ociForm.priority" :min="1" style="width: 100%" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="1">
+                      <NFormItem label="允许 CDN">
+                        <NSwitch v-model:value="ociForm.allow_cdn_proxy" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="2">
+                      <NFormItem label="Freeform Tags">
+                        <NInput v-model:value="ociForm.tags_raw" type="textarea" :rows="2" placeholder="environment=production, owner=platform" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="2">
+                      <NFormItem label="备注">
+                        <NInput v-model:value="ociForm.remarks" type="textarea" :rows="2" />
+                      </NFormItem>
+                    </NGi>
+                  </NGrid>
+                </NCollapseItem>
+              </NCollapse>
+            </NForm>
+
+            <div class="modal-footer">
+              <NSpace>
+                <NButton @click="closeModal">取消</NButton>
+                <NButton type="primary" :loading="submittingOci" @click="submitOciForm">注册 Oracle Cloud 资产</NButton>
+              </NSpace>
+            </div>
+          </div>
+        </NTabPane>
+
 
         <!-- ── Self-Hosted Tab ───────────────────────────────────────────── -->
         <NTabPane name="self" tab="自建资产">
@@ -1994,12 +2406,13 @@ onMounted(fetchAssets)
 /* ── Stats Row ──────────────────────────────────────────────────────────────── */
 .stats-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 20px;
 }
 
 .stat-card {
-  flex: 1;
+  flex: 1 1 120px;
   background: white;
   border-radius: 12px;
   padding: 16px 20px;
@@ -2030,6 +2443,7 @@ onMounted(fetchAssets)
 .stat-do .stat-value   { color: #0080ff; }
 .stat-vultr .stat-value { color: #007bfc; }
 .stat-azure .stat-value { color: #0078d4; }
+.stat-oci .stat-value { color: #c74634; }
 .stat-self .stat-value { color: #8b5cf6; }
 .stat-active .stat-value { color: #10b981; }
 .stat-full .stat-value  { color: #f97316; }
@@ -2103,6 +2517,7 @@ onMounted(fetchAssets)
 .tab-badge-do   { background: rgba(0, 128, 255, 0.1); color: #0080ff; }
 .tab-badge-vultr { background: rgba(0, 123, 252, 0.1); color: #007bfc; }
 .tab-badge-azure { background: rgba(0, 120, 212, 0.1); color: #0078d4; }
+.tab-badge-oci { background: rgba(199, 70, 52, 0.1); color: #c74634; }
 .tab-badge-self { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
 
 /* ── Table ──────────────────────────────────────────────────────────────────── */

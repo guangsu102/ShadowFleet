@@ -9,6 +9,7 @@ from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.aws.sts_client import StsClientError, resolve_aws_account_id
 from infrastructure.azure import AzureClient, AzureCredentials, resolve_azure_vnet_name
 from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.oci import OCIClient, OCICredentials
 from infrastructure.vultr import VultrClient
 from infrastructure.self_hosted.ssh_client import SelfHostedSshClient, SelfHostedSshConfig
 from models.aws_credentials import AwsCredentials
@@ -17,6 +18,7 @@ from services.asset_application_models import (
     AssetRegistrationResult,
     AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    OCIAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
     VultrAssetRegistrationRequest,
 )
@@ -424,6 +426,128 @@ class AssetApplicationService:
             protocol_config_id=first_protocol_config_id,
         )
 
+    def register_oci_asset(
+        self,
+        request: OCIAssetRegistrationRequest,
+    ) -> AssetRegistrationResult:
+        self._validate_oci_registration_request(request)
+        credentials = OCICredentials(
+            tenancy_ocid=request.tenancy_ocid.strip(),
+            user_ocid=request.user_ocid.strip(),
+            fingerprint=request.fingerprint.strip(),
+            private_key=request.private_key.strip(),
+            private_key_passphrase=request.private_key_passphrase,
+        )
+        client = self._build_oci_client(credentials, request.region.strip())
+        client.validate_identity()
+        target = client.validate_provisioning_target(
+            compartment_ocid=request.compartment_ocid.strip(),
+            subnet_ocid=request.subnet_ocid.strip(),
+            network_security_group_ocid=request.network_security_group_ocid.strip(),
+            image_ocid=request.image_ocid.strip(),
+            shape=request.shape.strip(),
+            availability_domain=self._normalize_optional_text(request.availability_domain),
+        )
+        if not target.is_flexible_shape and (
+            request.ocpus is not None or request.memory_in_gbs is not None
+        ):
+            raise ValueError(
+                "OCPU and memory overrides are only valid for flexible OCI shapes"
+            )
+        freeform_tags: dict[str, str] = {}
+        for raw_tag in request.tags:
+            tag = raw_tag.strip()
+            if not tag:
+                continue
+            key, separator, value = tag.partition("=")
+            freeform_tags[key.strip()] = value.strip() if separator else "true"
+
+        provider_config: dict[str, object] = {
+            "tenancy_ocid": request.tenancy_ocid.strip(),
+            "fingerprint": request.fingerprint.strip(),
+            "compartment_ocid": request.compartment_ocid.strip(),
+            "subnet_ocid": request.subnet_ocid.strip(),
+            "network_security_group_ocid": request.network_security_group_ocid.strip(),
+            "image_ocid": request.image_ocid.strip(),
+            "ssh_public_key": request.ssh_public_key.strip(),
+            "availability_domain": target.availability_domain,
+            "shape_is_flexible": target.is_flexible_shape,
+            "freeform_tags": freeform_tags,
+        }
+        if request.private_key_passphrase is not None:
+            provider_config["private_key_passphrase"] = request.private_key_passphrase
+        if request.ocpus is not None:
+            provider_config["ocpus"] = request.ocpus
+        if request.memory_in_gbs is not None:
+            provider_config["memory_in_gbs"] = request.memory_in_gbs
+
+        asset_id = self._asset_repo.create_asset(
+            AssetCreateRequest(
+                asset_type="oci",
+                asset_name=request.asset_name.strip(),
+                region=request.region.strip(),
+                aws_account_id=f"oci:{request.tenancy_ocid.strip()}",
+                aws_access_key=request.user_ocid.strip(),
+                aws_secret_key=request.private_key.strip(),
+                default_instance_type=request.shape.strip(),
+                default_vcpu=request.default_vcpu,
+                default_architecture="x64",
+                provider_config=provider_config,
+                remarks=self._normalize_optional_text(request.remarks),
+            )
+        )
+        protocol_types = [request.protocol_type, *request.additional_protocol_types]
+        first_protocol_config_id: int | None = None
+        for index, protocol_type in enumerate(protocol for protocol in protocol_types if protocol):
+            protocol_config_id = self._asset_repo.upsert_asset_protocol_config(
+                AssetProtocolConfigRequest(
+                    asset_id=asset_id,
+                    protocol_type=protocol_type,
+                    target_count=request.target_count,
+                    max_count=request.max_count,
+                    priority=request.priority + index,
+                    allow_cdn_proxy=request.allow_cdn_proxy,
+                    instance_type=request.shape.strip(),
+                    vcpu=request.default_vcpu,
+                    architecture="x64",
+                    ami_id=request.image_ocid.strip(),
+                    subnet_id=request.subnet_ocid.strip(),
+                    security_group_id=request.network_security_group_ocid.strip(),
+                )
+            )
+            if first_protocol_config_id is None:
+                first_protocol_config_id = protocol_config_id
+
+        self._asset_repo.create_asset_event(
+            AssetEventCreateRequest(
+                asset_id=asset_id,
+                event_type="asset_registered_from_dashboard",
+                correlation_id=self._runtime_context.correlation_id,
+                message="OCI asset registered from dashboard.",
+                payload={
+                    "asset_name": request.asset_name.strip(),
+                    "region": request.region.strip(),
+                    "tenancy_ocid": request.tenancy_ocid.strip(),
+                    "compartment_ocid": request.compartment_ocid.strip(),
+                    "protocol_type": request.protocol_type,
+                },
+            )
+        )
+        self._logger.info(
+            "Registered OCI asset id=%s name=%s region=%s tenancy=%s",
+            asset_id,
+            request.asset_name,
+            request.region,
+            request.tenancy_ocid,
+        )
+        return AssetRegistrationResult(
+            asset_id=asset_id,
+            asset_name=request.asset_name.strip(),
+            protocol_config_id=first_protocol_config_id,
+        )
+
+
+
     @staticmethod
     def _vultr_provider_account_id(api_token: str) -> str:
         fingerprint = hashlib.sha256(api_token.strip().encode("utf-8")).hexdigest()[:24]
@@ -567,6 +691,47 @@ class AssetApplicationService:
             "locations": client.list_locations(),
             "vm_sizes": client.list_vm_sizes(location.strip()) if location and location.strip() else [],
         }
+    def query_oci_catalog(
+        self,
+        *,
+        region: str,
+        tenancy_ocid: str,
+        user_ocid: str,
+        fingerprint: str,
+        private_key: str,
+        compartment_ocid: str,
+        private_key_passphrase: str | None = None,
+        availability_domain: str | None = None,
+        operating_system: str | None = "Canonical Ubuntu",
+    ) -> dict[str, list[dict[str, object]]]:
+        client = self._build_oci_client(
+            OCICredentials(
+                tenancy_ocid=tenancy_ocid,
+                user_ocid=user_ocid,
+                fingerprint=fingerprint,
+                private_key=private_key,
+                private_key_passphrase=private_key_passphrase,
+            ),
+            region,
+        )
+        client.validate_identity()
+        domains = client.list_availability_domains(compartment_ocid)
+        selected_domain = self._normalize_optional_text(availability_domain)
+        return {
+            "availability_domains": domains,
+            "images": client.list_images(
+                compartment_ocid,
+                operating_system=operating_system,
+            ),
+            "shapes": client.list_shapes(
+                compartment_ocid,
+                availability_domain=selected_domain,
+            ),
+            "subnets": client.list_subnets(compartment_ocid),
+            "network_security_groups": client.list_network_security_groups(
+                compartment_ocid
+            ),
+        }
 
     def _build_ec2_client(
         self,
@@ -600,6 +765,17 @@ class AssetApplicationService:
 
     def _build_azure_client(self, credentials: AzureCredentials) -> AzureClient:
         return AzureClient(runtime_context=self._runtime_context, credentials=credentials)
+
+    def _build_oci_client(
+        self,
+        credentials: OCICredentials,
+        region: str,
+    ) -> OCIClient:
+        return OCIClient(
+            runtime_context=self._runtime_context,
+            credentials=credentials,
+            region=region,
+        )
 
     @staticmethod
     def _validate_digitalocean_registration_request(
@@ -642,6 +818,38 @@ class AssetApplicationService:
             raise ValueError("target_count 不能小于 0")
         if request.max_count < 0:
             raise ValueError("max_count 不能小于 0")
+        if request.max_count > 0 and request.target_count > request.max_count:
+            raise ValueError("target_count 不能大于 max_count")
+
+    @staticmethod
+    def _validate_oci_registration_request(
+        request: OCIAssetRegistrationRequest,
+    ) -> None:
+        required = {
+            "资产名称": request.asset_name,
+            "OCI 区域": request.region,
+            "Tenancy OCID": request.tenancy_ocid,
+            "User OCID": request.user_ocid,
+            "Fingerprint": request.fingerprint,
+            "PEM 私钥": request.private_key,
+            "Compartment OCID": request.compartment_ocid,
+            "Subnet OCID": request.subnet_ocid,
+            "NSG OCID": request.network_security_group_ocid,
+            "Image OCID": request.image_ocid,
+            "Shape": request.shape,
+            "SSH 公钥": request.ssh_public_key,
+        }
+        for label, value in required.items():
+            if not value or not value.strip():
+                raise ValueError(f"{label}不能为空")
+        if request.ocpus is not None and request.ocpus <= 0:
+            raise ValueError("OCPU 必须大于 0")
+        if request.memory_in_gbs is not None and request.memory_in_gbs <= 0:
+            raise ValueError("内存必须大于 0")
+        if request.default_vcpu is not None and request.default_vcpu <= 0:
+            raise ValueError("默认 vCPU 必须大于 0")
+        if request.target_count < 0 or request.max_count < 0:
+            raise ValueError("target_count 和 max_count 不能小于 0")
         if request.max_count > 0 and request.target_count > request.max_count:
             raise ValueError("target_count 不能大于 max_count")
 

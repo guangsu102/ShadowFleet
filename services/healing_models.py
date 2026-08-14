@@ -8,6 +8,7 @@ HealStrategy = Literal[
     "aws_ipv6_rotate",
     "azure_ipv6_rotate",
     "vultr_instance_replace",
+    "oci_ipv6_rotate",
     "cloudflare_enable_proxy",
     "manual_review_required",
     "aws_account_abandoned",

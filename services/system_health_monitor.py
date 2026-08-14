@@ -81,6 +81,7 @@ class SystemHealthMonitor:
                     f"发现 {orphan_report.total_count} 个孤儿资源: "
                     f"EC2={len(orphan_report.ec2_instances)}, "
                     f"Vultr={len(orphan_report.vultr_instances)}, "
+                    f"OCI={len(orphan_report.oci_instances)}, "
                     f"Azure={len(orphan_report.azure_vms)}, "
                     f"AzureNetwork={len(orphan_report.azure_network_resources)}, "
                     f"DNS={len(orphan_report.dns_records)}, "
@@ -180,6 +181,7 @@ class SystemHealthMonitor:
                 f"**孤儿资源**:",
                 f"- EC2 实例: {len(report.orphan_resource_report.ec2_instances)}",
                 f"- Vultr 实例: {len(report.orphan_resource_report.vultr_instances)}",
+                f"- OCI 实例: {len(report.orphan_resource_report.oci_instances)}",
                 f"- Azure VM: {len(report.orphan_resource_report.azure_vms)}",
                 (
                     "- Azure network resources: "

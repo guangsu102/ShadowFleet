@@ -6,6 +6,7 @@ from services.node_registry_service import NodeRegistryService
 from services.provisioning_aws_flow import provision_aws_node
 from services.provisioning_azure_flow import provision_azure_node
 from services.provisioning_digitalocean_flow import provision_digitalocean_node
+from services.provisioning_oci_flow import provision_oci_node
 from services.provisioning_vultr_flow import provision_vultr_node
 from services.provisioning_models import DnsRecordSnapshot, DnsSyncResult, ProvisionRequest, ProvisionResult
 from services.provisioning_self_hosted_flow import provision_self_hosted_node
@@ -49,4 +50,6 @@ class ProvisionerService:
             return provision_vultr_node(dependencies, self._asset_repo, request)
         if request.asset_type == "azure":
             return provision_azure_node(dependencies, self._asset_repo, request)
+        if request.asset_type == "oci":
+            return provision_oci_node(dependencies, self._asset_repo, request)
         return provision_aws_node(dependencies, self._asset_repo, request)

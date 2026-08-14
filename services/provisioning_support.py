@@ -58,7 +58,7 @@ def validate_request(request: ProvisionRequest) -> None:
         raise ValueError("server_port must be greater than 0")
     if request.rate <= Decimal("0"):
         raise ValueError("rate must be greater than 0")
-    if request.asset_type in ("aws", "azure", "digitalocean", "vultr") and request.protocol_type == "Hysteria2":
+    if request.asset_type in ("aws", "azure", "digitalocean", "oci", "vultr") and request.protocol_type == "Hysteria2":
         raise ProvisionerServiceError("Hysteria2 is not allowed on cloud assets")
     if request.require_cdn_proxy and request.protocol_type == "AnyTLS":
         raise ProvisionerServiceError("AnyTLS supports DNS linkage but must not use CDN proxy")

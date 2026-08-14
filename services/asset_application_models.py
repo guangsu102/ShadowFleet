@@ -121,6 +121,35 @@ class AzureAssetRegistrationRequest:
 
 
 @dataclass(frozen=True)
+class OCIAssetRegistrationRequest:
+    asset_name: str
+    region: str
+    tenancy_ocid: str
+    user_ocid: str
+    fingerprint: str
+    private_key: str
+    compartment_ocid: str
+    subnet_ocid: str
+    network_security_group_ocid: str
+    image_ocid: str
+    ssh_public_key: str
+    shape: str = "VM.Standard.E4.Flex"
+    private_key_passphrase: str | None = None
+    availability_domain: str | None = None
+    ocpus: float | None = None
+    memory_in_gbs: float | None = None
+    tags: tuple[str, ...] = ()
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: tuple[str, ...] = ()
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = None
+
+
+@dataclass(frozen=True)
 class SelfHostedAssetRegistrationRequest:
     """Request model for registering self-hosted (自建) assets."""
     asset_name: str

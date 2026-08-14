@@ -331,6 +331,34 @@ export interface AzureAssetCreateRequest {
   allow_cdn_proxy?: boolean
   default_vcpu?: number | null
 }
+export interface OCIAssetCreateRequest {
+  asset_name: string
+  region: string
+  tenancy_ocid: string
+  user_ocid: string
+  fingerprint: string
+  private_key: string
+  private_key_passphrase?: string | null
+  compartment_ocid: string
+  subnet_ocid: string
+  network_security_group_ocid: string
+  image_ocid: string
+  shape?: string
+  ssh_public_key: string
+  availability_domain?: string | null
+  ocpus?: number | null
+  memory_in_gbs?: number | null
+  tags?: string[]
+  remarks?: string | null
+  protocol_type?: string | null
+  additional_protocol_types?: string[]
+  target_count?: number
+  max_count?: number
+  priority?: number
+  allow_cdn_proxy?: boolean
+  default_vcpu?: number | null
+}
+
 
 export interface DigitalOceanImageInfo {
   id: number | string | null
@@ -383,6 +411,37 @@ export interface AzureCatalogResponse {
     resourceDiskSizeInMB?: number
   }>
 }
+export interface OCICatalogResponse {
+  availability_domains: Array<{ name?: string; id?: string; compartmentId?: string }>
+  images: Array<{
+    id?: string
+    displayName?: string
+    operatingSystem?: string
+    operatingSystemVersion?: string
+    lifecycleState?: string
+  }>
+  shapes: Array<{
+    shape?: string
+    ocpus?: number
+    memoryInGBs?: number
+    isFlexible?: boolean
+  }>
+  subnets: Array<{
+    id?: string
+    displayName?: string
+    vcnId?: string
+    cidrBlock?: string
+    ipv6CidrBlock?: string
+    ipv6CidrBlocks?: string[]
+  }>
+  network_security_groups: Array<{
+    id?: string
+    displayName?: string
+    vcnId?: string
+    lifecycleState?: string
+  }>
+}
+
 
 // ============ Nodes ============
 export interface NodeResponse {

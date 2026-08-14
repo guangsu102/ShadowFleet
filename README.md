@@ -19,8 +19,12 @@ ShadowFleet/
 ├── probe_agent/           # Probe agent for monitoring
 ├── infrastructure/        # Infrastructure as code
 │   ├── aws/              # AWS resources
+│   ├── azure/            # Microsoft Azure resources
 │   ├── cloudflare/       # Cloudflare resources
-│   └── self_hosted/      # Self-hosted resources
+│   ├── digitalocean/     # DigitalOcean resources
+│   ├── oci/              # Oracle Cloud resources
+│   ├── self_hosted/      # Self-hosted resources
+│   └── vultr/            # Vultr resources
 ├── tests/                 # Test suites
 │   ├── unit/             # Unit tests
 │   ├── integration/      # Integration tests

@@ -279,7 +279,13 @@ class TestFleetSchedulerConfig:
 
     def test_default_asset_types_include_all_cloud_providers(self) -> None:
         config = FleetSchedulerConfig()
-        assert config.enabled_asset_types == ["digitalocean", "vultr", "azure", "aws"]
+        assert config.enabled_asset_types == [
+            "digitalocean",
+            "vultr",
+            "azure",
+            "oci",
+            "aws",
+        ]
 
     def test_enabled_asset_types_rejects_empty_list(self) -> None:
         with pytest.raises(ValidationError, match="enabled_asset_types"):
