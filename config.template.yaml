@@ -166,5 +166,5 @@ fleet_scheduler:
   enabled_regions: ["*"]
   # 启用调度的协议列表（["*"] 表示所有协议）
   enabled_protocols: ["*"]
-  # 自动调度使用的云厂商顺序（支持 digitalocean、vultr、azure、oci、aws）
-  enabled_asset_types: ["digitalocean", "vultr", "azure", "oci", "aws"]
+  # 自动调度使用的云厂商顺序（支持 digitalocean、vultr、azure、oci、kamatera、aws）
+  enabled_asset_types: ["digitalocean", "vultr", "azure", "oci", "kamatera", "aws"]

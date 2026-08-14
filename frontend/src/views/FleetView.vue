@@ -44,7 +44,6 @@ const selectedNodeId = ref<number | null>(null)
 const formOperatorName = ref('')
 const formTaskType = ref<string | null>(null)
 const formReason = ref('')
-const formForceStrategy = ref<string | null>(null)
 const submitting = ref(false)
 const syncing = ref(false)
 const deletingNodeId = ref<number | null>(null)
@@ -141,27 +140,16 @@ const nodeSelectOptions = computed<SelectOption[]>(() => {
 // ── Computed: Manual Operation Options ───────────────────────────────────────
 const manualOpOptions = computed<SelectOption[]>(() => {
   if (!selectedNode.value) return []
-  const assetType = selectedNode.value.asset_type
-  if (assetType === 'aws') {
-    return [
-      { label: t('fleet.forceHeal'), value: 'force_heal' },
-      { label: t('fleet.decommissionNode'), value: 'decommission_node' },
-      { label: t('fleet.reprobeNode'), value: 'reprobe_node' },
-      { label: t('fleet.markManualReview'), value: 'mark_manual_review' },
-    ]
-  }
-  return [
-    { label: t('fleet.forceHealCf'), value: 'force_heal' },
+  const options: SelectOption[] = [
     { label: t('fleet.decommissionNode'), value: 'decommission_node' },
     { label: t('fleet.reprobeNode'), value: 'reprobe_node' },
     { label: t('fleet.markManualReview'), value: 'mark_manual_review' },
   ]
+  if (['aws', 'azure', 'digitalocean', 'kamatera', 'oci', 'vultr', 'self_hosted'].includes(selectedNode.value.asset_type)) {
+    options.unshift({ label: t('fleet.forceHeal'), value: 'force_heal' })
+  }
+  return options
 })
-
-const forceStrategyOptions: SelectOption[] = [
-  { label: t('fleet.keepStrategy'), value: 'keep' },
-  { label: t('fleet.replaceStrategy'), value: 'replace' },
-]
 
 // ── Computed: Fleet Summary Metrics ──────────────────────────────────────────
 const totalNodes = computed(() => snapshot.value?.node_rows.length ?? 0)
@@ -208,13 +196,12 @@ async function submitManualTask() {
       xboard_node_id: selectedNodeId.value,
       operator_name: formOperatorName.value || undefined,
       reason: formReason.value || undefined,
-      force_strategy: formForceStrategy.value || undefined,
+
     })
     message.success(t('fleet.taskSubmitted'))
     formOperatorName.value = ''
     formTaskType.value = null
     formReason.value = ''
-    formForceStrategy.value = null
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
     message.error(axiosErr.response?.data?.error || axiosErr.response?.data?.message || axiosErr.message || t('fleet.submitTaskFailed'))
@@ -291,7 +278,6 @@ function onSelectedNodeChange(val: number | null) {
   selectedNodeId.value = val
   formTaskType.value = null
   formReason.value = ''
-  formForceStrategy.value = null
   if (val !== null) {
     fetchEvents(val)
   } else {
@@ -316,7 +302,7 @@ function fmtTs(value: string | null | undefined): string {
   }
 }
 
-function maskAwsAccount(id: string | null): string {
+function maskProviderAccount(id: string | null): string {
   if (!id) return '—'
   return id.slice(0, 4) + '...'
 }
@@ -687,8 +673,8 @@ onUnmounted(() => {
                   <span class="fleet-detail-value fleet-detail-value--mono" style="font-size:11px">{{ selectedNode.ipv6_address ?? '—' }}</span>
                 </div>
                 <div class="fleet-detail-item">
-                  <span class="fleet-detail-label">{{ t('fleet.awsAccount') }}</span>
-                  <span class="fleet-detail-value fleet-detail-value--mono">{{ maskAwsAccount(selectedNode.aws_account_id) }}</span>
+                  <span class="fleet-detail-label">{{ t('fleet.providerAccount') }}</span>
+                  <span class="fleet-detail-value fleet-detail-value--mono">{{ maskProviderAccount(selectedNode.aws_account_id) }}</span>
                 </div>
                 <div class="fleet-detail-item">
                   <span class="fleet-detail-label">
@@ -768,13 +754,6 @@ onUnmounted(() => {
                   </NFormItem>
                   <NFormItem :label="t('fleet.reason')">
                     <NInput v-model:value="formReason" type="textarea" :placeholder="t('fleet.reason')" :rows="3" />
-                  </NFormItem>
-                  <NFormItem v-if="formTaskType === 'force_heal'" :label="t('fleet.forceStrategy')">
-                    <NSelect
-                      v-model:value="formForceStrategy"
-                      :options="forceStrategyOptions"
-                      :placeholder="t('fleet.forceStrategy')"
-                    />
                   </NFormItem>
                 </NForm>
               </div>

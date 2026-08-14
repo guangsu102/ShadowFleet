@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from database.asset_repo import AssetRepo
 from database.manual_operation_task_repo import (
     ManualOperationTaskCreateRequest,
@@ -8,8 +10,16 @@ from database.manual_operation_task_repo import (
 from database.state_repo import FleetNodeEventCreateRequest, StateRepo
 from database.xboard_repo import XboardRepo
 from services.healer_service import HealerService
-from services.healing_models import HealRequest
-from services.healing_support import AWS_HEALABLE_PROTOCOLS, OCI_HEALABLE_PROTOCOLS, SELF_HOSTED_PROXY_PROTOCOLS
+from services.healing_models import HealRequest, HealStrategy
+from services.healing_support import (
+    AWS_HEALABLE_PROTOCOLS,
+    AZURE_HEALABLE_PROTOCOLS,
+    DIGITALOCEAN_HEALABLE_PROTOCOLS,
+    KAMATERA_HEALABLE_PROTOCOLS,
+    OCI_HEALABLE_PROTOCOLS,
+    SELF_HOSTED_PROXY_PROTOCOLS,
+    VULTR_HEALABLE_PROTOCOLS,
+)
 from services.monitor_models import MonitorCandidate
 from services.monitor_support import infer_node_asset_type, is_in_heal_cooldown, to_monitor_candidate, utcnow
 from services.node_registry_service import NodeRegistryService
@@ -135,7 +145,9 @@ class ManualOperationService:
                 xboard_node_id=task_record.xboard_node_id,
                 reason=str(task_record.request_payload.get("reason") or "manual_force_heal"),
                 source="manual",
-                force_strategy=self._to_optional_text(task_record.request_payload.get("force_strategy")),
+                force_strategy=self._to_heal_strategy(
+                    task_record.request_payload.get("force_strategy")
+                ),
             )
         )
         return {
@@ -162,7 +174,8 @@ class ManualOperationService:
             "xboard_node_id": result.xboard_node_id,
             "status": result.status,
             "local_node_id": result.local_node_id,
-            "cloud_instance_deleted": infer_node_asset_type(node_record) in {"vultr", "azure", "oci"},
+            "cloud_instance_deleted": infer_node_asset_type(node_record)
+            in {"aws", "digitalocean", "kamatera", "vultr", "azure", "oci"},
         }
 
     def _execute_reprobe(self, task_record: ManualOperationTaskRecord) -> dict[str, object]:
@@ -247,16 +260,46 @@ class ManualOperationService:
         resolved_asset_type = asset_type or ("aws" if is_aws else "self_hosted")
         if resolved_asset_type == "aws" and node_type not in AWS_HEALABLE_PROTOCOLS:
             raise ValueError(f"AWS 节点协议不支持强制换 IP: {node_type}")
-        if resolved_asset_type == "vultr" and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
-            raise ValueError(f"Vultr 节点协议不支持 Cloudflare 保底: {node_type}")
-        if resolved_asset_type == "azure" and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
-            raise ValueError(f"Azure 节点协议不支持 Cloudflare 保底: {node_type}")
+        if (
+            resolved_asset_type == "digitalocean"
+            and node_type not in DIGITALOCEAN_HEALABLE_PROTOCOLS
+        ):
+            raise ValueError(
+                f"DigitalOcean 节点协议不支持实例替换自愈: {node_type}"
+            )
+        if resolved_asset_type == "kamatera" and node_type not in KAMATERA_HEALABLE_PROTOCOLS:
+            raise ValueError(f"Kamatera 节点协议不支持实例替换自愈: {node_type}")
+        if resolved_asset_type == "vultr" and node_type not in VULTR_HEALABLE_PROTOCOLS:
+            raise ValueError(f"Vultr 节点协议不支持实例替换自愈: {node_type}")
+        if resolved_asset_type == "azure" and node_type not in AZURE_HEALABLE_PROTOCOLS:
+            raise ValueError(f"Azure 节点协议不支持原生 IPv6 轮换: {node_type}")
         if resolved_asset_type == "oci" and node_type not in OCI_HEALABLE_PROTOCOLS:
             raise ValueError(f"OCI 节点协议不支持原生 IPv6 轮换: {node_type}")
         if resolved_asset_type == "self_hosted" and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
             raise ValueError(f"自建节点协议不支持 Cloudflare 保底: {node_type}")
-        if resolved_asset_type not in {"aws", "azure", "oci", "vultr", "self_hosted"}:
+        if resolved_asset_type not in {
+            "aws",
+            "azure",
+            "digitalocean",
+            "kamatera",
+            "oci",
+            "vultr",
+            "self_hosted",
+        }:
             raise ValueError(f"{resolved_asset_type} 节点暂不支持强制自愈")
+        expected_strategy = {
+            "aws": "aws_ipv6_rotate",
+            "azure": "azure_ipv6_rotate",
+            "digitalocean": "digitalocean_instance_replace",
+            "kamatera": "kamatera_instance_replace",
+            "oci": "oci_ipv6_rotate",
+            "vultr": "vultr_instance_replace",
+            "self_hosted": "cloudflare_enable_proxy",
+        }.get(resolved_asset_type)
+        if request.force_strategy is not None and request.force_strategy != expected_strategy:
+            raise ValueError(
+                f"{resolved_asset_type} 节点不支持自愈策略: {request.force_strategy}"
+            )
 
     @staticmethod
     def _normalize_optional_text(value: str | None) -> str | None:
@@ -271,3 +314,21 @@ class ManualOperationService:
             return None
         text = str(value).strip()
         return text or None
+
+    @staticmethod
+    def _to_heal_strategy(value: object) -> HealStrategy | None:
+        strategy = ManualOperationService._to_optional_text(value)
+        if strategy is None:
+            return None
+        supported = {
+            "aws_ipv6_rotate",
+            "azure_ipv6_rotate",
+            "digitalocean_instance_replace",
+            "kamatera_instance_replace",
+            "vultr_instance_replace",
+            "oci_ipv6_rotate",
+            "cloudflare_enable_proxy",
+        }
+        if strategy not in supported:
+            raise ValueError(f"不支持的自愈策略: {strategy}")
+        return cast(HealStrategy, strategy)

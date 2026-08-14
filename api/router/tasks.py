@@ -5,7 +5,11 @@ from pydantic import BaseModel, Field
 
 from api.auth.dependencies import get_current_user, require_operator
 from api.deps import get_runtime_context
-from services.manual_operation_models import ManualOperationRequest, ManualTaskType
+from services.manual_operation_models import (
+    ManualForceStrategy,
+    ManualOperationRequest,
+    ManualTaskType,
+)
 from services.manual_operation_service import ManualOperationService
 from services.provisioning_models import ProvisionRequest
 from services.provisioning_task_service import ProvisioningTaskService
@@ -54,11 +58,11 @@ class ProvisionTaskCreateRequest(BaseModel):
 
 
 class ManualTaskCreateRequest(BaseModel):
-    task_type: str = Field(...)
+    task_type: ManualTaskType
     xboard_node_id: int
     operator_name: str | None = None
     reason: str | None = None
-    force_strategy: str | None = None
+    force_strategy: ManualForceStrategy | None = None
 
 
 class TaskResponse(BaseModel):
@@ -237,7 +241,7 @@ async def submit_manual_task(
     try:
         result = ManualOperationService(ctx).submit_task(
             ManualOperationRequest(
-                task_type=ManualTaskType(request.task_type),
+                task_type=request.task_type,
                 xboard_node_id=request.xboard_node_id,
                 operator_name=request.operator_name,
                 reason=request.reason,

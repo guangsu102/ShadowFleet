@@ -31,7 +31,10 @@ class OrphanResourceReportResponse(BaseModel):
     scan_time: str
     total_count: int
     ec2_instances: list[dict]
+    digitalocean_droplets: list[dict]
+    digitalocean_snapshots: list[dict]
     vultr_instances: list[dict]
+    kamatera_servers: list[dict]
     oci_instances: list[dict]
     azure_vms: list[dict]
     azure_network_resources: list[dict]
@@ -42,7 +45,9 @@ class OrphanResourceReportResponse(BaseModel):
 
 class CleanupRequest(BaseModel):
     cleanup_ec2: bool = True
+    cleanup_digitalocean: bool = True
     cleanup_vultr: bool = True
+    cleanup_kamatera: bool = True
     cleanup_oci: bool = True
     cleanup_azure: bool = True
     cleanup_dns: bool = True
@@ -113,6 +118,29 @@ async def scan_orphan_resources(
             }
             for inst in report.ec2_instances
         ],
+        digitalocean_droplets=[
+            {
+                "droplet_id": droplet.droplet_id,
+                "asset_id": droplet.asset_id,
+                "region": droplet.region,
+                "name": droplet.name,
+                "created_at": droplet.created_at,
+                "status": droplet.status,
+                "tags": list(droplet.tags),
+            }
+            for droplet in report.digitalocean_droplets
+        ],
+        digitalocean_snapshots=[
+            {
+                "snapshot_id": snapshot.snapshot_id,
+                "asset_id": snapshot.asset_id,
+                "name": snapshot.name,
+                "created_at": snapshot.created_at,
+                "resource_id": snapshot.resource_id,
+                "tags": list(snapshot.tags),
+            }
+            for snapshot in report.digitalocean_snapshots
+        ],
         vultr_instances=[
             {
                 "instance_id": inst.instance_id,
@@ -125,6 +153,18 @@ async def scan_orphan_resources(
                 "firewall_group_id": inst.firewall_group_id,
             }
             for inst in report.vultr_instances
+        ],
+        kamatera_servers=[
+            {
+                "server_id": server.server_id,
+                "asset_id": server.asset_id,
+                "datacenter": server.datacenter,
+                "name": server.name,
+                "created_at": server.created_at,
+                "power": server.power,
+                "tags": list(server.tags),
+            }
+            for server in report.kamatera_servers
         ],
         oci_instances=[
             {
@@ -214,7 +254,9 @@ async def cleanup_orphan_resources(
     cleanup_report = cleaner.cleanup_orphan_resources(
         orphan_report,
         cleanup_ec2=request.cleanup_ec2,
+        cleanup_digitalocean=request.cleanup_digitalocean,
         cleanup_vultr=request.cleanup_vultr,
+        cleanup_kamatera=request.cleanup_kamatera,
         cleanup_oci=request.cleanup_oci,
         cleanup_azure=request.cleanup_azure,
         cleanup_dns=request.cleanup_dns,
@@ -318,7 +360,14 @@ async def check_system_health(
         orphan_resource_summary={
             "total_count": report.orphan_resource_report.total_count,
             "ec2_instances": len(report.orphan_resource_report.ec2_instances),
+            "digitalocean_droplets": len(
+                report.orphan_resource_report.digitalocean_droplets
+            ),
+            "digitalocean_snapshots": len(
+                report.orphan_resource_report.digitalocean_snapshots
+            ),
             "vultr_instances": len(report.orphan_resource_report.vultr_instances),
+            "kamatera_servers": len(report.orphan_resource_report.kamatera_servers),
             "oci_instances": len(report.orphan_resource_report.oci_instances),
             "azure_vms": len(report.orphan_resource_report.azure_vms),
             "azure_network_resources": len(

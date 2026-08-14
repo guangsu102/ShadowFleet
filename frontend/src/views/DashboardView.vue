@@ -295,7 +295,7 @@ const assetColumns = [
   { title: t('dashboard.allocated'), key: 'allocated_count', align: 'center' as const },
   { title: 'Target', key: 'target_count', align: 'center' as const },
   { title: t('dashboard.max'), key: 'max_count', align: 'center' as const },
-  { title: t('dashboard.awsAccount'), key: 'aws_account_id', ellipsis: { tooltip: true } },
+  { title: t('dashboard.providerAccount'), key: 'aws_account_id', ellipsis: { tooltip: true } },
 ]
 
 // ── Fleet Node Table ──────────────────────────────────────────────────────────

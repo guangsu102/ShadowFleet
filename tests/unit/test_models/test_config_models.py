@@ -284,6 +284,7 @@ class TestFleetSchedulerConfig:
             "vultr",
             "azure",
             "oci",
+            "kamatera",
             "aws",
         ]
 

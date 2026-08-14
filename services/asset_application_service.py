@@ -9,6 +9,7 @@ from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.aws.sts_client import StsClientError, resolve_aws_account_id
 from infrastructure.azure import AzureClient, AzureCredentials, resolve_azure_vnet_name
 from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.kamatera import KamateraClient
 from infrastructure.oci import OCIClient, OCICredentials
 from infrastructure.vultr import VultrClient
 from infrastructure.self_hosted.ssh_client import SelfHostedSshClient, SelfHostedSshConfig
@@ -18,6 +19,7 @@ from services.asset_application_models import (
     AssetRegistrationResult,
     AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    KamateraAssetRegistrationRequest,
     OCIAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
     VultrAssetRegistrationRequest,
@@ -152,7 +154,11 @@ class AssetApplicationService:
 
         client = self._build_digitalocean_client(request.digitalocean_token)
         account = client.validate_account()
-        account_id = self._normalize_optional_text(str(account.get("uuid") or "")) or "digitalocean"
+        raw_account_id = (
+            self._normalize_optional_text(str(account.get("uuid") or ""))
+            or "unknown"
+        )
+        account_id = f"digitalocean:{raw_account_id}"
 
         tags = tuple(tag.strip() for tag in request.tags if tag and tag.strip())
         provider_config: dict[str, object] = {
@@ -327,6 +333,98 @@ class AssetApplicationService:
             protocol_config_id=first_protocol_config_id,
         )
 
+    def register_kamatera_asset(
+        self,
+        request: KamateraAssetRegistrationRequest,
+    ) -> AssetRegistrationResult:
+        self._validate_kamatera_registration_request(request)
+        client = self._build_kamatera_client(request.client_id, request.secret)
+        client.validate_account()
+        client.validate_provisioning_target(
+            datacenter=request.datacenter.strip(),
+            image=request.image.strip(),
+        )
+        cpu_type = request.cpu_type.strip().upper()
+        cpu = f"{request.cpu_cores}{cpu_type}"
+        tags = tuple(tag.strip() for tag in request.tags if tag and tag.strip())
+        provider_config: dict[str, object] = {
+            "image": request.image.strip(),
+            "ssh_public_key": request.ssh_public_key.strip(),
+            "cpu_type": cpu_type,
+            "cpu_cores": request.cpu_cores,
+            "ram_mb": request.ram_mb,
+            "disk_sizes_gb": list(request.disk_sizes_gb),
+            "billing_cycle": request.billing_cycle.strip().lower(),
+            "daily_backup": request.daily_backup,
+            "managed": request.managed,
+            "tags": list(dict.fromkeys(("shadowfleet", *tags))),
+        }
+        monthly_package = self._normalize_optional_text(request.monthly_package)
+        if monthly_package:
+            provider_config["monthly_package"] = monthly_package
+
+        account_id = self._kamatera_provider_account_id(request.client_id)
+        asset_id = self._asset_repo.create_asset(
+            AssetCreateRequest(
+                asset_type="kamatera",
+                asset_name=request.asset_name.strip(),
+                region=request.datacenter.strip(),
+                aws_account_id=account_id,
+                aws_access_key=request.client_id.strip(),
+                aws_secret_key=request.secret.strip(),
+                default_instance_type=cpu,
+                default_vcpu=request.cpu_cores,
+                default_architecture="x64",
+                provider_config=provider_config,
+                remarks=self._normalize_optional_text(request.remarks),
+            )
+        )
+        protocol_types = [request.protocol_type, *request.additional_protocol_types]
+        first_protocol_config_id: int | None = None
+        for index, protocol_type in enumerate(protocol for protocol in protocol_types if protocol):
+            protocol_config_id = self._asset_repo.upsert_asset_protocol_config(
+                AssetProtocolConfigRequest(
+                    asset_id=asset_id,
+                    protocol_type=protocol_type,
+                    target_count=request.target_count,
+                    max_count=request.max_count,
+                    priority=request.priority + index,
+                    allow_cdn_proxy=request.allow_cdn_proxy,
+                    instance_type=cpu,
+                    vcpu=request.cpu_cores,
+                    architecture="x64",
+                    ami_id=request.image.strip(),
+                )
+            )
+            if first_protocol_config_id is None:
+                first_protocol_config_id = protocol_config_id
+
+        self._asset_repo.create_asset_event(
+            AssetEventCreateRequest(
+                asset_id=asset_id,
+                event_type="asset_registered_from_dashboard",
+                correlation_id=self._runtime_context.correlation_id,
+                message="Kamatera asset registered from dashboard.",
+                payload={
+                    "asset_name": request.asset_name.strip(),
+                    "datacenter": request.datacenter.strip(),
+                    "account_id": account_id,
+                    "protocol_type": request.protocol_type,
+                },
+            )
+        )
+        self._logger.info(
+            "Registered Kamatera asset id=%s name=%s datacenter=%s",
+            asset_id,
+            request.asset_name,
+            request.datacenter,
+        )
+        return AssetRegistrationResult(
+            asset_id=asset_id,
+            asset_name=request.asset_name.strip(),
+            protocol_config_id=first_protocol_config_id,
+        )
+
     def register_azure_asset(
         self,
         request: AzureAssetRegistrationRequest,
@@ -491,7 +589,7 @@ class AssetApplicationService:
                 aws_secret_key=request.private_key.strip(),
                 default_instance_type=request.shape.strip(),
                 default_vcpu=request.default_vcpu,
-                default_architecture="x64",
+                default_architecture=target.architecture,
                 provider_config=provider_config,
                 remarks=self._normalize_optional_text(request.remarks),
             )
@@ -509,7 +607,7 @@ class AssetApplicationService:
                     allow_cdn_proxy=request.allow_cdn_proxy,
                     instance_type=request.shape.strip(),
                     vcpu=request.default_vcpu,
-                    architecture="x64",
+                    architecture=target.architecture,
                     ami_id=request.image_ocid.strip(),
                     subnet_id=request.subnet_ocid.strip(),
                     security_group_id=request.network_security_group_ocid.strip(),
@@ -552,6 +650,11 @@ class AssetApplicationService:
     def _vultr_provider_account_id(api_token: str) -> str:
         fingerprint = hashlib.sha256(api_token.strip().encode("utf-8")).hexdigest()[:24]
         return f"vultr:{fingerprint}"
+
+    @staticmethod
+    def _kamatera_provider_account_id(client_id: str) -> str:
+        client_digest = hashlib.sha256(client_id.strip().encode("utf-8")).hexdigest()[:24]
+        return f"kamatera:{client_digest}"
 
     @staticmethod
     def _validate_registration_request(request: AssetRegistrationRequest) -> None:
@@ -670,6 +773,25 @@ class AssetApplicationService:
             "firewall_groups": client.list_firewall_groups(),
         }
 
+    def query_kamatera_catalog(
+        self,
+        client_id: str,
+        secret: str,
+        datacenter: str | None = None,
+    ) -> dict[str, object]:
+        client = self._build_kamatera_client(client_id, secret)
+        client.validate_account()
+        normalized_datacenter = self._normalize_optional_text(datacenter)
+        return {
+            "datacenters": client.list_datacenters(),
+            "images": client.list_images(normalized_datacenter) if normalized_datacenter else [],
+            "capabilities": (
+                client.get_capabilities(normalized_datacenter)
+                if normalized_datacenter
+                else {}
+            ),
+        }
+
     def query_azure_catalog(
         self,
         tenant_id: str,
@@ -763,6 +885,13 @@ class AssetApplicationService:
             api_token=vultr_token,
         )
 
+    def _build_kamatera_client(self, client_id: str, secret: str) -> KamateraClient:
+        return KamateraClient(
+            runtime_context=self._runtime_context,
+            client_id=client_id,
+            secret=secret,
+        )
+
     def _build_azure_client(self, credentials: AzureCredentials) -> AzureClient:
         return AzureClient(runtime_context=self._runtime_context, credentials=credentials)
 
@@ -818,6 +947,43 @@ class AssetApplicationService:
             raise ValueError("target_count 不能小于 0")
         if request.max_count < 0:
             raise ValueError("max_count 不能小于 0")
+        if request.max_count > 0 and request.target_count > request.max_count:
+            raise ValueError("target_count 不能大于 max_count")
+
+    @staticmethod
+    def _validate_kamatera_registration_request(
+        request: KamateraAssetRegistrationRequest,
+    ) -> None:
+        required = {
+            "资产名称": request.asset_name,
+            "Kamatera Datacenter": request.datacenter,
+            "Kamatera Client ID": request.client_id,
+            "Kamatera Secret": request.secret,
+            "Kamatera Image": request.image,
+            "SSH 公钥": request.ssh_public_key,
+        }
+        for label, value in required.items():
+            if not value or not value.strip():
+                raise ValueError(f"{label}不能为空")
+        if request.cpu_type.strip().upper() not in {"A", "B", "T", "D"}:
+            raise ValueError("Kamatera CPU 类型必须是 A、B、T 或 D")
+        if request.cpu_cores <= 0:
+            raise ValueError("Kamatera CPU 核数必须大于 0")
+        if request.ram_mb < 256:
+            raise ValueError("Kamatera 内存不能小于 256 MB")
+        if not request.disk_sizes_gb or len(request.disk_sizes_gb) > 4:
+            raise ValueError("Kamatera 磁盘数量必须为 1-4 块")
+        if any(size <= 0 for size in request.disk_sizes_gb):
+            raise ValueError("Kamatera 磁盘容量必须大于 0")
+        billing_cycle = request.billing_cycle.strip().lower()
+        if billing_cycle not in {"hourly", "monthly"}:
+            raise ValueError("Kamatera billing_cycle 必须是 hourly 或 monthly")
+        if billing_cycle == "monthly" and not (
+            request.monthly_package and request.monthly_package.strip()
+        ):
+            raise ValueError("Kamatera 月付模式必须指定 monthly_package")
+        if request.target_count < 0 or request.max_count < 0:
+            raise ValueError("target_count 和 max_count 不能小于 0")
         if request.max_count > 0 and request.target_count > request.max_count:
             raise ValueError("target_count 不能大于 max_count")
 

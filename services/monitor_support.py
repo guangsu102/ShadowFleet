@@ -12,6 +12,18 @@ def infer_node_asset_type(node_record: FleetNodeRecord) -> str:
     if isinstance(account_id, str):
         normalized_account_id = account_id.strip().lower()
         if (
+            (
+                normalized_account_id == "digitalocean"
+                or normalized_account_id.startswith("digitalocean:")
+            )
+            and (
+                not isinstance(asset_type, str)
+                or not asset_type.strip()
+                or asset_type.strip() == "aws"
+            )
+        ):
+            return "digitalocean"
+        if (
             normalized_account_id == "vultr"
             or normalized_account_id.startswith("vultr:")
         ) and (
@@ -29,6 +41,15 @@ def infer_node_asset_type(node_record: FleetNodeRecord) -> str:
             or asset_type.strip() == "aws"
         ):
             return "azure"
+        if (
+            normalized_account_id == "kamatera"
+            or normalized_account_id.startswith("kamatera:")
+        ) and (
+            not isinstance(asset_type, str)
+            or not asset_type.strip()
+            or asset_type.strip() == "aws"
+        ):
+            return "kamatera"
         if (
             normalized_account_id == "oci"
             or normalized_account_id.startswith("oci:")

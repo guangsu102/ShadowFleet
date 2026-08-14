@@ -11,6 +11,15 @@ ManualTaskType = Literal[
     "mark_manual_review",
 ]
 ManualTaskStatus = Literal["queued", "running", "succeeded", "failed"]
+ManualForceStrategy = Literal[
+    "aws_ipv6_rotate",
+    "azure_ipv6_rotate",
+    "digitalocean_instance_replace",
+    "kamatera_instance_replace",
+    "vultr_instance_replace",
+    "oci_ipv6_rotate",
+    "cloudflare_enable_proxy",
+]
 
 
 @dataclass(frozen=True)
@@ -19,7 +28,7 @@ class ManualOperationRequest:
     xboard_node_id: int
     operator_name: str | None = None
     reason: str | None = None
-    force_strategy: str | None = None
+    force_strategy: ManualForceStrategy | None = None
 
 
 @dataclass(frozen=True)

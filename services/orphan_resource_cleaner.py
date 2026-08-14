@@ -19,6 +19,8 @@ from database.xboard_repo import XboardRepo
 from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.cloudflare.cf_client import CFClient
+from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.kamatera import KamateraClient
 from infrastructure.vultr import VultrClient
 from infrastructure.oci import OCIClient, OCICredentials
 from models.aws_credentials import AwsCredentials
@@ -26,8 +28,11 @@ from services.orphan_resource_detector import (
     OrphanAssetAllocation,
     OrphanAzureNetworkResource,
     OrphanAzureVm,
+    OrphanDigitalOceanDroplet,
+    OrphanDigitalOceanSnapshot,
     OrphanDnsRecord,
     OrphanEc2Instance,
+    OrphanKamateraServer,
     OrphanResourceReport,
     OrphanOCIInstance,
     OrphanVultrInstance,
@@ -81,7 +86,9 @@ class OrphanResourceCleaner:
         cleanup_allocations: bool = True,
         cleanup_xboard: bool = True,
         dry_run: bool = False,
+        cleanup_digitalocean: bool = True,
         cleanup_vultr: bool = True,
+        cleanup_kamatera: bool = True,
         cleanup_azure: bool = True,
         cleanup_oci: bool = True,
     ) -> CleanupReport:
@@ -112,8 +119,27 @@ class OrphanResourceCleaner:
             if cleanup_ec2:
                 results.extend(self._cleanup_ec2_instances(report.ec2_instances, dry_run))
 
+            if cleanup_digitalocean:
+                results.extend(
+                    self._cleanup_digitalocean_droplets(
+                        report.digitalocean_droplets,
+                        dry_run,
+                    )
+                )
+                results.extend(
+                    self._cleanup_digitalocean_snapshots(
+                        report.digitalocean_snapshots,
+                        dry_run,
+                    )
+                )
+
             if cleanup_vultr:
                 results.extend(self._cleanup_vultr_instances(report.vultr_instances, dry_run))
+
+            if cleanup_kamatera:
+                results.extend(
+                    self._cleanup_kamatera_servers(report.kamatera_servers, dry_run)
+                )
 
             if cleanup_azure:
                 results.extend(self._cleanup_azure_vms(report.azure_vms, dry_run))
@@ -235,6 +261,88 @@ class OrphanResourceCleaner:
 
         return results
 
+    def _cleanup_digitalocean_droplets(
+        self,
+        droplets: list[OrphanDigitalOceanDroplet],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        results: list[CleanupResult] = []
+        for droplet in droplets:
+            try:
+                if not dry_run:
+                    asset = self._asset_repo.get_asset_by_id(droplet.asset_id)
+                    if asset.asset_type != "digitalocean" or not asset.aws_access_key:
+                        raise OrphanResourceCleanerError(
+                            "DigitalOcean credentials missing for "
+                            f"asset_id={droplet.asset_id}"
+                        )
+                    DigitalOceanClient(
+                        self._runtime,
+                        api_token=asset.aws_access_key,
+                    ).delete_droplet(droplet.droplet_id)
+                results.append(
+                    CleanupResult(
+                        resource_type="digitalocean_droplet",
+                        resource_id=droplet.droplet_id,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to cleanup DigitalOcean Droplet %s: %s",
+                    droplet.droplet_id,
+                    exc,
+                )
+                results.append(
+                    CleanupResult(
+                        resource_type="digitalocean_droplet",
+                        resource_id=droplet.droplet_id,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
+    def _cleanup_digitalocean_snapshots(
+        self,
+        snapshots: list[OrphanDigitalOceanSnapshot],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        results: list[CleanupResult] = []
+        for snapshot in snapshots:
+            try:
+                if not dry_run:
+                    asset = self._asset_repo.get_asset_by_id(snapshot.asset_id)
+                    if asset.asset_type != "digitalocean" or not asset.aws_access_key:
+                        raise OrphanResourceCleanerError(
+                            "DigitalOcean credentials missing for "
+                            f"asset_id={snapshot.asset_id}"
+                        )
+                    DigitalOceanClient(
+                        self._runtime,
+                        api_token=asset.aws_access_key,
+                    ).delete_snapshot(snapshot.snapshot_id)
+                results.append(
+                    CleanupResult(
+                        resource_type="digitalocean_snapshot",
+                        resource_id=snapshot.snapshot_id,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to cleanup DigitalOcean snapshot %s: %s",
+                    snapshot.snapshot_id,
+                    exc,
+                )
+                results.append(
+                    CleanupResult(
+                        resource_type="digitalocean_snapshot",
+                        resource_id=snapshot.snapshot_id,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
     def _cleanup_vultr_instances(
         self,
         instances: list[OrphanVultrInstance],
@@ -273,6 +381,55 @@ class OrphanResourceCleaner:
                     CleanupResult(
                         resource_type="vultr_instance",
                         resource_id=instance.instance_id,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
+
+    def _cleanup_kamatera_servers(
+        self,
+        servers: list[OrphanKamateraServer],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        results: list[CleanupResult] = []
+        for server in servers:
+            try:
+                if not dry_run:
+                    asset = self._asset_repo.get_asset_by_id(server.asset_id)
+                    if (
+                        asset.asset_type != "kamatera"
+                        or not asset.aws_access_key
+                        or not asset.aws_secret_key
+                    ):
+                        raise ValueError("Kamatera credentials are unavailable")
+                    KamateraClient(
+                        self._runtime,
+                        client_id=asset.aws_access_key,
+                        secret=asset.aws_secret_key,
+                    ).delete_server(server.server_id)
+                else:
+                    self._logger.info(
+                        "[DRY RUN] Would delete Kamatera server: %s",
+                        server.server_id,
+                    )
+                results.append(
+                    CleanupResult(
+                        resource_type="kamatera_server",
+                        resource_id=server.server_id,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to cleanup Kamatera server %s: %s",
+                    server.server_id,
+                    exc,
+                )
+                results.append(
+                    CleanupResult(
+                        resource_type="kamatera_server",
+                        resource_id=server.server_id,
                         success=False,
                         error_message=str(exc),
                     )

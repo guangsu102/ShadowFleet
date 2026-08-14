@@ -47,6 +47,7 @@ class OCIProvisioningTarget:
     availability_domain: str
     shape: str
     is_flexible_shape: bool
+    architecture: str = "x64"
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,20 @@ class OCIClient:
             params["availabilityDomain"] = availability_domain.strip()
         return self._list_collection("/shapes", params=params)
 
+    def list_image_shape_compatibility_entries(
+        self,
+        compartment_ocid: str,
+        image_ocid: str,
+        shape: str,
+    ) -> list[dict[str, Any]]:
+        return self._list_collection(
+            f"/images/{_required_text(image_ocid, 'image_ocid')}/shapes",
+            params={
+                "compartmentId": _required_text(compartment_ocid, "compartment_ocid"),
+                "shapeName": _required_text(shape, "shape"),
+            },
+        )
+
     def list_subnets(self, compartment_ocid: str) -> list[dict[str, Any]]:
         return self._list_collection(
             "/subnets",
@@ -245,10 +260,21 @@ class OCIClient:
             "shape",
             "shape",
         )
+        selected_shape_name = _required_text(selected_shape.get("shape"), "shape")
+        if not self.list_image_shape_compatibility_entries(
+            compartment_id,
+            image_ocid,
+            selected_shape_name,
+        ):
+            raise OCIClientError(
+                f"OCI image is not compatible with shape: "
+                f"image={image_ocid} shape={selected_shape_name}"
+            )
         return OCIProvisioningTarget(
             availability_domain=selected_domain,
-            shape=_required_text(selected_shape.get("shape"), "shape"),
+            shape=selected_shape_name,
             is_flexible_shape=bool(selected_shape.get("isFlexible")),
+            architecture=_shape_architecture(selected_shape),
         )
 
     def list_network_security_group_rules(self, nsg_ocid: str) -> list[dict[str, Any]]:
@@ -790,6 +816,16 @@ def _first_ipv6_address(resources: list[dict[str, Any]]) -> str | None:
         if address:
             return address
     return None
+
+
+def _shape_architecture(shape: dict[str, Any]) -> str:
+    shape_name = str(shape.get("shape") or "").casefold()
+    processor = str(shape.get("processorDescription") or "").casefold()
+    if any(token in shape_name for token in (".a1.", ".a2.")):
+        return "arm64"
+    if "ampere" in processor or "arm" in processor:
+        return "arm64"
+    return "x64"
 
 
 def _required_text(value: object, field_name: str) -> str:

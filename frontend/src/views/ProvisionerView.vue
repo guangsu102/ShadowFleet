@@ -30,7 +30,7 @@ import {
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 import apiClient from '@/api/client'
-import type { ProvisionTaskCreateRequest, TaskResponse, SubmitResult, XboardGroupResponse } from '@/types/api'
+import type { AssetResponse, ProvisionTaskCreateRequest, TaskResponse, SubmitResult, XboardGroupResponse } from '@/types/api'
 
 const message = useMessage()
 
@@ -92,6 +92,7 @@ const submitSuccess = ref<SubmitResult | null>(null)
 // Groups
 const groups = ref<XboardGroupResponse[]>([])
 const groupsLoading = ref(false)
+const assets = ref<AssetResponse[]>([])
 
 // ── Detail Drawer ─────────────────────────────────────────────────────────────
 const showDetailDrawer = ref(false)
@@ -175,6 +176,17 @@ const protocolOptions = computed<SelectOption[]>(() =>
     .map(protocol => ({ label: protocol, value: protocol }))
 )
 const regionOptions: SelectOption[] = REGIONS.map(r => ({ label: `${REGION_MAP[r]} (${r})`, value: r }))
+const digitalOceanRegionOptions: SelectOption[] = [
+  { label: '新加坡 (sgp1)', value: 'sgp1' },
+  { label: '纽约 (nyc3)', value: 'nyc3' },
+  { label: '旧金山 (sfo3)', value: 'sfo3' },
+  { label: '阿姆斯特丹 (ams3)', value: 'ams3' },
+  { label: '伦敦 (lon1)', value: 'lon1' },
+  { label: '法兰克福 (fra1)', value: 'fra1' },
+  { label: '多伦多 (tor1)', value: 'tor1' },
+  { label: '班加罗尔 (blr1)', value: 'blr1' },
+  { label: '悉尼 (syd1)', value: 'syd1' },
+]
 const vultrRegionOptions: SelectOption[] = [
   { label: '新加坡 (sgp)', value: 'sgp' },
   { label: '东京 (nrt)', value: 'nrt' },
@@ -211,25 +223,44 @@ const ociRegionOptions: SelectOption[] = [
   { label: '伦敦 (uk-london-1)', value: 'uk-london-1' },
   { label: '法兰克福 (eu-frankfurt-1)', value: 'eu-frankfurt-1' },
 ]
-const selectedRegionOptions = computed(() => {
+const kamateraRegionOptions: SelectOption[] = [
+  { label: '亚洲 (AS)', value: 'AS' },
+]
+
+const selectedRegionOptions = computed<SelectOption[]>(() => {
+  const registeredRegions = [...new Set(
+    assets.value
+      .filter(asset => asset.status === 'active' && asset.asset_type === assetType.value)
+      .map(asset => asset.region)
+      .filter((value): value is string => Boolean(value))
+  )]
+  if (registeredRegions.length > 0) {
+    return registeredRegions.map(value => ({ label: value, value }))
+  }
+  if (assetType.value === 'digitalocean') return digitalOceanRegionOptions
   if (assetType.value === 'vultr') return vultrRegionOptions
   if (assetType.value === 'azure') return azureRegionOptions
   if (assetType.value === 'oci') return ociRegionOptions
+  if (assetType.value === 'kamatera') return kamateraRegionOptions
   return regionOptions
 })
 const assetTypeOptions: SelectOption[] = [
   { label: 'AWS', value: 'aws' },
+  { label: 'DigitalOcean', value: 'digitalocean' },
   { label: 'Vultr', value: 'vultr' },
   { label: 'Microsoft Azure', value: 'azure' },
   { label: 'Oracle Cloud', value: 'oci' },
+  { label: 'Kamatera', value: 'kamatera' },
   { label: '自建服务器', value: 'self_hosted' },
 ]
 watch(assetType, (nextAssetType, previousAssetType) => {
   const defaultRegions: Record<string, string> = {
     aws: 'ap-northeast-1',
+    digitalocean: 'sgp1',
     vultr: 'sgp',
     azure: 'japaneast',
     oci: 'ap-tokyo-1',
+    kamatera: 'AS',
   }
   if (nextAssetType !== 'self_hosted' && protocolType.value === 'Hysteria2') {
     protocolType.value = 'AnyTLS'
@@ -283,6 +314,15 @@ async function fetchTasks() {
     errorMsg.value = axiosErr.response?.data?.error || axiosErr.message || '加载任务失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchAssets() {
+  try {
+    const { data } = await apiClient.get<AssetResponse[]>('/assets')
+    assets.value = data
+  } catch {
+    assets.value = []
   }
 }
 
@@ -450,7 +490,7 @@ async function handleSubmit() {
     server_port: serverPort.value,
     rate: rate.value ?? 1.0,
     asset_type: assetType.value,
-    region: ['aws', 'vultr', 'azure', 'oci'].includes(assetType.value) ? region.value : undefined,
+    region: ['aws', 'digitalocean', 'vultr', 'kamatera', 'azure', 'oci'].includes(assetType.value) ? region.value : undefined,
     require_cdn_proxy: requireCdnProxy.value,
     show: showNode.value,
     parent_id: undefined,
@@ -613,6 +653,7 @@ onMounted(() => {
   fetchStats()
   fetchTasks()
   fetchGroups()
+  fetchAssets()
   refreshTimer = setInterval(() => {
     fetchStats()
     fetchTasks()
@@ -770,12 +811,12 @@ export default { name: 'ProvisionerView' }
                 <NInput v-model:value="nodeName" placeholder="sf-xxx" clearable />
               </NFormItem>
             </NGi>
-            <NGi v-if="['aws', 'vultr', 'azure', 'oci'].includes(assetType)">
+            <NGi v-if="['aws', 'digitalocean', 'vultr', 'kamatera', 'azure', 'oci'].includes(assetType)">
               <NFormItem label="目标区域">
                 <NSelect v-model:value="region" :options="selectedRegionOptions" />
               </NFormItem>
             </NGi>
-            <NGi v-if="['aws', 'vultr', 'azure', 'oci'].includes(assetType)">
+            <NGi v-if="['aws', 'digitalocean', 'vultr', 'kamatera', 'azure', 'oci'].includes(assetType)">
               <NFormItem label="服务监听端口">
                 <NInputNumber v-model:value="serverPort" :min="1" :max="65535" style="width: 100%" />
               </NFormItem>

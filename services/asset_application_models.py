@@ -150,6 +150,32 @@ class OCIAssetRegistrationRequest:
 
 
 @dataclass(frozen=True)
+class KamateraAssetRegistrationRequest:
+    asset_name: str
+    datacenter: str
+    client_id: str
+    secret: str
+    image: str
+    ssh_public_key: str
+    cpu_type: str = "B"
+    cpu_cores: int = 2
+    ram_mb: int = 2048
+    disk_sizes_gb: tuple[int, ...] = (20,)
+    billing_cycle: str = "hourly"
+    monthly_package: str | None = None
+    daily_backup: bool = False
+    managed: bool = False
+    tags: tuple[str, ...] = ()
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: tuple[str, ...] = ()
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+
+
+@dataclass(frozen=True)
 class SelfHostedAssetRegistrationRequest:
     """Request model for registering self-hosted (自建) assets."""
     asset_name: str

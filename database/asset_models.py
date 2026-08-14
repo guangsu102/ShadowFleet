@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-AssetType = Literal["aws", "azure", "digitalocean", "oci", "vultr", "self_hosted"]
+AssetType = Literal["aws", "azure", "digitalocean", "kamatera", "oci", "vultr", "self_hosted"]
 AssetStatus = Literal["active", "full", "banned", "offline", "deploying"]
 ProtocolType = Literal["AnyTLS", "Trojan", "vless", "vmess", "Hysteria2"]
 AllocationStatus = Literal["allocated", "released", "failed"]
@@ -25,6 +25,12 @@ VULTR_SUPPORTED_PROTOCOLS: set[ProtocolType] = {
     "vmess",
 }
 AZURE_SUPPORTED_PROTOCOLS: set[ProtocolType] = {
+    "AnyTLS",
+    "Trojan",
+    "vless",
+    "vmess",
+}
+KAMATERA_SUPPORTED_PROTOCOLS: set[ProtocolType] = {
     "AnyTLS",
     "Trojan",
     "vless",

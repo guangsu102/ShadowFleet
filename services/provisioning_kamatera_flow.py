@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import re
+from uuid import uuid4
+
 from database.asset_repo import AssetAllocationCreateRequest, AssetEventCreateRequest, AssetRepo
-from infrastructure.digitalocean import (
-    DigitalOceanClient,
-    DigitalOceanDropletLaunchRequest,
-    DigitalOceanDropletLaunchResult,
+from infrastructure.kamatera import (
+    KamateraClient,
+    KamateraServerLaunchRequest,
+    KamateraServerLaunchResult,
 )
 from services.provisioning_dns_service import rollback_dns_records, sync_dns_records
 from services.provisioning_models import DnsSyncResult, ProvisionRequest, ProvisionResult
 from services.provisioning_notifier import notify_failure, notify_success
 from services.provisioning_support import (
+    ProvisionerServiceError,
     ProvisioningDependencies,
     build_register_node_request,
     build_user_data_render_request,
@@ -22,54 +26,50 @@ from utils.logger import set_event_type
 from utils.template_engine import render_user_data
 
 
-DEFAULT_DO_SIZE = "s-2vcpu-2gb"
-DEFAULT_DO_IMAGE = "ubuntu-24-04-x64"
+DEFAULT_CPU = "2B"
 
 
-def provision_digitalocean_node(
+def provision_kamatera_node(
     dependencies: ProvisioningDependencies,
     asset_repo: AssetRepo,
     request: ProvisionRequest,
 ) -> ProvisionResult:
     set_event_type("provisioning_started")
     dependencies.logger.info(
-        "Starting DigitalOcean provisioning for node=%s protocol=%s region=%s",
+        "Starting Kamatera provisioning for node=%s protocol=%s datacenter=%s",
         request.node_name,
         request.protocol_type,
         request.region,
     )
-
     selection_result = select_asset(dependencies.asset_selector, request)
     asset_repo.create_asset_event(
         AssetEventCreateRequest(
             asset_id=selection_result.asset_id,
             event_type="provisioning_selected",
             correlation_id=dependencies.runtime_context.correlation_id,
-            message="DigitalOcean asset selected for provisioning.",
+            message="Kamatera asset selected for provisioning.",
             payload={
                 "protocol_type": request.protocol_type,
                 "node_name": request.node_name,
-                "region": selection_result.region,
+                "datacenter": selection_result.region,
             },
         )
     )
 
     registered_node_result = None
     dns_sync_result: DnsSyncResult | None = None
-    cloudflare_record_id: str | None = None
-    launch_result: DigitalOceanDropletLaunchResult | None = None
-    do_client: DigitalOceanClient | None = None
+    launch_result: KamateraServerLaunchResult | None = None
+    client: KamateraClient | None = None
     effective_domain_name: str | None = None
+    server_name: str | None = None
 
     try:
         registered_node_result = dependencies.node_registry.register_node(
             build_register_node_request(dependencies.runtime_context, request)
         )
-
         from services.node_auto_config_service import NodeAutoConfigService
 
-        auto_config_service = NodeAutoConfigService(dependencies.runtime_context)
-        auto_config_service.auto_configure_node(
+        NodeAutoConfigService(dependencies.runtime_context).auto_configure_node(
             xboard_node_id=registered_node_result.xboard_node_id,
             protocol_type=request.protocol_type,
             protocol_settings=request.protocol_settings,
@@ -81,7 +81,6 @@ def provision_digitalocean_node(
             network=getattr(request, "network", "grpc"),
             flow=getattr(request, "flow", None),
         )
-
         effective_domain_name = resolve_effective_domain_name(
             runtime_context=dependencies.runtime_context,
             request=request,
@@ -105,31 +104,39 @@ def provision_digitalocean_node(
         )
 
         provider_config = selection_result.provider_config or {}
-        api_token = require_non_empty(selection_result.aws_access_key, "digitalocean_token")
-        do_client = DigitalOceanClient(
+        client = KamateraClient(
             runtime_context=dependencies.runtime_context,
-            api_token=api_token,
+            client_id=require_non_empty(selection_result.aws_access_key, "kamatera_client_id"),
+            secret=require_non_empty(selection_result.aws_secret_key, "kamatera_secret"),
         )
-        size = (selection_result.instance_type or DEFAULT_DO_SIZE).strip()
-        image = (selection_result.ami_id or DEFAULT_DO_IMAGE).strip()
-        vpc_uuid = _optional_text(provider_config.get("vpc_uuid")) or selection_result.subnet_id
-        ssh_keys = _string_tuple(provider_config.get("ssh_keys"))
-        tags = tuple(dict.fromkeys(("shadowfleet", *_string_tuple(provider_config.get("tags")))))
-
-        launch_result = do_client.launch_droplet(
-            DigitalOceanDropletLaunchRequest(
-                name=request.node_name,
-                region=require_non_empty(selection_result.region, "region"),
-                size=size,
+        server_name = _server_name(request.node_name)
+        cpu = (selection_result.instance_type or _optional_text(provider_config.get("cpu")) or DEFAULT_CPU).strip()
+        image = require_non_empty(
+            selection_result.ami_id or _optional_text(provider_config.get("image")),
+            "kamatera_image",
+        )
+        launch_result = client.launch_server(
+            KamateraServerLaunchRequest(
+                name=server_name,
+                datacenter=require_non_empty(selection_result.region, "datacenter"),
                 image=image,
-                user_data=rendered_user_data.user_data,
-                ssh_keys=ssh_keys,
-                vpc_uuid=vpc_uuid,
-                tags=tags,
+                cpu=cpu,
+                ram_mb=_positive_int(provider_config.get("ram_mb"), 2048),
+                disk_sizes_gb=_positive_int_tuple(provider_config.get("disk_sizes_gb"), (20,)),
+                startup_script=rendered_user_data.user_data,
+                ssh_public_key=require_non_empty(
+                    _optional_text(provider_config.get("ssh_public_key")),
+                    "kamatera_ssh_public_key",
+                ),
+                billing_cycle=_optional_text(provider_config.get("billing_cycle")) or "hourly",
+                monthly_package=_optional_text(provider_config.get("monthly_package")),
+                daily_backup=bool(provider_config.get("daily_backup", False)),
+                managed=bool(provider_config.get("managed", False)),
+                tags=tuple(dict.fromkeys((*_string_tuple(provider_config.get("tags")), f"shadowfleet-xboard-{registered_node_result.xboard_node_id}"))),
             )
         )
-        ipv6_address = launch_result.ipv6_addresses[0] if launch_result.ipv6_addresses else None
-        ipv4_address = launch_result.ipv4_address
+        if launch_result.ipv4_address is None and launch_result.ipv6_address is None:
+            raise ProvisionerServiceError("Kamatera server has no public IP address")
 
         if selection_result.requires_dns_record:
             dns_sync_result = sync_dns_records(
@@ -138,25 +145,29 @@ def provision_digitalocean_node(
                 domain_name=require_non_empty(effective_domain_name, "domain_name"),
                 selection_result=selection_result,
                 require_cdn_proxy=request.require_cdn_proxy,
-                ipv4_address=ipv4_address,
-                ipv6_address=ipv6_address,
+                ipv4_address=launch_result.ipv4_address,
+                ipv6_address=launch_result.ipv6_address,
             )
-            cloudflare_record_id = dns_sync_result.primary_record_id
 
         dependencies.ready_callback_service.wait_for_ready_callback(require_task_id(request))
         online_result = dependencies.node_registry.mark_node_online(
             xboard_node_id=registered_node_result.xboard_node_id,
-            host=effective_domain_name or request.node_name,
+            host=(
+                effective_domain_name
+                or launch_result.ipv6_address
+                or launch_result.ipv4_address
+                or request.node_name
+            ),
             aws_account_id=selection_result.aws_account_id,
             aws_region=selection_result.region,
             aws_instance_id=launch_result.instance_id,
-            aws_subnet_id=vpc_uuid,
-            aws_security_group_id=None,
-            instance_type=size,
-            cloudflare_record_id=cloudflare_record_id,
+            instance_type=cpu,
+            cloudflare_record_id=(
+                dns_sync_result.primary_record_id if dns_sync_result is not None else None
+            ),
             domain_name=effective_domain_name,
-            ipv4_address=ipv4_address,
-            ipv6_address=ipv6_address,
+            ipv4_address=launch_result.ipv4_address,
+            ipv6_address=launch_result.ipv6_address,
             status_reason=request.status_reason,
         )
         dependencies.ready_callback_service.mark_callback_completed(require_task_id(request))
@@ -174,20 +185,14 @@ def provision_digitalocean_node(
                 asset_id=selection_result.asset_id,
                 event_type="provisioning_succeeded",
                 correlation_id=dependencies.runtime_context.correlation_id,
-                message="DigitalOcean provisioning completed successfully.",
+                message="Kamatera provisioning completed successfully.",
                 payload={
                     "xboard_node_id": online_result.xboard_node_id,
-                    "droplet_id": launch_result.droplet_id,
-                    "ipv4_address": ipv4_address,
-                    "ipv6_address": ipv6_address,
+                    "server_id": launch_result.instance_id,
+                    "server_name": launch_result.name,
+                    "ipv4_address": launch_result.ipv4_address,
+                    "ipv6_address": launch_result.ipv6_address,
                     "domain_name": effective_domain_name,
-                    "cloudflare_record_id": cloudflare_record_id,
-                    "cloudflare_a_record_id": (
-                        dns_sync_result.a_record_id if dns_sync_result is not None else None
-                    ),
-                    "cloudflare_aaaa_record_id": (
-                        dns_sync_result.aaaa_record_id if dns_sync_result is not None else None
-                    ),
                 },
             )
         )
@@ -197,18 +202,13 @@ def provision_digitalocean_node(
             selection_result=selection_result,
             online_result=online_result,
             instance_id=launch_result.instance_id,
-            ipv6_address=ipv6_address,
+            ipv6_address=launch_result.ipv6_address,
             domain_name=effective_domain_name,
-            cloudflare_record_id=cloudflare_record_id,
+            cloudflare_record_id=(
+                dns_sync_result.primary_record_id if dns_sync_result is not None else None
+            ),
         )
         set_event_type("provisioning_completed")
-        dependencies.logger.info(
-            "Completed DigitalOcean provisioning xboard_node_id=%s droplet_id=%s ipv4=%s ipv6=%s",
-            online_result.xboard_node_id,
-            launch_result.droplet_id,
-            ipv4_address,
-            ipv6_address,
-        )
         return ProvisionResult(
             local_node_id=online_result.local_node_id,
             xboard_node_id=online_result.xboard_node_id,
@@ -220,11 +220,13 @@ def provision_digitalocean_node(
             aws_account_id=selection_result.aws_account_id,
             region=selection_result.region,
             instance_id=launch_result.instance_id,
-            network_interface_id=launch_result.network_interface_id,
-            ipv4_address=ipv4_address,
-            ipv6_address=ipv6_address,
+            network_interface_id=None,
+            ipv4_address=launch_result.ipv4_address,
+            ipv6_address=launch_result.ipv6_address,
             domain_name=effective_domain_name,
-            cloudflare_record_id=cloudflare_record_id,
+            cloudflare_record_id=(
+                dns_sync_result.primary_record_id if dns_sync_result is not None else None
+            ),
             cloudflare_a_record_id=(
                 dns_sync_result.a_record_id if dns_sync_result is not None else None
             ),
@@ -233,39 +235,39 @@ def provision_digitalocean_node(
             ),
         )
     except Exception as exc:
-        _handle_digitalocean_provision_failure(
+        _handle_kamatera_provision_failure(
             dependencies=dependencies,
             asset_repo=asset_repo,
             request=request,
             selection_result=selection_result,
             registered_node_result=registered_node_result,
-            launch_result=launch_result,
-            do_client=do_client,
             dns_sync_result=dns_sync_result,
-            cloudflare_record_id=cloudflare_record_id,
+            launch_result=launch_result,
+            client=client,
+            server_name=server_name,
             error=exc,
         )
         raise
 
 
-def _handle_digitalocean_provision_failure(
+def _handle_kamatera_provision_failure(
+    *,
     dependencies: ProvisioningDependencies,
     asset_repo: AssetRepo,
     request: ProvisionRequest,
     selection_result,
     registered_node_result,
-    launch_result: DigitalOceanDropletLaunchResult | None,
-    do_client: DigitalOceanClient | None,
     dns_sync_result: DnsSyncResult | None,
-    cloudflare_record_id: str | None,
+    launch_result: KamateraServerLaunchResult | None,
+    client: KamateraClient | None,
+    server_name: str | None,
     error: BaseException,
 ) -> None:
-    logger = dependencies.logger
     runtime_context = dependencies.runtime_context
     skip_rollback = runtime_context.config.app.skip_rollback_on_failure
     set_event_type("provisioning_failed")
-    logger.exception(
-        "DigitalOcean provisioning failed for node=%s asset_id=%s skip_rollback=%s",
+    dependencies.logger.exception(
+        "Kamatera provisioning failed for node=%s asset_id=%s skip_rollback=%s",
         request.node_name,
         selection_result.asset_id,
         skip_rollback,
@@ -279,8 +281,8 @@ def _handle_digitalocean_provision_failure(
             payload={
                 "node_name": request.node_name,
                 "protocol_type": request.protocol_type,
-                "cloudflare_record_id": cloudflare_record_id,
-                "droplet_id": getattr(launch_result, "droplet_id", None),
+                "server_id": getattr(launch_result, "instance_id", None),
+                "server_name": server_name,
                 "xboard_node_id": getattr(registered_node_result, "xboard_node_id", None),
             },
         )
@@ -290,25 +292,22 @@ def _handle_digitalocean_provision_failure(
             try:
                 rollback_dns_records(runtime_context, dns_sync_result)
             except Exception:
-                logger.exception("Failed to rollback DNS records for DigitalOcean provisioning")
-        rollback_droplet_id = (
-            launch_result.droplet_id
-            if launch_result is not None
-            else do_client.created_droplet_id if do_client is not None else None
-        )
-        if rollback_droplet_id is not None and do_client is not None:
+                dependencies.logger.exception("Failed to rollback DNS for Kamatera provisioning")
+        if client is not None and (launch_result is not None or client.created_server_id or server_name):
             try:
-                do_client.delete_droplet(rollback_droplet_id)
+                client.delete_server(
+                    getattr(launch_result, "instance_id", None) or client.created_server_id,
+                    name=server_name,
+                )
             except Exception:
-                logger.exception("Failed to delete DigitalOcean droplet during rollback")
+                dependencies.logger.exception("Failed to delete Kamatera server during rollback")
         if registered_node_result is not None:
             xboard_node_id = getattr(registered_node_result, "xboard_node_id", None)
             if xboard_node_id:
                 try:
                     dependencies.node_registry.delete_node(xboard_node_id)
                 except Exception:
-                    logger.exception("Failed to delete registered node during rollback")
-
+                    dependencies.logger.exception("Failed to delete registered node during rollback")
     notify_failure(
         runtime_context=runtime_context,
         request=request,
@@ -319,16 +318,43 @@ def _handle_digitalocean_provision_failure(
     )
 
 
+def _server_name(node_name: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9()_-]+", "-", node_name.strip()).strip("-")
+    if not normalized:
+        normalized = "node"
+    return f"sf-{normalized[:25]}-{uuid4().hex[:8]}"[:40]
+
+
+def _positive_int(value: object, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _positive_int_tuple(value: object, default: tuple[int, ...]) -> tuple[int, ...]:
+    if not isinstance(value, (list, tuple)):
+        return default
+    values: list[int] = []
+    for item in value:
+        try:
+            parsed = int(item)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            values.append(parsed)
+    return tuple(values[:4]) or default
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(str(item).strip() for item in value if str(item).strip())
+
+
 def _optional_text(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
-
-
-def _string_tuple(value: object) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, (list, tuple)):
-        return ()
-    return tuple(str(item).strip() for item in value if str(item).strip())

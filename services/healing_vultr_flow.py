@@ -212,7 +212,7 @@ def heal_vultr_node(
         cloudflare_record_id=cloudflare_record_id,
         proxied_enabled=False,
         duration_ms=duration_ms,
-        message="Vultr ????????",
+        message="Vultr instance replacement completed.",
         correlation_id=runtime_context.correlation_id,
     )
     notify_healing_success(runtime_context, result)

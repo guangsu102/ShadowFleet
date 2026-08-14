@@ -40,6 +40,8 @@ import type {
   DigitalOceanSizeQueryResponse,
   VultrAssetCreateRequest,
   VultrCatalogResponse,
+  KamateraAssetCreateRequest,
+  KamateraCatalogResponse,
   AzureAssetCreateRequest,
   AzureCatalogResponse,
   OCIAssetCreateRequest,
@@ -48,8 +50,8 @@ import type {
   AmiInfo,
 } from '@/types/api'
 
-type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'vultr' | 'azure' | 'oci' | 'self_hosted'
-type AssetModalTab = 'aws' | 'digitalocean' | 'vultr' | 'azure' | 'oci' | 'self'
+type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'vultr' | 'kamatera' | 'azure' | 'oci' | 'self_hosted'
+type AssetModalTab = 'aws' | 'digitalocean' | 'vultr' | 'kamatera' | 'azure' | 'oci' | 'self'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function statusTagType(status: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
@@ -84,6 +86,7 @@ function assetTypeLabel(assetType: string): string {
   if (assetType === 'aws') return 'AWS'
   if (assetType === 'digitalocean') return 'DO'
   if (assetType === 'vultr') return 'Vultr'
+  if (assetType === 'kamatera') return 'Kamatera'
   if (assetType === 'azure') return 'Azure'
   if (assetType === 'oci') return 'OCI'
   if (assetType === 'self_hosted') return '自建'
@@ -94,6 +97,7 @@ function assetTypeTagType(assetType: string): 'success' | 'warning' | 'error' | 
   if (assetType === 'aws') return 'info'
   if (assetType === 'digitalocean') return 'success'
   if (assetType === 'vultr') return 'error'
+  if (assetType === 'kamatera') return 'default'
   if (assetType === 'azure') return 'info'
   if (assetType === 'oci') return 'warning'
   if (assetType === 'self_hosted') return 'warning'
@@ -104,6 +108,7 @@ function modalTitle(tab: AssetModalTab): string {
   if (tab === 'aws') return '新增 AWS 资产'
   if (tab === 'digitalocean') return '新增 DigitalOcean 资产'
   if (tab === 'vultr') return '新增 Vultr 资产'
+  if (tab === 'kamatera') return '新增 Kamatera 资产'
   if (tab === 'azure') return '新增 Microsoft Azure 资产'
   if (tab === 'oci') return '新增 Oracle Cloud 资产'
   return '新增自建资产'
@@ -201,6 +206,7 @@ async function batchDeleteAssets() {
 const awsAssets  = computed(() => assets.value.filter(a => a.asset_type === 'aws'))
 const digitalOceanAssets = computed(() => assets.value.filter(a => a.asset_type === 'digitalocean'))
 const vultrAssets = computed(() => assets.value.filter(a => a.asset_type === 'vultr'))
+const kamateraAssets = computed(() => assets.value.filter(a => a.asset_type === 'kamatera'))
 const azureAssets = computed(() => assets.value.filter(a => a.asset_type === 'azure'))
 const ociAssets = computed(() => assets.value.filter(a => a.asset_type === 'oci'))
 const selfAssets = computed(() => assets.value.filter(a => a.asset_type === 'self_hosted'))
@@ -775,6 +781,159 @@ async function submitVultrForm() {
   }
 }
 
+// ── Kamatera Registration Form ───────────────────────────────────────────────
+const kamateraForm = ref({
+  asset_name: '',
+  datacenter: 'AS',
+  client_id: '',
+  secret: '',
+  image: '',
+  ssh_public_key: '',
+  cpu_type: 'B',
+  cpu_cores: 2,
+  ram_mb: 2048,
+  disk_size_gb: 20,
+  billing_cycle: 'hourly',
+  monthly_package: '',
+  daily_backup: false,
+  managed: false,
+  tags_raw: 'shadowfleet',
+  remarks: '',
+  protocol_types: ['AnyTLS'] as string[],
+  target_count: 1,
+  max_count: 0,
+  priority: 100,
+  allow_cdn_proxy: false,
+})
+const kamateraCatalog = ref<KamateraCatalogResponse | null>(null)
+const queryingKamateraCatalog = ref(false)
+const kamateraCatalogError = ref<string | null>(null)
+const submittingKamatera = ref(false)
+const kamateraDatacenters = computed<SelectOption[]>(() =>
+  (kamateraCatalog.value?.datacenters ?? [])
+    .filter(item => item.id)
+    .map(item => ({
+      label: `${item.region || item.id} (${item.id})`,
+      value: item.id as string,
+    }))
+)
+const kamateraImages = computed<SelectOption[]>(() =>
+  (kamateraCatalog.value?.images ?? [])
+    .filter(item => item.id)
+    .map(item => ({
+      label: item.description ? `${item.description} (${item.id})` : String(item.id),
+      value: item.id as string,
+    }))
+)
+const kamateraCpuTypes: SelectOption[] = [
+  { label: 'A - Availability', value: 'A' },
+  { label: 'B - General Purpose', value: 'B' },
+  { label: 'T - Burstable', value: 'T' },
+  { label: 'D - Dedicated', value: 'D' },
+]
+const kamateraBillingCycles: SelectOption[] = [
+  { label: '按小时计费', value: 'hourly' },
+  { label: '按月计费', value: 'monthly' },
+]
+const kamateraProtocolOptions = awsProtocolOptions
+
+function resetKamateraForm() {
+  kamateraForm.value = {
+    asset_name: '', datacenter: 'AS', client_id: '', secret: '', image: '',
+    ssh_public_key: '', cpu_type: 'B', cpu_cores: 2, ram_mb: 2048,
+    disk_size_gb: 20, billing_cycle: 'hourly', monthly_package: '',
+    daily_backup: false, managed: false, tags_raw: 'shadowfleet', remarks: '',
+    protocol_types: ['AnyTLS'], target_count: 1, max_count: 0, priority: 100,
+    allow_cdn_proxy: false,
+  }
+  kamateraCatalog.value = null
+  kamateraCatalogError.value = null
+}
+
+async function queryKamateraCatalog() {
+  if (!kamateraForm.value.client_id.trim() || !kamateraForm.value.secret.trim()) {
+    message.warning('请填写 Kamatera Client ID 和 Secret')
+    return
+  }
+  queryingKamateraCatalog.value = true
+  kamateraCatalogError.value = null
+  try {
+    const { data } = await apiClient.post<KamateraCatalogResponse>('/assets/kamatera/query-catalog', {
+      client_id: kamateraForm.value.client_id.trim(),
+      secret: kamateraForm.value.secret.trim(),
+      datacenter: kamateraForm.value.datacenter || undefined,
+    })
+    kamateraCatalog.value = data
+    if (!kamateraForm.value.datacenter && kamateraDatacenters.value[0]) {
+      kamateraForm.value.datacenter = String(kamateraDatacenters.value[0].value)
+    }
+    if (!kamateraForm.value.image && kamateraImages.value[0]) {
+      kamateraForm.value.image = String(kamateraImages.value[0].value)
+    }
+    message.success('Kamatera 凭据验证成功，资源目录已加载')
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { detail?: string } } }
+    kamateraCatalogError.value = e.response?.data?.detail || 'Kamatera 资源目录查询失败'
+    message.error(kamateraCatalogError.value)
+  } finally {
+    queryingKamateraCatalog.value = false
+  }
+}
+
+async function submitKamateraForm() {
+  const required: Array<[string, string]> = [
+    ['资产名称', kamateraForm.value.asset_name],
+    ['Datacenter', kamateraForm.value.datacenter],
+    ['Client ID', kamateraForm.value.client_id],
+    ['Secret', kamateraForm.value.secret],
+    ['Image', kamateraForm.value.image],
+    ['SSH 公钥', kamateraForm.value.ssh_public_key],
+  ]
+  const missing = required.find(([, value]) => !value.trim())
+  if (missing) { message.warning(`请填写${missing[0]}`); return }
+  if (kamateraForm.value.billing_cycle === 'monthly' && !kamateraForm.value.monthly_package.trim()) {
+    message.warning('按月计费时必须填写 Monthly Package')
+    return
+  }
+  submittingKamatera.value = true
+  try {
+    const body: KamateraAssetCreateRequest = {
+      asset_name: kamateraForm.value.asset_name.trim(),
+      datacenter: kamateraForm.value.datacenter.trim(),
+      client_id: kamateraForm.value.client_id.trim(),
+      secret: kamateraForm.value.secret.trim(),
+      image: kamateraForm.value.image.trim(),
+      ssh_public_key: kamateraForm.value.ssh_public_key.trim(),
+      cpu_type: kamateraForm.value.cpu_type,
+      cpu_cores: kamateraForm.value.cpu_cores,
+      ram_mb: kamateraForm.value.ram_mb,
+      disk_sizes_gb: [kamateraForm.value.disk_size_gb],
+      billing_cycle: kamateraForm.value.billing_cycle,
+      monthly_package: kamateraForm.value.monthly_package || undefined,
+      daily_backup: kamateraForm.value.daily_backup,
+      managed: kamateraForm.value.managed,
+      tags: splitList(kamateraForm.value.tags_raw),
+      remarks: kamateraForm.value.remarks || undefined,
+      protocol_type: kamateraForm.value.protocol_types[0] ?? null,
+      additional_protocol_types: kamateraForm.value.protocol_types.slice(1),
+      target_count: kamateraForm.value.target_count,
+      max_count: kamateraForm.value.max_count,
+      priority: kamateraForm.value.priority,
+      allow_cdn_proxy: kamateraForm.value.allow_cdn_proxy,
+    }
+    await apiClient.post<AssetResponse>('/assets/kamatera', body)
+    message.success('Kamatera 资产注册成功')
+    closeModal()
+    resetKamateraForm()
+    await fetchAssets()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string; message?: string } } }
+    message.error(e.response?.data?.error || e.response?.data?.detail || e.response?.data?.message || '注册失败')
+  } finally {
+    submittingKamatera.value = false
+  }
+}
+
 // ── Microsoft Azure Registration Form ─────────────────────────────────────────
 const azureForm = ref({
   asset_name: '',
@@ -1268,7 +1427,7 @@ onMounted(fetchAssets)
     <div class="page-header">
       <div class="header-left">
         <h1 class="page-title">账号与资产池</h1>
-        <p class="page-subtitle">管理 AWS、DigitalOcean、Vultr、Microsoft Azure、Oracle Cloud 与自建资产，统一调度节点配额与协议</p>
+        <p class="page-subtitle">管理 AWS、DigitalOcean、Vultr、Kamatera、Microsoft Azure、Oracle Cloud 与自建资产，统一调度节点配额与协议</p>
       </div>
       <div class="header-right">
         <NSpace>
@@ -1304,6 +1463,10 @@ onMounted(fetchAssets)
       <div class="stat-card stat-vultr">
         <div class="stat-value">{{ vultrAssets.length }}</div>
         <div class="stat-label">Vultr 资产</div>
+      </div>
+      <div class="stat-card stat-kamatera">
+        <div class="stat-value">{{ kamateraAssets.length }}</div>
+        <div class="stat-label">Kamatera 资产</div>
       </div>
       <div class="stat-card stat-azure">
         <div class="stat-value">{{ azureAssets.length }}</div>
@@ -1366,6 +1529,14 @@ onMounted(fetchAssets)
           >
             Vultr
             <span class="tab-badge tab-badge-vultr">{{ vultrAssets.length }}</span>
+          </button>
+          <button
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'kamatera' }"
+            @click="activeAssetFilter = 'kamatera'"
+          >
+            Kamatera
+            <span class="tab-badge tab-badge-kamatera">{{ kamateraAssets.length }}</span>
           </button>
           <button
             class="tab-btn"
@@ -1871,6 +2042,144 @@ onMounted(fetchAssets)
               <NSpace>
                 <NButton @click="closeModal">取消</NButton>
                 <NButton type="primary" :loading="submittingVultr" @click="submitVultrForm">注册 Vultr 资产</NButton>
+              </NSpace>
+            </div>
+          </div>
+        </NTabPane>
+
+        <!-- ── Kamatera Tab ──────────────────────────────────────────────── -->
+        <NTabPane name="kamatera" tab="Kamatera 资产">
+          <div class="modal-form">
+            <NForm label-placement="left" label-width="140" size="medium">
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="资产名称" required>
+                    <NInput v-model:value="kamateraForm.asset_name" placeholder="my-kamatera-as-01" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Datacenter" required>
+                    <NSelect v-model:value="kamateraForm.datacenter" :options="kamateraDatacenters" filterable tag placeholder="选择或输入 Datacenter" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Client ID" required>
+                    <NInput v-model:value="kamateraForm.client_id" placeholder="Kamatera API Client ID" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Secret" required>
+                    <NInput v-model:value="kamateraForm.secret" type="password" show-password-on="click" placeholder="Kamatera API Secret" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="验证凭据">
+                    <NSpace vertical style="width: 100%">
+                      <NButton :loading="queryingKamateraCatalog" @click="queryKamateraCatalog">验证凭据并加载资源</NButton>
+                      <NAlert v-if="kamateraCatalogError" type="error" :title="kamateraCatalogError" closable @close="kamateraCatalogError = null" />
+                    </NSpace>
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Image" required>
+                    <NSelect v-model:value="kamateraForm.image" :options="kamateraImages" filterable tag placeholder="验证凭据后选择或输入 Image ID" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="CPU 类型">
+                    <NSelect v-model:value="kamateraForm.cpu_type" :options="kamateraCpuTypes" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="CPU 核数">
+                    <NInputNumber v-model:value="kamateraForm.cpu_cores" :min="1" :max="104" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="内存 (MB)">
+                    <NInputNumber v-model:value="kamateraForm.ram_mb" :min="256" :step="256" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="系统盘 (GB)">
+                    <NInputNumber v-model:value="kamateraForm.disk_size_gb" :min="10" :max="4000" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="SSH 公钥" required>
+                    <NInput v-model:value="kamateraForm.ssh_public_key" type="textarea" :rows="3" placeholder="ssh-ed25519 AAAA..." />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="计费周期">
+                    <NSelect v-model:value="kamateraForm.billing_cycle" :options="kamateraBillingCycles" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1" v-if="kamateraForm.billing_cycle === 'monthly'">
+                  <NFormItem label="Monthly Package" required>
+                    <NInput v-model:value="kamateraForm.monthly_package" placeholder="t5000" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="每日备份">
+                    <NSwitch v-model:value="kamateraForm.daily_backup" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Managed 服务">
+                    <NSwitch v-model:value="kamateraForm.managed" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>协议与容量配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="2">
+                  <NFormItem label="协议类型">
+                    <NCheckboxGroup v-model:value="kamateraForm.protocol_types">
+                      <NSpace>
+                        <NCheckbox v-for="opt in kamateraProtocolOptions" :key="String(opt.value)" :value="opt.value" :label="String(opt.label)" />
+                      </NSpace>
+                    </NCheckboxGroup>
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="目标节点数">
+                    <NInputNumber v-model:value="kamateraForm.target_count" :min="0" :max="9999" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="最大节点数">
+                    <NInputNumber v-model:value="kamateraForm.max_count" :min="0" :max="9999" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="优先级">
+                    <NInputNumber v-model:value="kamateraForm.priority" :min="1" :max="1000" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="允许 CDN Proxy">
+                    <NSwitch v-model:value="kamateraForm.allow_cdn_proxy" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Tags">
+                    <NInput v-model:value="kamateraForm.tags_raw" placeholder="shadowfleet, prod" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="备注">
+                    <NInput v-model:value="kamateraForm.remarks" type="textarea" :rows="2" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+            </NForm>
+
+            <div class="modal-footer">
+              <NSpace>
+                <NButton @click="closeModal">取消</NButton>
+                <NButton type="primary" :loading="submittingKamatera" @click="submitKamateraForm">注册 Kamatera 资产</NButton>
               </NSpace>
             </div>
           </div>
@@ -2442,6 +2751,7 @@ onMounted(fetchAssets)
 .stat-aws .stat-value  { color: #f59e0b; }
 .stat-do .stat-value   { color: #0080ff; }
 .stat-vultr .stat-value { color: #007bfc; }
+.stat-kamatera .stat-value { color: #d6532f; }
 .stat-azure .stat-value { color: #0078d4; }
 .stat-oci .stat-value { color: #c74634; }
 .stat-self .stat-value { color: #8b5cf6; }
@@ -2516,6 +2826,7 @@ onMounted(fetchAssets)
 .tab-badge-aws  { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
 .tab-badge-do   { background: rgba(0, 128, 255, 0.1); color: #0080ff; }
 .tab-badge-vultr { background: rgba(0, 123, 252, 0.1); color: #007bfc; }
+.tab-badge-kamatera { background: rgba(214, 83, 47, 0.1); color: #d6532f; }
 .tab-badge-azure { background: rgba(0, 120, 212, 0.1); color: #0078d4; }
 .tab-badge-oci { background: rgba(199, 70, 52, 0.1); color: #c74634; }
 .tab-badge-self { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }

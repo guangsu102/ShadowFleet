@@ -68,6 +68,26 @@ const REGION_MAP: Record<string, string> = {
   westeurope: '西欧 (Azure)',
   germanywestcentral: '德国中西部 (Azure)',
   australiaeast: '澳大利亚东部 (Azure)',
+  sgp1: '新加坡 (DigitalOcean)',
+  nyc3: '纽约 (DigitalOcean)',
+  sfo3: '旧金山 (DigitalOcean)',
+  ams3: '阿姆斯特丹 (DigitalOcean)',
+  lon1: '伦敦 (DigitalOcean)',
+  fra1: '法兰克福 (DigitalOcean)',
+  tor1: '多伦多 (DigitalOcean)',
+  blr1: '班加罗尔 (DigitalOcean)',
+  syd1: '悉尼 (DigitalOcean)',
+  'ap-tokyo-1': '东京 (OCI)',
+  'ap-osaka-1': '大阪 (OCI)',
+  'ap-seoul-1': '首尔 (OCI)',
+  'ap-chuncheon-1': '春川 (OCI)',
+  'ap-singapore-1': '新加坡 (OCI)',
+  'ap-sydney-1': '悉尼 (OCI)',
+  'us-sanjose-1': '圣何塞 (OCI)',
+  'us-phoenix-1': '凤凰城 (OCI)',
+  'us-ashburn-1': '阿什本 (OCI)',
+  'uk-london-1': '伦敦 (OCI)',
+  'eu-frankfurt-1': '法兰克福 (OCI)',
 }
 const ALL_REGIONS = Object.keys(REGION_MAP)
 
@@ -296,7 +316,7 @@ const schedulerCooldown = ref(60.0)
 const schedulerMaxTasks = ref(5)
 const schedulerEnabledRegions = ref<string[]>(['*'])
 const schedulerEnabledProtocols = ref<string[]>(['*'])
-const schedulerEnabledAssetTypes = ref<string[]>(['digitalocean', 'vultr', 'azure', 'oci', 'aws'])
+const schedulerEnabledAssetTypes = ref<string[]>(['digitalocean', 'vultr', 'azure', 'oci', 'kamatera', 'aws'])
 
 const regionListOptions: SelectOption[] = [
   { label: '全部区域 (*)', value: '*' },
@@ -317,6 +337,7 @@ const cloudAssetTypeOptions: SelectOption[] = [
   { label: 'Vultr', value: 'vultr' },
   { label: 'Microsoft Azure', value: 'azure' },
   { label: 'Oracle Cloud', value: 'oci' },
+  { label: 'Kamatera', value: 'kamatera' },
   { label: 'AWS', value: 'aws' },
 ]
 
@@ -329,7 +350,7 @@ function buildFleetSchedulerForm() {
   schedulerMaxTasks.value = (scheduler.max_tasks_per_cycle as number) ?? 5
   schedulerEnabledRegions.value = (scheduler.enabled_regions as string[]) ?? ['*']
   schedulerEnabledProtocols.value = (scheduler.enabled_protocols as string[]) ?? ['*']
-  schedulerEnabledAssetTypes.value = (scheduler.enabled_asset_types as string[]) ?? ['digitalocean', 'vultr', 'azure', 'oci', 'aws']
+  schedulerEnabledAssetTypes.value = (scheduler.enabled_asset_types as string[]) ?? ['digitalocean', 'vultr', 'azure', 'oci', 'kamatera', 'aws']
 }
 
 // ---------------------------------------------------------------------------
@@ -785,6 +806,8 @@ onMounted(() => { fetchConfig() })
               v-model:value="schedulerEnabledRegions"
               :options="regionListOptions"
               multiple
+              filterable
+              tag
               style="width: 100%"
             />
             <NText depth="3" style="font-size: 11px; display:block; margin-top: 2px">{{ t('settings.schedulerEnabledRegionsDesc') }}</NText>

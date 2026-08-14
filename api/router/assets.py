@@ -9,6 +9,7 @@ from services.asset_application_models import (
     AssetRegistrationRequest,
     AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    KamateraAssetRegistrationRequest,
     OCIAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
     VultrAssetRegistrationRequest,
@@ -125,6 +126,31 @@ class VultrAssetCreateRequest(BaseModel):
     priority: int = 100
     allow_cdn_proxy: bool = False
     default_vcpu: int | None = None
+
+
+class KamateraAssetCreateRequest(BaseModel):
+    asset_name: str = Field(..., min_length=1, max_length=128)
+    datacenter: str = Field(..., min_length=1)
+    client_id: str = Field(..., min_length=1)
+    secret: str = Field(..., min_length=1)
+    image: str = Field(..., min_length=1)
+    ssh_public_key: str = Field(..., min_length=1)
+    cpu_type: str = Field(default="B", pattern="^[ABTDabtd]$")
+    cpu_cores: int = Field(default=2, gt=0)
+    ram_mb: int = Field(default=2048, ge=256)
+    disk_sizes_gb: list[int] = Field(default_factory=lambda: [20], min_length=1, max_length=4)
+    billing_cycle: str = Field(default="hourly", pattern="^(hourly|monthly)$")
+    monthly_package: str | None = None
+    daily_backup: bool = False
+    managed: bool = False
+    tags: list[str] = Field(default_factory=list)
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: list[str] = Field(default_factory=list)
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
 
 
 class AzureAssetCreateRequest(BaseModel):
@@ -349,6 +375,50 @@ async def register_vultr_asset(
     )
 
 
+@router.post("/kamatera", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
+async def register_kamatera_asset(
+    request: KamateraAssetCreateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> AssetResponse:
+    try:
+        result = AssetApplicationService(ctx).register_kamatera_asset(
+            KamateraAssetRegistrationRequest(
+                asset_name=request.asset_name,
+                datacenter=request.datacenter,
+                client_id=request.client_id,
+                secret=request.secret,
+                image=request.image,
+                ssh_public_key=request.ssh_public_key,
+                cpu_type=request.cpu_type,
+                cpu_cores=request.cpu_cores,
+                ram_mb=request.ram_mb,
+                disk_sizes_gb=tuple(request.disk_sizes_gb),
+                billing_cycle=request.billing_cycle,
+                monthly_package=request.monthly_package,
+                daily_backup=request.daily_backup,
+                managed=request.managed,
+                tags=tuple(request.tags),
+                remarks=request.remarks,
+                protocol_type=request.protocol_type,
+                additional_protocol_types=tuple(request.additional_protocol_types),
+                target_count=request.target_count,
+                max_count=request.max_count,
+                priority=request.priority,
+                allow_cdn_proxy=request.allow_cdn_proxy,
+            )
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return AssetResponse(
+        asset_id=result.asset_id,
+        asset_name=result.asset_name,
+        asset_type="kamatera",
+        region=request.datacenter,
+        status="active",
+    )
+
+
 @router.post("/azure", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
 async def register_azure_asset(
     request: AzureAssetCreateRequest,
@@ -460,8 +530,8 @@ async def get_asset(
         region=asset.region,
         status=asset.status,
         aws_account_id=asset.aws_account_id,
-        aws_access_key=asset.aws_access_key if asset.asset_type == "aws" else None,
-        aws_secret_key=asset.aws_secret_key if asset.asset_type == "aws" else None,
+        aws_access_key=None,
+        aws_secret_key=None,
         account_total_vcpu=asset.account_total_vcpu,
         allocated_count=0,
         target_count=0,
@@ -593,6 +663,12 @@ class DigitalOceanCatalogRequest(BaseModel):
 
 class VultrCatalogRequest(BaseModel):
     vultr_token: str = Field(..., min_length=1)
+
+
+class KamateraCatalogRequest(BaseModel):
+    client_id: str = Field(..., min_length=1)
+    secret: str = Field(..., min_length=1)
+    datacenter: str | None = None
 
 
 class AzureCatalogRequest(BaseModel):
@@ -728,6 +804,25 @@ async def query_vultr_catalog(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Vultr catalog query failed: {e}",
+        ) from e
+
+
+@router.post("/kamatera/query-catalog")
+async def query_kamatera_catalog(
+    request: KamateraCatalogRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> dict[str, object]:
+    try:
+        return AssetApplicationService(ctx).query_kamatera_catalog(
+            client_id=request.client_id,
+            secret=request.secret,
+            datacenter=request.datacenter,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Kamatera catalog query failed: {e}",
         ) from e
 
 

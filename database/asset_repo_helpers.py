@@ -10,6 +10,7 @@ from database.asset_models import (
     CDN_PROXY_SUPPORTED_PROTOCOLS,
     DIGITALOCEAN_SUPPORTED_PROTOCOLS,
     DNS_REQUIRED_PROTOCOLS,
+    KAMATERA_SUPPORTED_PROTOCOLS,
     OCI_SUPPORTED_PROTOCOLS,
     SELF_HOSTED_SUPPORTED_PROTOCOLS,
     VULTR_SUPPORTED_PROTOCOLS,
@@ -38,6 +39,13 @@ def validate_asset_request(request: AssetCreateRequest) -> None:
             raise ValueError("region is required for digitalocean assets")
         if not request.aws_access_key or not request.aws_access_key.strip():
             raise ValueError("digitalocean_token is required for digitalocean assets")
+    if request.asset_type == "kamatera":
+        if not request.region or not request.region.strip():
+            raise ValueError("region is required for kamatera assets")
+        if not request.aws_access_key or not request.aws_access_key.strip():
+            raise ValueError("kamatera_client_id is required for kamatera assets")
+        if not request.aws_secret_key or not request.aws_secret_key.strip():
+            raise ValueError("kamatera_secret is required for kamatera assets")
     if request.asset_type == "vultr":
         if not request.region or not request.region.strip():
             raise ValueError("region is required for vultr assets")
@@ -100,6 +108,8 @@ def validate_protocol_config_request(
         supported_protocols = VULTR_SUPPORTED_PROTOCOLS
     elif asset.asset_type == "azure":
         supported_protocols = AZURE_SUPPORTED_PROTOCOLS
+    elif asset.asset_type == "kamatera":
+        supported_protocols = KAMATERA_SUPPORTED_PROTOCOLS
     elif asset.asset_type == "oci":
         supported_protocols = OCI_SUPPORTED_PROTOCOLS
     else:

@@ -82,7 +82,7 @@ class TestManualOperationService(unittest.TestCase):
             xboard_node_id=100,
             operator_name="admin",
             reason="test reason",
-            force_strategy="replace_ip",
+            force_strategy="aws_ipv6_rotate",
         )
         result = self.service.submit_task(request)
 

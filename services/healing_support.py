@@ -12,6 +12,8 @@ from services.monitor_support import infer_node_asset_type
 
 AWS_HEALABLE_PROTOCOLS = {"AnyTLS", "Trojan", "vless", "vmess"}
 AZURE_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
+DIGITALOCEAN_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
+KAMATERA_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 VULTR_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 OCI_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 SELF_HOSTED_PROXY_PROTOCOLS = {"Trojan", "vless", "vmess"}
@@ -22,6 +24,7 @@ AWS_ACCOUNT_BANNED_ERROR_CODES = {
 }
 HEAL_LOCK_EXPIRY_SECONDS = 120
 AZURE_HEAL_LOCK_EXPIRY_SECONDS = 2100
+DIGITALOCEAN_HEAL_LOCK_EXPIRY_SECONDS = 3600
 
 
 @dataclass(frozen=True)
@@ -47,12 +50,34 @@ def build_healing_context(request: HealRequest, node_record: FleetNodeRecord) ->
 
 def determine_heal_strategy(node_record: FleetNodeRecord, request: HealRequest) -> str:
     if request.force_strategy is not None:
+        asset_type = infer_node_asset_type(node_record)
+        expected_strategy = {
+            "aws": "aws_ipv6_rotate",
+            "azure": "azure_ipv6_rotate",
+            "digitalocean": "digitalocean_instance_replace",
+            "kamatera": "kamatera_instance_replace",
+            "oci": "oci_ipv6_rotate",
+            "vultr": "vultr_instance_replace",
+            "self_hosted": "cloudflare_enable_proxy",
+        }.get(asset_type)
+        if request.force_strategy != expected_strategy:
+            raise ManualReviewRequiredError(
+                f"{asset_type} node does not support forced healing strategy: "
+                f"{request.force_strategy}"
+            )
         return request.force_strategy
     asset_type = infer_node_asset_type(node_record)
     if asset_type == "aws" and node_record.node_type in AWS_HEALABLE_PROTOCOLS:
         return "aws_ipv6_rotate"
     if asset_type == "azure" and node_record.node_type in AZURE_HEALABLE_PROTOCOLS:
         return "azure_ipv6_rotate"
+    if (
+        asset_type == "digitalocean"
+        and node_record.node_type in DIGITALOCEAN_HEALABLE_PROTOCOLS
+    ):
+        return "digitalocean_instance_replace"
+    if asset_type == "kamatera" and node_record.node_type in KAMATERA_HEALABLE_PROTOCOLS:
+        return "kamatera_instance_replace"
     if asset_type == "oci" and node_record.node_type in OCI_HEALABLE_PROTOCOLS:
         return "oci_ipv6_rotate"
     if asset_type == "vultr" and node_record.node_type in VULTR_HEALABLE_PROTOCOLS:
@@ -107,6 +132,22 @@ def ensure_oci_healing_eligible(node_record: FleetNodeRecord) -> None:
         raise ManualReviewRequiredError("OCI node is missing domain_name")
 
 
+def ensure_digitalocean_healing_eligible(node_record: FleetNodeRecord) -> None:
+    if infer_node_asset_type(node_record) != "digitalocean":
+        raise ManualReviewRequiredError(
+            "DigitalOcean healing received a non-DigitalOcean node"
+        )
+    if node_record.node_type not in DIGITALOCEAN_HEALABLE_PROTOCOLS:
+        raise ManualReviewRequiredError(
+            "DigitalOcean node type is not supported for replacement healing: "
+            f"{node_record.node_type}"
+        )
+    if not node_record.aws_instance_id:
+        raise ManualReviewRequiredError("DigitalOcean node is missing Droplet ID")
+    if node_record.domain_name is None or not node_record.domain_name.strip():
+        raise ManualReviewRequiredError("DigitalOcean node is missing domain_name")
+
+
 def ensure_vultr_healing_eligible(node_record: FleetNodeRecord) -> None:
     if infer_node_asset_type(node_record) != "vultr":
         raise ManualReviewRequiredError(
@@ -121,6 +162,19 @@ def ensure_vultr_healing_eligible(node_record: FleetNodeRecord) -> None:
         raise ManualReviewRequiredError("Vultr node is missing instance ID")
     if node_record.domain_name is None or not node_record.domain_name.strip():
         raise ManualReviewRequiredError("Vultr node is missing domain_name")
+
+
+def ensure_kamatera_healing_eligible(node_record: FleetNodeRecord) -> None:
+    if infer_node_asset_type(node_record) != "kamatera":
+        raise ManualReviewRequiredError("Kamatera healing received a non-Kamatera node")
+    if node_record.node_type not in KAMATERA_HEALABLE_PROTOCOLS:
+        raise ManualReviewRequiredError(
+            f"Kamatera node type is not supported for replacement healing: {node_record.node_type}"
+        )
+    if not node_record.aws_instance_id:
+        raise ManualReviewRequiredError("Kamatera node is missing server ID")
+    if node_record.domain_name is None or not node_record.domain_name.strip():
+        raise ManualReviewRequiredError("Kamatera node is missing domain_name")
 
 
 def ensure_self_hosted_healing_eligible(node_record: FleetNodeRecord) -> None:
@@ -140,11 +194,17 @@ def build_heal_lock(
     correlation_id: str,
     strategy: str | None = None,
 ) -> FleetOperationLockRequest:
-    expires_in_seconds = (
-        AZURE_HEAL_LOCK_EXPIRY_SECONDS
-        if strategy in {"azure_ipv6_rotate", "oci_ipv6_rotate", "vultr_instance_replace"}
-        else HEAL_LOCK_EXPIRY_SECONDS
-    )
+    if strategy == "digitalocean_instance_replace":
+        expires_in_seconds = DIGITALOCEAN_HEAL_LOCK_EXPIRY_SECONDS
+    elif strategy in {
+        "azure_ipv6_rotate",
+        "oci_ipv6_rotate",
+        "vultr_instance_replace",
+        "kamatera_instance_replace",
+    }:
+        expires_in_seconds = AZURE_HEAL_LOCK_EXPIRY_SECONDS
+    else:
+        expires_in_seconds = HEAL_LOCK_EXPIRY_SECONDS
     return FleetOperationLockRequest(
         lock_key=build_heal_lock_key(node_record.xboard_node_id),
         node_id=node_record.id,

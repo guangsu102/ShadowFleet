@@ -205,15 +205,15 @@ class TestDetermineHealStrategy:
         strategy = determine_heal_strategy(node, request)
         assert strategy == "manual_review_required"
 
-    def test_digitalocean_node_returns_manual_review(self) -> None:
-        """DigitalOcean nodes should not use AWS IPv6 rotation."""
+    def test_digitalocean_node_uses_instance_replacement(self) -> None:
+        """DigitalOcean nodes should use Droplet replacement healing."""
         node = create_mock_node_record(asset_type="digitalocean", node_type="AnyTLS")
         request = HealRequest(
             xboard_node_id=12345,
             reason="confirmed_blocked_by_gfw",
         )
         strategy = determine_heal_strategy(node, request)
-        assert strategy == "manual_review_required"
+        assert strategy == "digitalocean_instance_replace"
 
     def test_vultr_proxy_protocol_uses_instance_replacement(self) -> None:
         node = create_mock_node_record(asset_type="vultr", node_type="Trojan")
@@ -252,7 +252,7 @@ class TestDetermineHealStrategy:
 
     def test_force_strategy_overrides(self) -> None:
         """Force strategy should override auto-determination."""
-        node = create_mock_node_record(asset_type="self_hosted")
+        node = create_mock_node_record(asset_type="aws")
         request = HealRequest(
             xboard_node_id=12345,
             reason="confirmed_blocked_by_gfw",

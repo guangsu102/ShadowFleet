@@ -304,6 +304,49 @@ export interface VultrAssetCreateRequest {
   default_vcpu?: number | null
 }
 
+export interface KamateraAssetCreateRequest {
+  asset_name: string
+  datacenter: string
+  client_id: string
+  secret: string
+  image: string
+  ssh_public_key: string
+  cpu_type?: string
+  cpu_cores?: number
+  ram_mb?: number
+  disk_sizes_gb?: number[]
+  billing_cycle?: string
+  monthly_package?: string | null
+  daily_backup?: boolean
+  managed?: boolean
+  tags?: string[]
+  remarks?: string | null
+  protocol_type?: string | null
+  additional_protocol_types?: string[]
+  target_count?: number
+  max_count?: number
+  priority?: number
+  allow_cdn_proxy?: boolean
+}
+
+export interface KamateraDatacenterInfo {
+  id?: string | null
+  region?: string | null
+  [key: string]: unknown
+}
+
+export interface KamateraImageInfo {
+  id?: string | null
+  description?: string | null
+  [key: string]: unknown
+}
+
+export interface KamateraCatalogResponse {
+  datacenters: KamateraDatacenterInfo[]
+  images: KamateraImageInfo[]
+  capabilities: Record<string, unknown>
+}
+
 export interface AzureAssetCreateRequest {
   asset_name: string
   region: string

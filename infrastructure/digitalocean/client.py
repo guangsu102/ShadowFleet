@@ -65,6 +65,7 @@ class DigitalOceanClient:
         self._max_retries = runtime_context.config.app.max_retries
         self._retry_backoff_seconds = runtime_context.config.app.retry_backoff_seconds
         self._base_url = base_url.rstrip("/")
+        self._created_droplet_id: int | None = None
         self._session = requests.Session()
         self._session.headers.update(
             {
@@ -98,6 +99,113 @@ class DigitalOceanClient:
             raise DigitalOceanClientError("DigitalOcean sizes response must be a list")
         return [size for size in sizes if isinstance(size, dict)]
 
+    @property
+    def created_droplet_id(self) -> int | None:
+        """The most recently created Droplet, including while activation is pending."""
+        return self._created_droplet_id
+
+    def list_droplets(
+        self,
+        *,
+        tag_name: str | None = None,
+        per_page: int = 200,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, object] = {}
+        if tag_name and tag_name.strip():
+            params["tag_name"] = tag_name.strip()
+        return self._list_paginated_collection(
+            "/droplets",
+            "droplets",
+            params=params,
+            per_page=per_page,
+        )
+
+    def list_snapshots(
+        self,
+        *,
+        resource_type: str = "droplet",
+        per_page: int = 200,
+    ) -> list[dict[str, Any]]:
+        return self._list_paginated_collection(
+            "/snapshots",
+            "snapshots",
+            params={"resource_type": resource_type},
+            per_page=per_page,
+        )
+
+    def create_droplet_snapshot(
+        self,
+        droplet_id: int | str,
+        name: str,
+        *,
+        action_timeout_seconds: int = 1800,
+        snapshot_timeout_seconds: int = 300,
+        poll_interval_seconds: float = 5.0,
+    ) -> dict[str, Any]:
+        snapshot_name = name.strip()
+        if not snapshot_name:
+            raise ValueError("DigitalOcean snapshot name must not be empty")
+        payload = self._request(
+            "POST",
+            f"/droplets/{droplet_id}/actions",
+            payload={"type": "snapshot", "name": snapshot_name},
+            expected_status={201},
+        )
+        action = payload.get("action")
+        if not isinstance(action, dict) or action.get("id") is None:
+            raise DigitalOceanClientError(
+                "DigitalOcean snapshot action response missing action.id"
+            )
+        self.wait_for_action_completed(
+            int(action["id"]),
+            timeout_seconds=action_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+        deadline = time.monotonic() + snapshot_timeout_seconds
+        while time.monotonic() < deadline:
+            for snapshot in self.list_snapshots(resource_type="droplet"):
+                if (
+                    str(snapshot.get("name") or "") == snapshot_name
+                    and str(snapshot.get("resource_id") or "") == str(droplet_id)
+                ):
+                    return snapshot
+            time.sleep(poll_interval_seconds)
+        raise DigitalOceanClientError(
+            f"Timed out waiting for DigitalOcean snapshot: {snapshot_name}"
+        )
+
+    def get_action(self, action_id: int | str) -> dict[str, Any]:
+        payload = self._request("GET", f"/actions/{action_id}")
+        action = payload.get("action")
+        if not isinstance(action, dict):
+            raise DigitalOceanClientError(
+                f"DigitalOcean action not found: {action_id}"
+            )
+        return action
+
+    def wait_for_action_completed(
+        self,
+        action_id: int | str,
+        *,
+        timeout_seconds: int,
+        poll_interval_seconds: float,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            action = self.get_action(action_id)
+            status = str(action.get("status") or "").lower()
+            if status == "completed":
+                return action
+            if status == "errored":
+                raise DigitalOceanClientError(
+                    f"DigitalOcean action failed: {action_id}"
+                )
+            time.sleep(poll_interval_seconds)
+        raise DigitalOceanClientError(
+            f"Timed out waiting for DigitalOcean action: {action_id}"
+        )
+
     def launch_droplet(
         self,
         request: DigitalOceanDropletLaunchRequest,
@@ -128,6 +236,7 @@ class DigitalOceanClient:
             raise DigitalOceanClientError("DigitalOcean create droplet response missing droplet.id")
 
         droplet_id = int(droplet["id"])
+        self._created_droplet_id = droplet_id
         set_event_type("do_droplet_created")
         self._logger.info("Created DigitalOcean droplet id=%s name=%s", droplet_id, request.name)
 
@@ -162,9 +271,47 @@ class DigitalOceanClient:
         )
 
     def delete_droplet(self, droplet_id: int | str) -> None:
-        self._request("DELETE", f"/droplets/{droplet_id}", expected_status={204})
+        self._request("DELETE", f"/droplets/{droplet_id}", expected_status={204, 404})
         set_event_type("do_droplet_deleted")
         self._logger.info("Deleted DigitalOcean droplet id=%s", droplet_id)
+
+    def delete_snapshot(self, snapshot_id: int | str) -> None:
+        self._request(
+            "DELETE",
+            f"/images/{snapshot_id}",
+            expected_status={204, 404},
+        )
+        set_event_type("do_snapshot_deleted")
+        self._logger.info("Deleted DigitalOcean snapshot id=%s", snapshot_id)
+
+    def _list_paginated_collection(
+        self,
+        endpoint: str,
+        collection_key: str,
+        *,
+        params: dict[str, object] | None = None,
+        per_page: int,
+    ) -> list[dict[str, Any]]:
+        if per_page <= 0:
+            raise ValueError("per_page must be greater than 0")
+        page = 1
+        items: list[dict[str, Any]] = []
+        while True:
+            page_params = dict(params or {})
+            page_params.update({"page": page, "per_page": min(per_page, 200)})
+            payload = self._request("GET", endpoint, params=page_params)
+            page_items = payload.get(collection_key, [])
+            if not isinstance(page_items, list):
+                raise DigitalOceanClientError(
+                    f"DigitalOcean {collection_key} response must be a list"
+                )
+            items.extend(item for item in page_items if isinstance(item, dict))
+            links = payload.get("links")
+            pages = links.get("pages") if isinstance(links, dict) else None
+            next_page = pages.get("next") if isinstance(pages, dict) else None
+            if not next_page:
+                return items
+            page += 1
 
     def _request(
         self,

@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 
 
-AssetType = Literal["aws", "azure", "digitalocean", "oci", "vultr", "self_hosted"]
+AssetType = Literal["aws", "azure", "digitalocean", "kamatera", "oci", "vultr", "self_hosted"]
 ProtocolType = Literal["AnyTLS", "Trojan", "vless", "vmess", "Hysteria2"]
 CertMode = Literal["none", "http", "dns", "self"]
 

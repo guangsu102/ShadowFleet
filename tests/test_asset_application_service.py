@@ -259,7 +259,7 @@ class TestAssetApplicationService:
         assert result.asset_id == 42
         created_asset = service._asset_repo.create_asset.call_args.args[0]
         assert created_asset.asset_type == "digitalocean"
-        assert created_asset.aws_account_id == "acct-do-1"
+        assert created_asset.aws_account_id == "digitalocean:acct-do-1"
         assert created_asset.aws_access_key == "dop_v1_test"
         assert created_asset.provider_config == {
             "ssh_keys": ["fingerprint-1"],

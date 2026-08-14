@@ -20,6 +20,8 @@ from database.xboard_repo import XboardRepo
 from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.cloudflare.cf_client import CFClient
+from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.kamatera import KamateraClient, server_created_at, server_tags
 from infrastructure.vultr import VultrClient
 from infrastructure.oci import OCIClient, OCICredentials
 from models.aws_credentials import AwsCredentials
@@ -53,6 +55,29 @@ class OrphanEc2Instance:
 
 
 @dataclass(frozen=True)
+class OrphanDigitalOceanDroplet:
+    """DigitalOcean Droplet managed by ShadowFleet but missing locally."""
+    droplet_id: str
+    asset_id: int
+    region: str
+    name: str
+    created_at: str
+    status: str
+    tags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OrphanDigitalOceanSnapshot:
+    """Temporary healing snapshot that was not removed."""
+    snapshot_id: str
+    asset_id: int
+    name: str
+    created_at: str
+    resource_id: str | None
+    tags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class OrphanVultrInstance:
     """Vultr instance managed by ShadowFleet but missing locally."""
     instance_id: str
@@ -63,6 +88,17 @@ class OrphanVultrInstance:
     status: str
     tags: tuple[str, ...]
     firewall_group_id: str | None = None
+
+
+@dataclass(frozen=True)
+class OrphanKamateraServer:
+    server_id: str
+    asset_id: int
+    datacenter: str
+    name: str
+    created_at: str
+    power: str
+    tags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -139,7 +175,14 @@ class OrphanResourceReport:
     asset_allocations: list[OrphanAssetAllocation]
     xboard_nodes: list[OrphanXboardNode]
     total_count: int
+    digitalocean_droplets: list[OrphanDigitalOceanDroplet] = field(
+        default_factory=list
+    )
+    digitalocean_snapshots: list[OrphanDigitalOceanSnapshot] = field(
+        default_factory=list
+    )
     vultr_instances: list[OrphanVultrInstance] = field(default_factory=list)
+    kamatera_servers: list[OrphanKamateraServer] = field(default_factory=list)
     azure_vms: list[OrphanAzureVm] = field(default_factory=list)
     oci_instances: list[OrphanOCIInstance] = field(default_factory=list)
     azure_network_resources: list[OrphanAzureNetworkResource] = field(
@@ -167,7 +210,9 @@ class OrphanResourceDetector:
         scan_dns: bool = True,
         scan_allocations: bool = True,
         scan_xboard: bool = True,
+        scan_digitalocean: bool = True,
         scan_vultr: bool = True,
+        scan_kamatera: bool = True,
         scan_azure: bool = True,
         scan_oci: bool = True,
     ) -> OrphanResourceReport:
@@ -187,7 +232,10 @@ class OrphanResourceDetector:
         self._logger.info("Starting orphan resource scan")
 
         orphan_ec2_instances: list[OrphanEc2Instance] = []
+        orphan_digitalocean_droplets: list[OrphanDigitalOceanDroplet] = []
+        orphan_digitalocean_snapshots: list[OrphanDigitalOceanSnapshot] = []
         orphan_vultr_instances: list[OrphanVultrInstance] = []
+        orphan_kamatera_servers: list[OrphanKamateraServer] = []
         orphan_azure_vms: list[OrphanAzureVm] = []
         orphan_azure_network_resources: list[OrphanAzureNetworkResource] = []
         orphan_oci_instances: list[OrphanOCIInstance] = []
@@ -200,9 +248,32 @@ class OrphanResourceDetector:
                 orphan_ec2_instances = self._scan_orphan_ec2_instances()
                 self._logger.info("Found %d orphan EC2 instances", len(orphan_ec2_instances))
 
+            if scan_digitalocean:
+                orphan_digitalocean_droplets = (
+                    self._scan_orphan_digitalocean_droplets()
+                )
+                self._logger.info(
+                    "Found %d orphan DigitalOcean Droplets",
+                    len(orphan_digitalocean_droplets),
+                )
+                orphan_digitalocean_snapshots = (
+                    self._scan_orphan_digitalocean_snapshots()
+                )
+                self._logger.info(
+                    "Found %d orphan DigitalOcean snapshots",
+                    len(orphan_digitalocean_snapshots),
+                )
+
             if scan_vultr:
                 orphan_vultr_instances = self._scan_orphan_vultr_instances()
                 self._logger.info("Found %d orphan Vultr instances", len(orphan_vultr_instances))
+            if scan_kamatera:
+                orphan_kamatera_servers = self._scan_orphan_kamatera_servers()
+                self._logger.info(
+                    "Found %d orphan Kamatera servers",
+                    len(orphan_kamatera_servers),
+                )
+
             if scan_oci:
                 orphan_oci_instances = self._scan_orphan_oci_instances()
                 self._logger.info("Found %d orphan OCI instances", len(orphan_oci_instances))
@@ -233,7 +304,10 @@ class OrphanResourceDetector:
 
             total_count = (
                 len(orphan_ec2_instances)
+                + len(orphan_digitalocean_droplets)
+                + len(orphan_digitalocean_snapshots)
                 + len(orphan_vultr_instances)
+                + len(orphan_kamatera_servers)
                 + len(orphan_azure_vms)
                 + len(orphan_azure_network_resources)
                 + len(orphan_oci_instances)
@@ -245,7 +319,10 @@ class OrphanResourceDetector:
             report = OrphanResourceReport(
                 scan_time=datetime.utcnow().isoformat(),
                 ec2_instances=orphan_ec2_instances,
+                digitalocean_droplets=orphan_digitalocean_droplets,
+                digitalocean_snapshots=orphan_digitalocean_snapshots,
                 vultr_instances=orphan_vultr_instances,
+                kamatera_servers=orphan_kamatera_servers,
                 azure_vms=orphan_azure_vms,
                 azure_network_resources=orphan_azure_network_resources,
                 oci_instances=orphan_oci_instances,
@@ -330,6 +407,118 @@ class OrphanResourceDetector:
 
         return orphan_instances
 
+    def _scan_orphan_digitalocean_droplets(
+        self,
+    ) -> list[OrphanDigitalOceanDroplet]:
+        orphan_droplets: list[OrphanDigitalOceanDroplet] = []
+        active_assets = self._asset_repo.list_assets_by_status("active")
+        assets = [
+            asset
+            for asset in active_assets
+            if asset.asset_type == "digitalocean" and asset.aws_access_key
+        ]
+        known_ids = {
+            node.aws_instance_id
+            for node in self._state_repo.list_active_nodes()
+            if node.aws_instance_id
+        }
+        scanned_accounts: set[str] = set()
+        for asset in assets:
+            scope = (asset.aws_account_id or f"asset:{asset.id}").casefold()
+            if scope in scanned_accounts:
+                continue
+            try:
+                client = DigitalOceanClient(
+                    self._runtime,
+                    api_token=asset.aws_access_key or "",
+                )
+                droplets = client.list_droplets(tag_name="shadowfleet")
+                scanned_accounts.add(scope)
+                for droplet in droplets:
+                    droplet_id = str(droplet.get("id") or "").strip()
+                    tags = _string_tuple(droplet.get("tags"))
+                    if (
+                        not droplet_id
+                        or "shadowfleet" not in {tag.casefold() for tag in tags}
+                        or droplet_id in known_ids
+                    ):
+                        continue
+                    created_at = str(droplet.get("created_at") or "").strip()
+                    if not _is_older_than(created_at, timedelta(hours=1)):
+                        continue
+                    region = droplet.get("region")
+                    region_slug = (
+                        str(region.get("slug") or "").strip()
+                        if isinstance(region, dict)
+                        else str(region or asset.region or "").strip()
+                    )
+                    orphan_droplets.append(
+                        OrphanDigitalOceanDroplet(
+                            droplet_id=droplet_id,
+                            asset_id=asset.id,
+                            region=region_slug,
+                            name=str(droplet.get("name") or ""),
+                            created_at=created_at,
+                            status=str(droplet.get("status") or "unknown"),
+                            tags=tags,
+                        )
+                    )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan DigitalOcean Droplets for asset_id=%s: %s",
+                    asset.id,
+                    exc,
+                )
+        return orphan_droplets
+
+    def _scan_orphan_digitalocean_snapshots(
+        self,
+    ) -> list[OrphanDigitalOceanSnapshot]:
+        orphan_snapshots: list[OrphanDigitalOceanSnapshot] = []
+        active_assets = self._asset_repo.list_assets_by_status("active")
+        assets = [
+            asset
+            for asset in active_assets
+            if asset.asset_type == "digitalocean" and asset.aws_access_key
+        ]
+        scanned_accounts: set[str] = set()
+        for asset in assets:
+            scope = (asset.aws_account_id or f"asset:{asset.id}").casefold()
+            if scope in scanned_accounts:
+                continue
+            try:
+                client = DigitalOceanClient(
+                    self._runtime,
+                    api_token=asset.aws_access_key or "",
+                )
+                snapshots = client.list_snapshots(resource_type="droplet")
+                scanned_accounts.add(scope)
+                for snapshot in snapshots:
+                    snapshot_id = str(snapshot.get("id") or "").strip()
+                    name = str(snapshot.get("name") or "").strip()
+                    if not snapshot_id or not name.startswith("shadowfleet-heal-"):
+                        continue
+                    created_at = str(snapshot.get("created_at") or "").strip()
+                    if not _is_older_than(created_at, timedelta(hours=1)):
+                        continue
+                    resource_id = str(snapshot.get("resource_id") or "").strip()
+                    orphan_snapshots.append(
+                        OrphanDigitalOceanSnapshot(
+                            snapshot_id=snapshot_id,
+                            asset_id=asset.id,
+                            name=name,
+                            created_at=created_at,
+                            resource_id=resource_id or None,
+                            tags=_string_tuple(snapshot.get("tags")),
+                        )
+                    )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan DigitalOcean snapshots for asset_id=%s: %s",
+                    asset.id,
+                    exc,
+                )
+        return orphan_snapshots
     def _scan_orphan_vultr_instances(self) -> list[OrphanVultrInstance]:
         orphan_instances: list[OrphanVultrInstance] = []
         active_assets = self._asset_repo.list_assets_by_status("active")
@@ -383,6 +572,63 @@ class OrphanResourceDetector:
                     exc,
                 )
         return orphan_instances
+
+    def _scan_orphan_kamatera_servers(self) -> list[OrphanKamateraServer]:
+        orphan_servers: list[OrphanKamateraServer] = []
+        active_assets = self._asset_repo.list_assets_by_status("active")
+        known_ids = {
+            node.aws_instance_id
+            for node in self._state_repo.list_active_nodes()
+            if node.aws_instance_id
+        }
+        scanned_accounts: set[str] = set()
+        for asset in active_assets:
+            if (
+                asset.asset_type != "kamatera"
+                or not asset.aws_access_key
+                or not asset.aws_secret_key
+            ):
+                continue
+            scope = (asset.aws_account_id or f"asset:{asset.id}").casefold()
+            if scope in scanned_accounts:
+                continue
+            try:
+                client = KamateraClient(
+                    self._runtime,
+                    client_id=asset.aws_access_key,
+                    secret=asset.aws_secret_key,
+                )
+                servers = client.list_servers()
+                scanned_accounts.add(scope)
+                for summary in servers:
+                    server_id = str(summary.get("id") or "").strip()
+                    if not server_id or server_id in known_ids:
+                        continue
+                    server = client.get_server(server_id)
+                    tags = server_tags(server) or client.list_server_tags(server_id)
+                    if "shadowfleet" not in {tag.casefold() for tag in tags}:
+                        continue
+                    created_at = server_created_at(server)
+                    if not _is_older_than(created_at, timedelta(hours=1)):
+                        continue
+                    orphan_servers.append(
+                        OrphanKamateraServer(
+                            server_id=server_id,
+                            asset_id=asset.id,
+                            datacenter=str(server.get("datacenter") or asset.region or ""),
+                            name=str(server.get("name") or summary.get("name") or ""),
+                            created_at=created_at,
+                            power=str(server.get("power") or summary.get("power") or "unknown"),
+                            tags=tags,
+                        )
+                    )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan Kamatera servers for asset_id=%s: %s",
+                    asset.id,
+                    exc,
+                )
+        return orphan_servers
 
     def _scan_orphan_oci_instances(self) -> list[OrphanOCIInstance]:
         orphan_instances: list[OrphanOCIInstance] = []
@@ -762,6 +1008,11 @@ class OrphanResourceDetector:
 
         return orphan_nodes
 
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(str(item).strip() for item in value if str(item).strip())
 
 def _is_older_than(value: str, minimum_age: timedelta) -> bool:
     if not value:

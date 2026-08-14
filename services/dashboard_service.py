@@ -234,10 +234,14 @@ class DashboardService:
                         ),
                         CASE
                             WHEN n.aws_account_id IS NULL THEN 'self_hosted'
-                            WHEN lower(trim(n.aws_account_id)) = 'vultr'
+                            WHEN lower(trim(n.aws_account_id)) = 'digitalocean'
+              OR lower(trim(n.aws_account_id)) LIKE 'digitalocean:%' THEN 'digitalocean'
+            WHEN lower(trim(n.aws_account_id)) = 'vultr'
                               OR lower(trim(n.aws_account_id)) LIKE 'vultr:%' THEN 'vultr'
                             WHEN lower(trim(n.aws_account_id)) = 'azure'
                               OR lower(trim(n.aws_account_id)) LIKE 'azure:%' THEN 'azure'
+                            WHEN lower(trim(n.aws_account_id)) = 'kamatera'
+                              OR lower(trim(n.aws_account_id)) LIKE 'kamatera:%' THEN 'kamatera'
                             WHEN lower(trim(n.aws_account_id)) = 'oci'
                               OR lower(trim(n.aws_account_id)) LIKE 'oci:%' THEN 'oci'
                             ELSE 'aws'

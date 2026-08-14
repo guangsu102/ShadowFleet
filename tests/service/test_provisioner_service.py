@@ -214,6 +214,7 @@ class TestAssetTypeValidation:
             "vultr",
             "azure",
             "oci",
+            "kamatera",
             "self_hosted",
         ]
         for asset_type in asset_types:

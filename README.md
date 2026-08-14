@@ -22,6 +22,7 @@ ShadowFleet/
 │   ├── azure/            # Microsoft Azure resources
 │   ├── cloudflare/       # Cloudflare resources
 │   ├── digitalocean/     # DigitalOcean resources
+│   ├── kamatera/         # Kamatera resources
 │   ├── oci/              # Oracle Cloud resources
 │   ├── self_hosted/      # Self-hosted resources
 │   └── vultr/            # Vultr resources
@@ -118,6 +119,8 @@ docker-compose up
 - [Technical Design Document](docs/technical_design_document.md)
 - [Product Requirements](docs/product_requirements.md)
 - [Remote Testing Guide](docs/remote_testing_guide.md)
+- [Oracle Cloud Infrastructure Setup](docs/oci_setup_guide.md)
+- [Kamatera Setup](docs/kamatera_setup_guide.md)
 
 ### Feature Guides
 

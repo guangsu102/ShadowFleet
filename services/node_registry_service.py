@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from botocore.exceptions import ClientError
+
 from database.asset_repo import AssetRepo
 from database.state_repo import (
     FleetNodeCreateRequest,
@@ -16,8 +18,12 @@ from database.xboard_repo import (
     XboardRepoError,
 )
 from infrastructure.azure import AzureClient, AzureCredentials
+from infrastructure.aws.ec2_client import EC2Client
+from infrastructure.digitalocean import DigitalOceanClient
 from infrastructure.vultr import VultrClient
+from infrastructure.kamatera import KamateraClient
 from infrastructure.oci import OCIClient, OCICredentials
+from models.aws_credentials import AwsCredentials
 from services.node_registry_helpers import (
     compensate_registration_failure,
     require_registered_node,
@@ -415,8 +421,11 @@ class NodeRegistryService:
         )
 
         try:
+            self._delete_aws_instance(node_record)
+            self._delete_digitalocean_instance(node_record)
             self._delete_vultr_instance(node_record)
             self._delete_azure_instance(node_record)
+            self._delete_kamatera_instance(node_record)
             self._delete_oci_instance(node_record)
             self._xboard_repo.delete_node(xboard_node_id)
             self._state_repo.update_node_status(
@@ -508,8 +517,139 @@ class NodeRegistryService:
                 "Node delete failed; manual review required"
             ) from exc
 
+    def _resolve_node_asset_type(self, node_record: FleetNodeRecord) -> str:
+        asset = self._asset_repo.get_asset_by_xboard_node_id(
+            node_record.xboard_node_id
+        )
+        if asset is not None and isinstance(asset.asset_type, str):
+            return asset.asset_type
+        if isinstance(node_record.aws_account_id, str):
+            inferred_type = infer_node_asset_type(node_record)
+            if inferred_type != "aws":
+                return inferred_type
+            candidates = self._asset_repo.list_assets_by_aws_account_id(
+                node_record.aws_account_id
+            )
+            candidate_types = {
+                candidate.asset_type
+                for candidate in candidates
+                if isinstance(candidate.asset_type, str)
+            }
+            if len(candidate_types) == 1:
+                return candidate_types.pop()
+            return inferred_type
+        asset_type = getattr(node_record, "asset_type", None)
+        return asset_type if isinstance(asset_type, str) else "self_hosted"
+    def _delete_aws_instance(self, node_record: FleetNodeRecord) -> None:
+        if self._resolve_node_asset_type(node_record) != "aws":
+            return
+        if not node_record.aws_instance_id:
+            raise NodeRegistryServiceError("AWS node is missing instance ID")
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node_record.xboard_node_id)
+        if asset is None and node_record.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node_record.aws_account_id
+                    )
+                    if candidate.asset_type == "aws"
+                    and (
+                        not node_record.aws_region
+                        or candidate.region == node_record.aws_region
+                    )
+                ),
+                None,
+            )
+        if (
+            asset is None
+            or asset.asset_type != "aws"
+            or not asset.aws_account_id
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+        ):
+            raise NodeRegistryServiceError("AWS credentials not found for node allocation")
+        region = node_record.aws_region or asset.region
+        if not region:
+            raise NodeRegistryServiceError("AWS node is missing region")
+        client = EC2Client(
+            self._runtime_context,
+            AwsCredentials(
+                account_id=asset.aws_account_id,
+                access_key=asset.aws_access_key,
+                secret_key=asset.aws_secret_key,
+                region=region,
+            ),
+        )
+        try:
+            client.terminate_instance(node_record.aws_instance_id)
+        except ClientError as exc:
+            error_code = str(exc.response.get("Error", {}).get("Code") or "")
+            if error_code != "InvalidInstanceID.NotFound":
+                raise
+        self._state_repo.create_event(
+            FleetNodeEventCreateRequest(
+                node_id=node_record.id,
+                xboard_node_id=node_record.xboard_node_id,
+                event_type="aws_instance_deleted",
+                correlation_id=self._runtime_context.correlation_id,
+                from_status="deleting",
+                to_status="deleting",
+                message="AWS instance terminated before Xboard node removal.",
+                payload={
+                    "asset_id": asset.id,
+                    "instance_id": node_record.aws_instance_id,
+                },
+            )
+        )
+
+    def _delete_digitalocean_instance(self, node_record: FleetNodeRecord) -> None:
+        if self._resolve_node_asset_type(node_record) != "digitalocean":
+            return
+        if not node_record.aws_instance_id:
+            raise NodeRegistryServiceError("DigitalOcean node is missing droplet ID")
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node_record.xboard_node_id)
+        if asset is None and node_record.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node_record.aws_account_id
+                    )
+                    if candidate.asset_type == "digitalocean"
+                ),
+                None,
+            )
+        if (
+            asset is None
+            or asset.asset_type != "digitalocean"
+            or not asset.aws_access_key
+        ):
+            raise NodeRegistryServiceError(
+                "DigitalOcean credentials not found for node allocation"
+            )
+        DigitalOceanClient(
+            self._runtime_context,
+            api_token=asset.aws_access_key,
+        ).delete_droplet(node_record.aws_instance_id)
+        self._state_repo.create_event(
+            FleetNodeEventCreateRequest(
+                node_id=node_record.id,
+                xboard_node_id=node_record.xboard_node_id,
+                event_type="digitalocean_droplet_deleted",
+                correlation_id=self._runtime_context.correlation_id,
+                from_status="deleting",
+                to_status="deleting",
+                message="DigitalOcean droplet deleted before Xboard node removal.",
+                payload={
+                    "asset_id": asset.id,
+                    "droplet_id": node_record.aws_instance_id,
+                },
+            )
+        )
+
     def _delete_vultr_instance(self, node_record: FleetNodeRecord) -> None:
-        if infer_node_asset_type(node_record) != "vultr":
+        if self._resolve_node_asset_type(node_record) != "vultr":
             return
         if not node_record.aws_instance_id:
             raise NodeRegistryServiceError("Vultr node is missing instance_id")
@@ -557,7 +697,7 @@ class NodeRegistryService:
         )
 
     def _delete_azure_instance(self, node_record: FleetNodeRecord) -> None:
-        if infer_node_asset_type(node_record) != "azure":
+        if self._resolve_node_asset_type(node_record) != "azure":
             return
         if not node_record.aws_instance_id:
             raise NodeRegistryServiceError("Azure node is missing VM resource ID")
@@ -608,8 +748,53 @@ class NodeRegistryService:
             )
         )
 
+    def _delete_kamatera_instance(self, node_record: FleetNodeRecord) -> None:
+        if self._resolve_node_asset_type(node_record) != "kamatera":
+            return
+        if not node_record.aws_instance_id:
+            raise NodeRegistryServiceError("Kamatera node is missing server ID")
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node_record.xboard_node_id)
+        if asset is None and node_record.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node_record.aws_account_id
+                    )
+                    if candidate.asset_type == "kamatera"
+                ),
+                None,
+            )
+        if (
+            asset is None
+            or asset.asset_type != "kamatera"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+        ):
+            raise NodeRegistryServiceError("Kamatera credentials not found for node allocation")
+        KamateraClient(
+            self._runtime_context,
+            client_id=asset.aws_access_key,
+            secret=asset.aws_secret_key,
+        ).delete_server(node_record.aws_instance_id)
+        self._state_repo.create_event(
+            FleetNodeEventCreateRequest(
+                node_id=node_record.id,
+                xboard_node_id=node_record.xboard_node_id,
+                event_type="kamatera_server_deleted",
+                correlation_id=self._runtime_context.correlation_id,
+                from_status="deleting",
+                to_status="deleting",
+                message="Kamatera server terminated before Xboard node removal.",
+                payload={
+                    "asset_id": asset.id,
+                    "server_id": node_record.aws_instance_id,
+                },
+            )
+        )
+
     def _delete_oci_instance(self, node_record: FleetNodeRecord) -> None:
-        if infer_node_asset_type(node_record) != "oci":
+        if self._resolve_node_asset_type(node_record) != "oci":
             return
         if not node_record.aws_instance_id:
             raise NodeRegistryServiceError("OCI node is missing instance ID")
