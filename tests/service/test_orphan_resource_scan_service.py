@@ -245,6 +245,256 @@ class TestOrphanResourceScanService:
             assert orphans[0].resource_type == "xboard_node"
             assert orphans[0].xboard_node_id == 12345
 
+    def test_scan_node_orphans_checks_vultr_with_vultr_api(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        node = MagicMock()
+        node.xboard_node_id = 12345
+        node.aws_instance_id = "vultr-instance"
+        node.aws_account_id = "vultr:account"
+        node.aws_region = "sgp"
+        node.asset_type = "vultr"
+        asset = MagicMock(asset_type="vultr", aws_access_key="token")
+        scan_service._state_repo.list_active_nodes.return_value = [node]
+        scan_service._asset_repo.get_asset_by_xboard_node_id.return_value = asset
+        with patch("services.orphan_resource_scan_service.VultrClient") as client_cls:
+            from infrastructure.vultr import VultrClientError
+            client_cls.return_value.get_instance.side_effect = VultrClientError(
+                "not found", status_code=404
+            )
+
+            orphans = scan_service._scan_node_orphans()
+
+        assert len(orphans) == 1
+        assert orphans[0].resource_type == "xboard_node"
+        assert orphans[0].reason == "Vultr instance not found"
+
+    def test_scan_vultr_node_uses_account_asset_when_allocation_is_missing(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        node = MagicMock()
+        node.xboard_node_id = 12346
+        node.aws_instance_id = "vultr-instance"
+        node.aws_account_id = "vultr:account"
+        node.aws_region = "sgp"
+        node.asset_type = "vultr"
+        asset = MagicMock(asset_type="vultr", aws_access_key="token")
+        scan_service._asset_repo.get_asset_by_xboard_node_id.return_value = None
+        scan_service._asset_repo.list_assets_by_aws_account_id.return_value = [asset]
+
+        with patch("services.orphan_resource_scan_service.VultrClient") as client_cls:
+            orphan = scan_service._scan_vultr_node_orphan(node)
+
+        assert orphan is None
+        client_cls.return_value.get_instance.assert_called_once_with("vultr-instance")
+        scan_service._asset_repo.list_assets_by_aws_account_id.assert_called_once_with(
+            "vultr:account"
+        )
+
+    def test_scan_node_orphans_skips_aws_when_asset_credentials_are_missing(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        node = MagicMock(
+            xboard_node_id=12347,
+            aws_instance_id="i-unknown",
+            aws_account_id="aws-missing",
+            aws_region="ap-northeast-1",
+            asset_type="aws",
+        )
+        scan_service._state_repo.list_active_nodes.return_value = [node]
+        scan_service._asset_repo.list_assets_by_aws_account_id.return_value = []
+
+        assert scan_service._scan_node_orphans() == []
+
+    def test_scan_node_orphans_skips_azure_when_credentials_are_missing(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        node = MagicMock(
+            xboard_node_id=12348,
+            aws_instance_id="/subscriptions/sub/resourceGroups/rg/providers/"
+            "Microsoft.Compute/virtualMachines/vm",
+            aws_account_id="azure:sub",
+            aws_region="japaneast",
+            asset_type="azure",
+        )
+        scan_service._state_repo.list_active_nodes.return_value = [node]
+        scan_service._asset_repo.get_asset_by_xboard_node_id.return_value = None
+        scan_service._asset_repo.list_assets_by_aws_account_id.return_value = []
+
+        assert scan_service._scan_node_orphans() == []
+
+    def test_scan_node_orphans_treats_azure_forbidden_as_indeterminate(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        from infrastructure.azure import AzureClientError
+
+        node = MagicMock(
+            xboard_node_id=12349,
+            aws_instance_id="/subscriptions/sub/resourceGroups/rg/providers/"
+            "Microsoft.Compute/virtualMachines/vm",
+            aws_account_id="azure:sub",
+            aws_region="japaneast",
+            asset_type="azure",
+        )
+        asset = MagicMock(asset_type="azure")
+        scan_service._state_repo.list_active_nodes.return_value = [node]
+        scan_service._asset_repo.get_asset_by_xboard_node_id.return_value = asset
+        with patch.object(scan_service, "_build_azure_client") as build_client:
+            build_client.return_value.get_vm.side_effect = AzureClientError(
+                "forbidden", status_code=403
+            )
+
+            orphans = scan_service._scan_node_orphans()
+
+        assert orphans == []
+
+    def test_scan_node_orphans_confirms_azure_orphan_on_not_found(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        from infrastructure.azure import AzureClientError
+
+        node = MagicMock(
+            xboard_node_id=12350,
+            aws_instance_id="/subscriptions/sub/resourceGroups/rg/providers/"
+            "Microsoft.Compute/virtualMachines/vm",
+            aws_account_id="azure:sub",
+            aws_region="japaneast",
+            asset_type="azure",
+        )
+        asset = MagicMock(asset_type="azure")
+        scan_service._state_repo.list_active_nodes.return_value = [node]
+        scan_service._asset_repo.get_asset_by_xboard_node_id.return_value = asset
+        with patch.object(scan_service, "_build_azure_client") as build_client:
+            build_client.return_value.get_vm.side_effect = AzureClientError(
+                "not found", status_code=404
+            )
+
+            orphans = scan_service._scan_node_orphans()
+
+        assert len(orphans) == 1
+        assert orphans[0].resource_type == "xboard_node"
+        assert orphans[0].reason == "Azure VM not found"
+
+    def test_scan_azure_orphans_includes_old_network_resources_without_vm(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        old_timestamp = "2000-01-01T00:00:00Z"
+        tags = {
+            "shadowfleet": "true",
+            "shadowfleet_created_at": old_timestamp,
+        }
+        asset = MagicMock(
+            id=11,
+            asset_type="azure",
+            aws_account_id="azure:sub",
+            region="japaneast",
+            provider_config={"resource_group": "rg", "subscription_id": "sub"},
+        )
+        duplicate_scope_asset = MagicMock(
+            id=12,
+            asset_type="azure",
+            aws_account_id="azure:sub",
+            region="eastus",
+            provider_config={"resource_group": "RG", "subscription_id": "SUB"},
+        )
+        scan_service._asset_repo.list_assets_by_status.return_value = [
+            asset,
+            duplicate_scope_asset,
+        ]
+        scan_service._state_repo.list_active_nodes.return_value = []
+        with patch.object(scan_service, "_build_azure_client") as build_client:
+            client = build_client.return_value
+            client.list_virtual_machines.return_value = []
+            client.list_network_interfaces.return_value = [
+                {
+                    "id": "nic",
+                    "name": "orphan-nic",
+                    "location": "japaneast",
+                    "tags": tags,
+                },
+                {
+                    "id": "legacy-nic",
+                    "name": "legacy-nic",
+                    "location": "japaneast",
+                    "tags": {"shadowfleet": "true"},
+                },
+            ]
+            client.list_public_ip_addresses.return_value = [
+                {
+                    "id": "pip",
+                    "name": "orphan-ipv6",
+                    "location": "japaneast",
+                    "tags": tags,
+                }
+            ]
+            client.list_network_security_groups.return_value = [
+                {
+                    "id": "nsg",
+                    "name": "orphan-nsg",
+                    "location": "japaneast",
+                    "tags": tags,
+                }
+            ]
+
+            orphans = scan_service._scan_azure_orphans()
+
+        assert [orphan.resource_type for orphan in orphans] == [
+            "azure_network_interface",
+            "azure_public_ip_address",
+            "azure_network_security_group",
+        ]
+        assert [orphan.resource_id for orphan in orphans] == ["nic", "pip", "nsg"]
+        assert build_client.call_count == 1
+
+    def test_scan_azure_orphans_returns_no_partial_results_on_list_failure(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        asset = MagicMock(
+            id=11,
+            asset_type="azure",
+            aws_account_id="azure:sub",
+            region="japaneast",
+            provider_config={"resource_group": "rg", "subscription_id": "sub"},
+        )
+        scan_service._asset_repo.list_assets_by_status.return_value = [asset]
+        scan_service._state_repo.list_active_nodes.return_value = []
+        with patch.object(scan_service, "_build_azure_client") as build_client:
+            client = build_client.return_value
+            client.list_virtual_machines.return_value = [
+                {
+                    "id": "vm",
+                    "name": "orphan",
+                    "tags": {"shadowfleet": "true"},
+                    "properties": {"timeCreated": "2000-01-01T00:00:00Z"},
+                }
+            ]
+            client.list_network_interfaces.return_value = []
+            client.list_public_ip_addresses.side_effect = RuntimeError(
+                "Azure list failed"
+            )
+
+            orphans = scan_service._scan_azure_orphans()
+
+        assert orphans == []
+
+    def test_cleanup_azure_network_orphan_dispatches_by_resource_type(
+        self, scan_service: OrphanResourceScanService
+    ) -> None:
+        orphan = OrphanResourceInfo(
+            resource_type="azure_public_ip_address",
+            resource_id="pip",
+            asset_id=11,
+        )
+        asset = MagicMock(asset_type="azure")
+        scan_service._asset_repo.get_asset_by_id.return_value = asset
+        with patch.object(scan_service, "_build_azure_client") as build_client:
+            cleaned = scan_service._cleanup_azure_network_orphan(orphan)
+
+        assert cleaned is True
+        build_client.return_value.delete_public_ip_address.assert_called_once_with(
+            "pip"
+        )
+
     def test_cleanup_orphan_resource_ec2(
         self, scan_service: OrphanResourceScanService
     ) -> None:

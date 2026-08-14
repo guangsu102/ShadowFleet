@@ -13,6 +13,20 @@ from database.asset_repo import AssetRepo
 from database.state_models import FleetNodeRecord
 from database.state_repo import StateRepo
 from infrastructure.aws.ec2_client import EC2Client
+from infrastructure.azure import AzureClient, AzureClientError, AzureCredentials
+from infrastructure.vultr import VultrClient, VultrClientError
+from services.monitor_support import infer_node_asset_type
+from services.orphan_azure_support import (
+    AZURE_NETWORK_RESOURCE_SPECS,
+    AZURE_NETWORK_RESOURCE_TYPES,
+    azure_parent_vm_is_live,
+    azure_parent_vm_name_from_resource,
+    azure_public_ip_is_attached,
+    azure_resource_created_at,
+    is_azure_healing_public_ip,
+    azure_vm_name,
+    is_shadowfleet_azure_resource,
+)
 from services.asset_selector_service import AssetSelectorService
 from services.node_registry_service import NodeRegistryService
 from services.orphan_node_cleanup_service import OrphanNodeCleanupService
@@ -34,6 +48,8 @@ class OrphanResourceInfo:
     xboard_node_id: int | None = None
     reason: str | None = None
     discovered_at: str | None = None
+    asset_id: int | None = None
+    firewall_group_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +130,12 @@ class OrphanResourceScanService:
             ec2_orphans = self._scan_ec2_orphans()
             orphans.extend(ec2_orphans)
 
+            vultr_orphans = self._scan_vultr_orphans()
+            orphans.extend(vultr_orphans)
+
+            azure_orphans = self._scan_azure_orphans()
+            orphans.extend(azure_orphans)
+
             # 3. 扫描节点孤儿
             node_orphans = self._scan_node_orphans()
             orphans.extend(node_orphans)
@@ -192,7 +214,12 @@ class OrphanResourceScanService:
         try:
             # 获取 Xboard 中的所有节点
             xboard_nodes = self._node_registry.list_all_nodes()
-            xboard_node_ids = {n.xboard_node_id for n in xboard_nodes}
+            xboard_nodes_by_id = {
+                node_id: node
+                for node in xboard_nodes
+                if (node_id := _xboard_node_id(node)) is not None
+            }
+            xboard_node_ids = set(xboard_nodes_by_id)
 
             # 获取 SQLite 中的所有节点
             sqlite_nodes = self._state_repo.list_active_nodes()
@@ -208,14 +235,18 @@ class OrphanResourceScanService:
             status_mismatch: list[str] = []
             inconsistent_allocations: list[str] = []
 
-            # 检查 Xboard 中存在的节点状态
+            # Xboard only exposes visibility, so compare stable online/offline states.
             for node in sqlite_nodes:
-                if node.xboard_node_id in xboard_node_ids:
-                    xboard_node = next((n for n in xboard_nodes if n.xboard_node_id == node.xboard_node_id), None)
-                    if xboard_node:
-                        # 检查 show 字段（online/offline）
-                        # 这里可以扩展更多状态检查
-                        pass
+                xboard_node = xboard_nodes_by_id.get(node.xboard_node_id)
+                if xboard_node is None or node.status not in {"online", "offline"}:
+                    continue
+                expected_visible = node.status == "online"
+                actual_visible = bool(getattr(xboard_node, "show", False))
+                if actual_visible != expected_visible:
+                    status_mismatch.append(
+                        f"xboard_node_id={node.xboard_node_id}: "
+                        f"sqlite_status={node.status}, xboard_show={actual_visible}"
+                    )
 
             return DatabaseConsistencyResult(
                 sqlite_only_nodes=tuple(sorted(sqlite_only)),
@@ -312,6 +343,200 @@ class OrphanResourceScanService:
 
         return orphans
 
+    def _scan_vultr_orphans(self) -> list[OrphanResourceInfo]:
+        orphans: list[OrphanResourceInfo] = []
+        try:
+            assets = self._asset_repo.list_assets_by_status("active")
+            vultr_assets = [
+                asset
+                for asset in assets
+                if asset.asset_type == "vultr" and asset.aws_access_key
+            ]
+            known_ids = {
+                node.aws_instance_id
+                for node in self._state_repo.list_active_nodes()
+                if node.aws_instance_id
+            }
+            for asset in vultr_assets:
+                try:
+                    client = VultrClient(
+                        self._runtime_context,
+                        api_token=asset.aws_access_key,
+                    )
+                    for instance in client.list_instances():
+                        instance_id = str(instance.get("id") or "").strip()
+                        raw_tags = instance.get("tags")
+                        tags = {
+                            str(tag).strip().lower()
+                            for tag in raw_tags
+                            if str(tag).strip()
+                        } if isinstance(raw_tags, list) else set()
+                        if not instance_id or "shadowfleet" not in tags or instance_id in known_ids:
+                            continue
+                        created_at = str(instance.get("date_created") or "").strip()
+                        if not self._resource_age_exceeded(created_at):
+                            continue
+                        orphans.append(
+                            OrphanResourceInfo(
+                                resource_type="vultr_instance",
+                                resource_id=instance_id,
+                                region=str(instance.get("region") or asset.region or ""),
+                                aws_account_id=asset.aws_account_id,
+                                asset_id=asset.id,
+                                firewall_group_id=(
+                                    str(instance.get("firewall_group_id") or "").strip() or None
+                                ),
+                                reason="Instance exists in Vultr but not in SQLite",
+                                discovered_at=datetime.utcnow().isoformat(),
+                            )
+                        )
+                except Exception as exc:
+                    self._logger.warning(
+                        "Failed to scan Vultr orphans for asset %s: %s",
+                        asset.asset_name,
+                        exc,
+                    )
+        except Exception as exc:
+            self._logger.exception("Failed to scan Vultr orphans: %s", exc)
+        return orphans
+
+    def _scan_azure_orphans(self) -> list[OrphanResourceInfo]:
+        orphans: list[OrphanResourceInfo] = []
+        try:
+            assets = self._asset_repo.list_assets_by_status("active")
+            scanned_scopes: set[tuple[str, str]] = set()
+            known_ids = {
+                str(node.aws_instance_id).lower()
+                for node in self._state_repo.list_active_nodes()
+                if node.aws_instance_id
+            }
+            for asset in assets:
+                if asset.asset_type != "azure":
+                    continue
+                config = asset.provider_config
+                if not isinstance(config, dict):
+                    continue
+                resource_group = str(config.get("resource_group") or "").strip()
+                subscription_id = str(config.get("subscription_id") or "").strip()
+                if not resource_group or not subscription_id:
+                    continue
+                scope = (subscription_id.casefold(), resource_group.casefold())
+                if scope in scanned_scopes:
+                    continue
+                try:
+                    client = self._build_azure_client(asset)
+                    virtual_machines = client.list_virtual_machines(resource_group)
+                    resource_collections = (
+                        client.list_network_interfaces(resource_group),
+                        client.list_public_ip_addresses(resource_group),
+                        client.list_network_security_groups(resource_group),
+                    )
+                    scanned_scopes.add(scope)
+                    live_vm_names = {
+                        azure_vm_name(vm).casefold()
+                        for vm in virtual_machines
+                        if azure_vm_name(vm)
+                    }
+                    for vm in virtual_machines:
+                        vm_id = str(vm.get("id") or "").strip()
+                        tags = vm.get("tags")
+                        managed = (
+                            isinstance(tags, dict)
+                            and str(tags.get("shadowfleet") or "").lower() == "true"
+                        )
+                        if not vm_id or not managed or vm_id.lower() in known_ids:
+                            continue
+                        properties = vm.get("properties")
+                        created_at = str(
+                            properties.get("timeCreated") if isinstance(properties, dict) else ""
+                        ).strip()
+                        if not self._resource_age_exceeded(created_at):
+                            continue
+                        orphans.append(
+                            OrphanResourceInfo(
+                                resource_type="azure_vm",
+                                resource_id=vm_id,
+                                region=str(vm.get("location") or asset.region or ""),
+                                aws_account_id=asset.aws_account_id,
+                                asset_id=asset.id,
+                                reason="VM exists in Azure but not in SQLite",
+                                discovered_at=datetime.utcnow().isoformat(),
+                            )
+                        )
+                    for spec, resources in zip(
+                        AZURE_NETWORK_RESOURCE_SPECS,
+                        resource_collections,
+                        strict=True,
+                    ):
+                        for resource in resources:
+                            if not is_shadowfleet_azure_resource(resource):
+                                continue
+                            resource_id = str(resource.get("id") or "").strip()
+                            resource_name = str(resource.get("name") or "").strip()
+                            parent_vm_name = azure_parent_vm_name_from_resource(
+                                spec.resource_type,
+                                resource,
+                            )
+                            healing_public_ip = (
+                                spec.resource_type == "azure_public_ip_address"
+                                and is_azure_healing_public_ip(resource)
+                            )
+                            parent_is_live = (
+                                parent_vm_name is not None
+                                and azure_parent_vm_is_live(
+                                    parent_vm_name,
+                                    live_vm_names,
+                                    healing_public_ip=healing_public_ip,
+                                )
+                            )
+                            if not resource_id or parent_vm_name is None:
+                                continue
+                            if parent_is_live and (
+                                not healing_public_ip
+                                or azure_public_ip_is_attached(resource)
+                            ):
+                                continue
+                            created_at = azure_resource_created_at(resource)
+                            if not self._resource_age_exceeded(created_at):
+                                continue
+                            orphans.append(
+                                OrphanResourceInfo(
+                                    resource_type=spec.resource_type,
+                                    resource_id=resource_id,
+                                    region=str(
+                                        resource.get("location")
+                                        or asset.region
+                                        or ""
+                                    ),
+                                    aws_account_id=asset.aws_account_id,
+                                    asset_id=asset.id,
+                                    reason=(
+                                        f"Azure {spec.resource_type} exists without "
+                                        f"parent VM {parent_vm_name}"
+                                    ),
+                                    discovered_at=datetime.utcnow().isoformat(),
+                                )
+                            )
+                except Exception as exc:
+                    self._logger.warning(
+                        "Failed to scan Azure orphans for asset %s: %s",
+                        asset.asset_name,
+                        exc,
+                    )
+        except Exception as exc:
+            self._logger.exception("Failed to scan Azure orphans: %s", exc)
+        return orphans
+
+    @staticmethod
+    def _resource_age_exceeded(created_at: str) -> bool:
+        if not created_at:
+            return False
+        try:
+            timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return datetime.utcnow() - timestamp.replace(tzinfo=None) > timedelta(hours=1)
+
     def _scan_node_orphans(self) -> list[OrphanResourceInfo]:
         """
         扫描节点孤儿
@@ -326,6 +551,35 @@ class OrphanResourceScanService:
             for node in active_nodes:
                 if not node.aws_instance_id or not node.aws_account_id:
                     continue
+                asset_type = infer_node_asset_type(node)
+                if asset_type == "vultr":
+                    try:
+                        orphan = self._scan_vultr_node_orphan(node)
+                        if orphan is not None:
+                            orphans.append(orphan)
+                    except Exception as exc:
+                        self._logger.warning(
+                            "Vultr node scan is indeterminate for node %s instance %s: %s",
+                            node.xboard_node_id,
+                            node.aws_instance_id,
+                            exc,
+                        )
+                    continue
+                if asset_type == "azure":
+                    try:
+                        orphan = self._scan_azure_node_orphan(node)
+                        if orphan is not None:
+                            orphans.append(orphan)
+                    except Exception as exc:
+                        self._logger.warning(
+                            "Azure node scan is indeterminate for node %s VM %s: %s",
+                            node.xboard_node_id,
+                            node.aws_instance_id,
+                            exc,
+                        )
+                    continue
+                if asset_type != "aws":
+                    continue
 
                 try:
                     # 尝试获取实例状态
@@ -335,15 +589,12 @@ class OrphanResourceScanService:
                     # 获取资产凭证
                     assets = self._asset_repo.list_assets_by_aws_account_id(node.aws_account_id)
                     if not assets:
-                        orphans.append(OrphanResourceInfo(
-                            resource_type="xboard_node",
-                            resource_id=str(node.xboard_node_id),
-                            region=node.aws_region,
-                            aws_account_id=node.aws_account_id,
-                            xboard_node_id=node.xboard_node_id,
-                            reason="Node's AWS account not found in assets",
-                            discovered_at=utcnow_iso(),
-                        ))
+                        self._logger.warning(
+                            "AWS node scan is indeterminate because asset credentials were not "
+                            "found: node=%s account=%s",
+                            node.xboard_node_id,
+                            node.aws_account_id,
+                        )
                         continue
 
                     asset = assets[0]
@@ -402,6 +653,83 @@ class OrphanResourceScanService:
 
         return orphans
 
+    def _scan_vultr_node_orphan(self, node: FleetNodeRecord) -> OrphanResourceInfo | None:
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node.xboard_node_id)
+        if asset is None and node.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node.aws_account_id
+                    )
+                    if candidate.asset_type == "vultr"
+                ),
+                None,
+            )
+        if asset is None or asset.asset_type != "vultr" or not asset.aws_access_key:
+            self._logger.warning(
+                "Vultr node scan is indeterminate because asset credentials were not found: "
+                "node=%s account=%s",
+                node.xboard_node_id,
+                node.aws_account_id,
+            )
+            return None
+        try:
+            VultrClient(
+                self._runtime_context,
+                api_token=asset.aws_access_key,
+            ).get_instance(node.aws_instance_id or "")
+        except VultrClientError as exc:
+            if exc.status_code != 404:
+                raise
+            return OrphanResourceInfo(
+                resource_type="xboard_node",
+                resource_id=str(node.xboard_node_id),
+                region=node.aws_region,
+                aws_account_id=node.aws_account_id,
+                xboard_node_id=node.xboard_node_id,
+                reason="Vultr instance not found",
+                discovered_at=datetime.utcnow().isoformat(),
+            )
+        return None
+
+    def _scan_azure_node_orphan(self, node: FleetNodeRecord) -> OrphanResourceInfo | None:
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node.xboard_node_id)
+        if asset is None and node.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node.aws_account_id
+                    )
+                    if candidate.asset_type == "azure"
+                ),
+                None,
+            )
+        if asset is None or asset.asset_type != "azure":
+            self._logger.warning(
+                "Azure node scan is indeterminate because asset credentials were not found: "
+                "node=%s account=%s",
+                node.xboard_node_id,
+                node.aws_account_id,
+            )
+            return None
+        try:
+            self._build_azure_client(asset).get_vm(node.aws_instance_id or "")
+        except AzureClientError as exc:
+            if exc.status_code != 404:
+                raise
+            return OrphanResourceInfo(
+                resource_type="xboard_node",
+                resource_id=str(node.xboard_node_id),
+                region=node.aws_region,
+                aws_account_id=node.aws_account_id,
+                xboard_node_id=node.xboard_node_id,
+                reason="Azure VM not found",
+                discovered_at=datetime.utcnow().isoformat(),
+            )
+        return None
+
     def _scan_allocation_orphans(self) -> list[OrphanResourceInfo]:
         """
         扫描资产分配孤儿
@@ -411,10 +739,56 @@ class OrphanResourceScanService:
         orphans: list[OrphanResourceInfo] = []
 
         try:
-            # 检查 orphaned allocation events
-            # 这些是 provisioning_rollback_incomplete 事件
-            # 这个功能可以在后续实现
-            pass
+
+            sql = """
+                SELECT
+                    allocation.id,
+                    allocation.asset_id,
+                    allocation.fleet_node_id,
+                    allocation.xboard_node_id,
+                    node.id AS actual_fleet_node_id,
+                    node.is_deleted
+                FROM fleet_asset_allocations AS allocation
+                LEFT JOIN fleet_nodes AS node
+                    ON node.xboard_node_id = allocation.xboard_node_id
+                WHERE allocation.allocation_status = 'allocated'
+                  AND (
+                        allocation.xboard_node_id IS NULL
+                        OR node.id IS NULL
+                        OR node.is_deleted = 1
+                        OR (
+                            allocation.fleet_node_id IS NOT NULL
+                            AND allocation.fleet_node_id != node.id
+                        )
+                  )
+                ORDER BY allocation.id ASC
+            """
+            with self._runtime_context.sqlite_manager.connection() as connection:
+                rows = connection.execute(sql).fetchall()
+            for row in rows:
+                xboard_node_id = (
+                    int(row["xboard_node_id"])
+                    if row["xboard_node_id"] is not None
+                    else None
+                )
+                if xboard_node_id is None:
+                    reason = "Active allocation has no Xboard node binding"
+                elif row["actual_fleet_node_id"] is None:
+                    reason = "Active allocation references a missing fleet node"
+                elif bool(row["is_deleted"]):
+                    reason = "Active allocation references a deleted fleet node"
+                else:
+                    reason = "Active allocation fleet node binding is inconsistent"
+                orphans.append(
+                    OrphanResourceInfo(
+                        resource_type="asset_allocation",
+                        resource_id=str(row["id"]),
+                        xboard_node_id=xboard_node_id,
+                        asset_id=int(row["asset_id"]),
+                        reason=reason,
+                        discovered_at=datetime.utcnow().isoformat(),
+                    )
+                )
 
         except Exception as exc:
             self._logger.exception("Failed to scan allocation orphans: %s", exc)
@@ -431,14 +805,119 @@ class OrphanResourceScanService:
         try:
             if orphan.resource_type == "ec2_instance":
                 return self._cleanup_ec2_orphan(orphan)
+            elif orphan.resource_type == "vultr_instance":
+                return self._cleanup_vultr_orphan(orphan)
+            elif orphan.resource_type == "azure_vm":
+                return self._cleanup_azure_orphan(orphan)
+            elif orphan.resource_type in AZURE_NETWORK_RESOURCE_TYPES:
+                return self._cleanup_azure_network_orphan(orphan)
             elif orphan.resource_type == "xboard_node":
                 return self._cleanup_node_orphan(orphan)
+            elif orphan.resource_type == "asset_allocation":
+                return self._cleanup_allocation_orphan(orphan)
             else:
                 self._logger.warning("Unknown orphan resource type: %s", orphan.resource_type)
                 return False
         except Exception as exc:
             self._logger.exception("Failed to cleanup orphan %s: %s", orphan.resource_id, exc)
             return False
+
+    def _cleanup_allocation_orphan(
+        self,
+        orphan: OrphanResourceInfo,
+    ) -> bool:
+        allocation_id = int(orphan.resource_id)
+        released = self._asset_repo.release_allocation_by_id(allocation_id)
+        if released:
+            set_event_type("orphan_asset_allocation_released")
+        return released
+
+    def _cleanup_vultr_orphan(self, orphan: OrphanResourceInfo) -> bool:
+        if orphan.asset_id is None:
+            self._logger.warning("Cannot cleanup Vultr orphan: no asset_id")
+            return False
+        try:
+            asset = self._asset_repo.get_asset_by_id(orphan.asset_id)
+            if asset.asset_type != "vultr" or not asset.aws_access_key:
+                return False
+            client = VultrClient(
+                self._runtime_context,
+                api_token=asset.aws_access_key,
+            )
+            client.delete_instance(orphan.resource_id)
+            if orphan.firewall_group_id:
+                client.delete_managed_firewall_group(orphan.firewall_group_id)
+            set_event_type("orphan_vultr_instance_deleted")
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to delete orphan Vultr instance %s: %s",
+                orphan.resource_id,
+                exc,
+            )
+            return False
+
+    def _cleanup_azure_orphan(self, orphan: OrphanResourceInfo) -> bool:
+        if orphan.asset_id is None:
+            self._logger.warning("Cannot cleanup Azure orphan: no asset_id")
+            return False
+        try:
+            asset = self._asset_repo.get_asset_by_id(orphan.asset_id)
+            if asset.asset_type != "azure":
+                return False
+            self._build_azure_client(asset).delete_vm(orphan.resource_id)
+            set_event_type("orphan_azure_vm_deleted")
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to delete orphan Azure VM %s: %s", orphan.resource_id, exc
+            )
+            return False
+
+    def _cleanup_azure_network_orphan(self, orphan: OrphanResourceInfo) -> bool:
+        if orphan.asset_id is None:
+            self._logger.warning("Cannot cleanup Azure network orphan: no asset_id")
+            return False
+        try:
+            asset = self._asset_repo.get_asset_by_id(orphan.asset_id)
+            if asset.asset_type != "azure":
+                return False
+            client = self._build_azure_client(asset)
+            if orphan.resource_type == "azure_network_interface":
+                client.delete_network_interface(orphan.resource_id)
+            elif orphan.resource_type == "azure_public_ip_address":
+                client.delete_public_ip_address(orphan.resource_id)
+            elif orphan.resource_type == "azure_network_security_group":
+                client.delete_network_security_group(orphan.resource_id)
+            else:
+                return False
+            set_event_type(f"orphan_{orphan.resource_type}_deleted")
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to delete orphan Azure network resource %s: %s",
+                orphan.resource_id,
+                exc,
+            )
+            return False
+
+    def _build_azure_client(self, asset) -> AzureClient:
+        config = asset.provider_config
+        if (
+            not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not isinstance(config, dict)
+        ):
+            raise ValueError("Azure credentials are incomplete")
+        return AzureClient(
+            self._runtime_context,
+            AzureCredentials(
+                tenant_id=str(config.get("tenant_id") or ""),
+                client_id=asset.aws_access_key,
+                client_secret=asset.aws_secret_key,
+                subscription_id=str(config.get("subscription_id") or ""),
+            ),
+        )
 
     def _cleanup_ec2_orphan(self, orphan: OrphanResourceInfo) -> bool:
         """清理 EC2 孤儿实例"""
@@ -496,15 +975,17 @@ class OrphanResourceScanService:
             node_record = self._state_repo.get_node_by_xboard_node_id(orphan.xboard_node_id)
             if node_record:
                 # 使用现有的孤儿节点清理服务
-                self._orphan_cleanup.cleanup_orphan_node(
+                cleanup_result = self._orphan_cleanup.cleanup_orphan_node(
                     node_record=node_record,
-                    reason=orphan.reason or "ec2_instance_not_found",
+                    reason=orphan.reason or "provider_resource_not_found",
                 )
+                if not cleanup_result.deleted:
+                    return False
             else:
                 # 没有本地记录，直接从 Xboard 删除
                 self._node_registry.delete_node(
                     xboard_node_id=orphan.xboard_node_id,
-                    status_reason="孤儿节点清理：EC2实例已不存在",
+                    status_reason="孤儿节点清理：底层云资源已不存在",
                 )
 
             set_event_type("orphan_node_cleaned")
@@ -564,6 +1045,16 @@ class OrphanResourceScanService:
     def get_scan_history(self, limit: int = 10) -> list[OrphanCleanupResult]:
         """获取扫描历史"""
         return self._scan_history[-limit:]
+
+
+def _xboard_node_id(node: object) -> int | None:
+    xboard_node_id = getattr(node, "xboard_node_id", None)
+    if isinstance(xboard_node_id, int):
+        return xboard_node_id
+    node_id = getattr(node, "node_id", None)
+    if isinstance(node_id, int):
+        return node_id
+    return None
 
 
 class OrphanCleanupScheduler:

@@ -17,15 +17,21 @@ from database.asset_repo import AssetRepo
 from database.state_repo import StateRepo
 from database.xboard_repo import XboardRepo
 from infrastructure.aws.ec2_client import EC2Client
+from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.cloudflare.cf_client import CFClient
+from infrastructure.vultr import VultrClient
 from models.aws_credentials import AwsCredentials
 from services.orphan_resource_detector import (
     OrphanAssetAllocation,
+    OrphanAzureNetworkResource,
+    OrphanAzureVm,
     OrphanDnsRecord,
     OrphanEc2Instance,
     OrphanResourceReport,
+    OrphanVultrInstance,
     OrphanXboardNode,
 )
+from services.orphan_azure_support import AZURE_NETWORK_RESOURCE_SPECS
 from utils.logger import set_event_type
 
 if TYPE_CHECKING:
@@ -73,6 +79,8 @@ class OrphanResourceCleaner:
         cleanup_allocations: bool = True,
         cleanup_xboard: bool = True,
         dry_run: bool = False,
+        cleanup_vultr: bool = True,
+        cleanup_azure: bool = True,
     ) -> CleanupReport:
         """
         清理孤儿资源
@@ -100,6 +108,18 @@ class OrphanResourceCleaner:
         try:
             if cleanup_ec2:
                 results.extend(self._cleanup_ec2_instances(report.ec2_instances, dry_run))
+
+            if cleanup_vultr:
+                results.extend(self._cleanup_vultr_instances(report.vultr_instances, dry_run))
+
+            if cleanup_azure:
+                results.extend(self._cleanup_azure_vms(report.azure_vms, dry_run))
+                results.extend(
+                    self._cleanup_azure_network_resources(
+                        report.azure_network_resources,
+                        dry_run,
+                    )
+                )
 
             if cleanup_dns:
                 results.extend(self._cleanup_dns_records(report.dns_records, dry_run))
@@ -208,6 +228,152 @@ class OrphanResourceCleaner:
                 )
 
         return results
+
+    def _cleanup_vultr_instances(
+        self,
+        instances: list[OrphanVultrInstance],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        results: list[CleanupResult] = []
+        for instance in instances:
+            try:
+                if not dry_run:
+                    asset = self._asset_repo.get_asset_by_id(instance.asset_id)
+                    if asset.asset_type != "vultr" or not asset.aws_access_key:
+                        raise OrphanResourceCleanerError(
+                            f"Vultr credentials missing for asset_id={instance.asset_id}"
+                        )
+                    client = VultrClient(
+                        self._runtime,
+                        api_token=asset.aws_access_key,
+                    )
+                    client.delete_instance(instance.instance_id)
+                    if instance.firewall_group_id:
+                        client.delete_managed_firewall_group(instance.firewall_group_id)
+                results.append(
+                    CleanupResult(
+                        resource_type="vultr_instance",
+                        resource_id=instance.instance_id,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to cleanup Vultr instance %s: %s",
+                    instance.instance_id,
+                    exc,
+                )
+                results.append(
+                    CleanupResult(
+                        resource_type="vultr_instance",
+                        resource_id=instance.instance_id,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
+
+    def _cleanup_azure_vms(
+        self,
+        vms: list[OrphanAzureVm],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        results: list[CleanupResult] = []
+        for vm in vms:
+            try:
+                if not dry_run:
+                    self._build_azure_client(vm.asset_id).delete_vm(vm.vm_id)
+                results.append(
+                    CleanupResult(
+                        resource_type="azure_vm",
+                        resource_id=vm.vm_id,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning("Failed to cleanup Azure VM %s: %s", vm.vm_id, exc)
+                results.append(
+                    CleanupResult(
+                        resource_type="azure_vm",
+                        resource_id=vm.vm_id,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
+
+    def _cleanup_azure_network_resources(
+        self,
+        resources: list[OrphanAzureNetworkResource],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        order = {
+            spec.resource_type: index
+            for index, spec in enumerate(AZURE_NETWORK_RESOURCE_SPECS)
+        }
+        ordered_resources = sorted(
+            resources,
+            key=lambda resource: order[resource.resource_type],
+        )
+        results: list[CleanupResult] = []
+        for resource in ordered_resources:
+            try:
+                if not dry_run:
+                    client = self._build_azure_client(resource.asset_id)
+                    if resource.resource_type == "azure_network_interface":
+                        client.delete_network_interface(resource.resource_id)
+                    elif resource.resource_type == "azure_public_ip_address":
+                        client.delete_public_ip_address(resource.resource_id)
+                    elif resource.resource_type == "azure_network_security_group":
+                        client.delete_network_security_group(resource.resource_id)
+                    else:
+                        raise OrphanResourceCleanerError(
+                            f"Unsupported Azure resource type: {resource.resource_type}"
+                        )
+                results.append(
+                    CleanupResult(
+                        resource_type=resource.resource_type,
+                        resource_id=resource.resource_id,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to cleanup Azure network resource %s: %s",
+                    resource.resource_id,
+                    exc,
+                )
+                results.append(
+                    CleanupResult(
+                        resource_type=resource.resource_type,
+                        resource_id=resource.resource_id,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
+
+    def _build_azure_client(self, asset_id: int) -> AzureClient:
+        asset = self._asset_repo.get_asset_by_id(asset_id)
+        config = asset.provider_config
+        if (
+            asset.asset_type != "azure"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not isinstance(config, dict)
+        ):
+            raise OrphanResourceCleanerError(
+                f"Azure credentials missing for asset_id={asset_id}"
+            )
+        return AzureClient(
+            self._runtime,
+            AzureCredentials(
+                tenant_id=str(config.get("tenant_id") or ""),
+                client_id=asset.aws_access_key,
+                client_secret=asset.aws_secret_key,
+                subscription_id=str(config.get("subscription_id") or ""),
+            ),
+        )
 
     def _cleanup_dns_records(
         self,

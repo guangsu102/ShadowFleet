@@ -50,6 +50,7 @@ class AccountAbandonmentService:
             raise ValueError("aws_account_id must not be empty")
         normalized_account_id = aws_account_id.strip()
         assets = self._asset_repo.list_assets_by_aws_account_id(normalized_account_id)
+        assets = [asset for asset in assets if asset.asset_type == "aws"]
         if not assets:
             raise AccountAbandonmentServiceError(
                 f"No assets found for aws_account_id={normalized_account_id}"

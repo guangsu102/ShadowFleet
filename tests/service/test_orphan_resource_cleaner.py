@@ -5,7 +5,7 @@ Unit tests for OrphanResourceCleaner service
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -17,9 +17,12 @@ from services.orphan_resource_cleaner import (
 )
 from services.orphan_resource_detector import (
     OrphanAssetAllocation,
+    OrphanAzureNetworkResource,
+    OrphanAzureVm,
     OrphanDnsRecord,
     OrphanEc2Instance,
     OrphanResourceReport,
+    OrphanVultrInstance,
     OrphanXboardNode,
 )
 
@@ -137,6 +140,101 @@ class TestOrphanResourceCleaner:
     def test_initialization(self, cleaner: OrphanResourceCleaner) -> None:
         """Test OrphanResourceCleaner initializes correctly."""
         assert cleaner is not None
+
+    def test_cleanup_vultr_instance_uses_owning_asset(
+        self, cleaner: OrphanResourceCleaner
+    ) -> None:
+        instance = OrphanVultrInstance(
+            instance_id="vultr-instance-1",
+            asset_id=9,
+            region="sgp",
+            label="orphan",
+            created_at="2026-05-10T10:00:00Z",
+            status="running",
+            tags=("shadowfleet",),
+            firewall_group_id="firewall-id",
+        )
+        asset = MagicMock(asset_type="vultr", aws_access_key="token")
+        with patch.object(cleaner, "_asset_repo") as asset_repo, \
+             patch("services.orphan_resource_cleaner.VultrClient") as client_cls:
+            asset_repo.get_asset_by_id.return_value = asset
+            result = cleaner._cleanup_vultr_instances([instance], dry_run=False)
+
+        assert result[0].success is True
+        client_cls.return_value.delete_managed_firewall_group.assert_called_once_with(
+            "firewall-id"
+        )
+        client_cls.return_value.delete_instance.assert_called_once_with("vultr-instance-1")
+
+    def test_cleanup_azure_vm_uses_owning_asset(
+        self, cleaner: OrphanResourceCleaner
+    ) -> None:
+        vm = OrphanAzureVm(
+            vm_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/orphan",
+            asset_id=10,
+            location="japaneast",
+            name="orphan",
+            created_at="2026-05-10T10:00:00Z",
+            state="running",
+            tags={"shadowfleet": "true"},
+        )
+        asset = MagicMock(
+            asset_type="azure",
+            aws_access_key="client",
+            aws_secret_key="secret",
+            provider_config={"tenant_id": "tenant", "subscription_id": "sub"},
+        )
+        with patch.object(cleaner, "_asset_repo") as asset_repo, \
+             patch("services.orphan_resource_cleaner.AzureClient") as client_cls:
+            asset_repo.get_asset_by_id.return_value = asset
+            result = cleaner._cleanup_azure_vms([vm], dry_run=False)
+
+        assert result[0].success is True
+        client_cls.return_value.delete_vm.assert_called_once_with(vm.vm_id)
+
+    def test_cleanup_azure_network_resources_uses_dependency_order(
+        self, cleaner: OrphanResourceCleaner
+    ) -> None:
+        common = {
+            "asset_id": 10,
+            "location": "japaneast",
+            "parent_vm_name": "orphan",
+            "created_at": "2000-01-01T00:00:00Z",
+            "tags": {"shadowfleet": "true"},
+        }
+        resources = [
+            OrphanAzureNetworkResource(
+                resource_id="nsg",
+                resource_type="azure_network_security_group",
+                name="orphan-nsg",
+                **common,
+            ),
+            OrphanAzureNetworkResource(
+                resource_id="pip",
+                resource_type="azure_public_ip_address",
+                name="orphan-ipv4",
+                **common,
+            ),
+            OrphanAzureNetworkResource(
+                resource_id="nic",
+                resource_type="azure_network_interface",
+                name="orphan-nic",
+                **common,
+            ),
+        ]
+        client = MagicMock()
+        with patch.object(cleaner, "_build_azure_client", return_value=client):
+            result = cleaner._cleanup_azure_network_resources(
+                resources,
+                dry_run=False,
+            )
+
+        assert [item.success for item in result] == [True, True, True]
+        assert client.method_calls == [
+            call.delete_network_interface("nic"),
+            call.delete_public_ip_address("pip"),
+            call.delete_network_security_group("nsg"),
+        ]
 
     def test_cleanup_empty_report(
         self, cleaner: OrphanResourceCleaner

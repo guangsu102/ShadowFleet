@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 from services.provisioning_models import (
@@ -15,6 +15,7 @@ from services.provisioning_models import (
     ProvisionResult,
     ProtocolType,
 )
+from services.provisioner_service import ProvisionerService
 
 
 def create_mock_runtime_context() -> MagicMock:
@@ -207,7 +208,7 @@ class TestAssetTypeValidation:
 
     def test_all_supported_asset_types(self) -> None:
         """All asset types should be valid."""
-        asset_types: list[AssetType] = ["aws", "digitalocean", "self_hosted"]
+        asset_types: list[AssetType] = ["aws", "digitalocean", "vultr", "azure", "self_hosted"]
         for asset_type in asset_types:
             request = ProvisionRequest(
                 protocol_type="Trojan",
@@ -233,3 +234,34 @@ class TestProvisionerServiceMockedFlow:
             rate=Decimal("100"),
         )
         assert request.protocol_type == "Trojan"
+
+    def test_azure_request_dispatches_to_azure_flow(self) -> None:
+        service = ProvisionerService.__new__(ProvisionerService)
+        service._runtime_context = create_mock_runtime_context()
+        service._logger = MagicMock()
+        service._asset_selector = MagicMock()
+        service._asset_repo = MagicMock()
+        service._node_registry = MagicMock()
+        service._ready_callback_service = MagicMock()
+        request = ProvisionRequest(
+            protocol_type="Trojan",
+            node_name="azure-node",
+            port="443",
+            server_port=443,
+            rate=Decimal("1"),
+            asset_type="azure",
+            region="japaneast",
+        )
+        expected = MagicMock(spec=ProvisionResult)
+
+        with patch(
+            "services.provisioner_service.provision_azure_node",
+            return_value=expected,
+        ) as provision_azure:
+            result = service.provision_node(request)
+
+        assert result is expected
+        dependencies, asset_repo, dispatched_request = provision_azure.call_args.args
+        assert dependencies.runtime_context is service._runtime_context
+        assert asset_repo is service._asset_repo
+        assert dispatched_request is request

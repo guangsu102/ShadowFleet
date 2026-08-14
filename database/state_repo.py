@@ -53,7 +53,14 @@ NODE_SELECT_COLUMNS = """
             ORDER BY alloc.id DESC
             LIMIT 1
         ),
-        CASE WHEN n.aws_account_id IS NULL THEN 'self_hosted' ELSE 'aws' END
+        CASE
+            WHEN n.aws_account_id IS NULL THEN 'self_hosted'
+            WHEN lower(trim(n.aws_account_id)) = 'vultr'
+              OR lower(trim(n.aws_account_id)) LIKE 'vultr:%' THEN 'vultr'
+            WHEN lower(trim(n.aws_account_id)) = 'azure'
+              OR lower(trim(n.aws_account_id)) LIKE 'azure:%' THEN 'azure'
+            ELSE 'aws'
+        END
     ) AS asset_type
 """
 
@@ -636,4 +643,3 @@ class StateRepo:
         with self._sqlite_manager.connection() as connection:
             rows = connection.execute(sql).fetchall()
         return [map_fleet_node_record(row) for row in rows]
-

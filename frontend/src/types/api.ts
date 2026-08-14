@@ -284,6 +284,54 @@ export interface DigitalOceanAssetCreateRequest {
   default_vcpu?: number | null
 }
 
+export interface VultrAssetCreateRequest {
+  asset_name: string
+  region: string
+  vultr_token: string
+  default_plan?: string
+  default_os_id?: number
+  ssh_key_ids?: string[]
+  vpc_ids?: string[]
+  firewall_group_id?: string | null
+  tags?: string[]
+  remarks?: string | null
+  protocol_type?: string | null
+  additional_protocol_types?: string[]
+  target_count?: number
+  max_count?: number
+  priority?: number
+  allow_cdn_proxy?: boolean
+  default_vcpu?: number | null
+}
+
+export interface AzureAssetCreateRequest {
+  asset_name: string
+  region: string
+  tenant_id: string
+  client_id: string
+  client_secret: string
+  subscription_id: string
+  resource_group: string
+  ssh_public_key: string
+  default_vm_size?: string
+  admin_username?: string
+  image_publisher?: string
+  image_offer?: string
+  image_sku?: string
+  image_version?: string
+  vnet_name?: string
+  subnet_name?: string
+  tags?: string[]
+  remarks?: string | null
+  protocol_type?: string | null
+  additional_protocol_types?: string[]
+  target_count?: number
+  max_count?: number
+  priority?: number
+  allow_cdn_proxy?: boolean
+  default_vcpu?: number | null
+}
+
 export interface DigitalOceanImageInfo {
   id: number | string | null
   name: string | null
@@ -309,6 +357,31 @@ export interface DigitalOceanImageQueryResponse {
 
 export interface DigitalOceanSizeQueryResponse {
   sizes: DigitalOceanSizeInfo[]
+}
+
+export interface VultrCatalogResponse {
+  regions: Array<{ id: string; city?: string; country?: string }>
+  plans: Array<{ id: string; vcpu_count?: number; ram?: number; monthly_cost?: number; locations?: string[] }>
+  operating_systems: Array<{ id: number; name?: string; arch?: string; family?: string }>
+  ssh_keys: Array<{ id: string; name?: string }>
+  vpcs: Array<{ id: string; description?: string; region?: string; date_created?: string }>
+  firewall_groups: Array<{ id: string; description?: string }>
+}
+
+export interface AzureCatalogResponse {
+  locations: Array<{
+    name?: string
+    displayName?: string
+    regionalDisplayName?: string
+  }>
+  vm_sizes: Array<{
+    name?: string
+    numberOfCores?: number
+    memoryInMB?: number
+    maxDataDiskCount?: number
+    osDiskSizeInMB?: number
+    resourceDiskSizeInMB?: number
+  }>
 }
 
 // ============ Nodes ============

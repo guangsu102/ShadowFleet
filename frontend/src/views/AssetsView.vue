@@ -38,12 +38,16 @@ import type {
   DigitalOceanImageQueryResponse,
   DigitalOceanSizeInfo,
   DigitalOceanSizeQueryResponse,
+  VultrAssetCreateRequest,
+  VultrCatalogResponse,
+  AzureAssetCreateRequest,
+  AzureCatalogResponse,
   AmiQueryResponse,
   AmiInfo,
 } from '@/types/api'
 
-type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'self_hosted'
-type AssetModalTab = 'aws' | 'digitalocean' | 'self'
+type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'vultr' | 'azure' | 'self_hosted'
+type AssetModalTab = 'aws' | 'digitalocean' | 'vultr' | 'azure' | 'self'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function statusTagType(status: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
@@ -77,6 +81,8 @@ function maskAccountId(id: string | null): string {
 function assetTypeLabel(assetType: string): string {
   if (assetType === 'aws') return 'AWS'
   if (assetType === 'digitalocean') return 'DO'
+  if (assetType === 'vultr') return 'Vultr'
+  if (assetType === 'azure') return 'Azure'
   if (assetType === 'self_hosted') return '自建'
   return assetType
 }
@@ -84,6 +90,8 @@ function assetTypeLabel(assetType: string): string {
 function assetTypeTagType(assetType: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
   if (assetType === 'aws') return 'info'
   if (assetType === 'digitalocean') return 'success'
+  if (assetType === 'vultr') return 'error'
+  if (assetType === 'azure') return 'info'
   if (assetType === 'self_hosted') return 'warning'
   return 'default'
 }
@@ -91,6 +99,8 @@ function assetTypeTagType(assetType: string): 'success' | 'warning' | 'error' | 
 function modalTitle(tab: AssetModalTab): string {
   if (tab === 'aws') return '新增 AWS 资产'
   if (tab === 'digitalocean') return '新增 DigitalOcean 资产'
+  if (tab === 'vultr') return '新增 Vultr 资产'
+  if (tab === 'azure') return '新增 Microsoft Azure 资产'
   return '新增自建资产'
 }
 
@@ -185,6 +195,8 @@ async function batchDeleteAssets() {
 // ── Computed: filtered assets ─────────────────────────────────────────────────
 const awsAssets  = computed(() => assets.value.filter(a => a.asset_type === 'aws'))
 const digitalOceanAssets = computed(() => assets.value.filter(a => a.asset_type === 'digitalocean'))
+const vultrAssets = computed(() => assets.value.filter(a => a.asset_type === 'vultr'))
+const azureAssets = computed(() => assets.value.filter(a => a.asset_type === 'azure'))
 const selfAssets = computed(() => assets.value.filter(a => a.asset_type === 'self_hosted'))
 const filteredAssets = computed(() => {
   if (activeAssetFilter.value === 'all') return assets.value
@@ -623,6 +635,316 @@ async function submitDigitalOceanForm() {
   }
 }
 
+// ── Vultr Registration Form ──────────────────────────────────────────────────
+const vultrForm = ref({
+  asset_name: '',
+  region: 'sgp',
+  vultr_token: '',
+  default_plan: 'vc2-1c-1gb',
+  default_os_id: 2284,
+  ssh_key_ids: [] as string[],
+  vpc_ids: [] as string[],
+  firewall_group_id: '',
+  tags_raw: 'shadowfleet',
+  remarks: '',
+  protocol_types: ['AnyTLS'] as string[],
+  target_count: 1,
+  max_count: 0,
+  priority: 100,
+  allow_cdn_proxy: false,
+  default_vcpu: 1 as number | null,
+})
+
+const defaultVultrRegions: SelectOption[] = [
+  { label: '新加坡 (sgp)', value: 'sgp' },
+  { label: '东京 (nrt)', value: 'nrt' },
+  { label: '首尔 (icn)', value: 'icn' },
+  { label: '洛杉矶 (lax)', value: 'lax' },
+  { label: '硅谷 (sjc)', value: 'sjc' },
+  { label: '西雅图 (sea)', value: 'sea' },
+  { label: '芝加哥 (ord)', value: 'ord' },
+  { label: '纽约 (ewr)', value: 'ewr' },
+  { label: '伦敦 (lhr)', value: 'lhr' },
+  { label: '法兰克福 (fra)', value: 'fra' },
+]
+
+const vultrCatalog = ref<VultrCatalogResponse | null>(null)
+const queryingVultrCatalog = ref(false)
+const vultrCatalogError = ref<string | null>(null)
+const vultrRegions = computed<SelectOption[]>(() => {
+  const regions = vultrCatalog.value?.regions ?? []
+  if (!regions.length) return defaultVultrRegions
+  return regions.map(region => ({
+    label: `${region.city || region.id}${region.country ? ` (${region.country})` : ''} - ${region.id}`,
+    value: region.id,
+  }))
+})
+const vultrPlans = computed<SelectOption[]>(() => (vultrCatalog.value?.plans ?? [])
+  .filter(plan => !plan.locations?.length || plan.locations.includes(vultrForm.value.region))
+  .map(plan => ({
+    label: `${plan.id} · ${plan.vcpu_count ?? '?'} vCPU · ${plan.ram ?? '?'} MB · $${plan.monthly_cost ?? '?'}/月`,
+    value: plan.id,
+  })))
+const vultrOperatingSystems = computed<SelectOption[]>(() => (vultrCatalog.value?.operating_systems ?? [])
+  .map(os => ({ label: `${os.name || os.id}${os.arch ? ` (${os.arch})` : ''}`, value: os.id })))
+const vultrSshKeys = computed<SelectOption[]>(() => (vultrCatalog.value?.ssh_keys ?? [])
+  .map(key => ({ label: key.name || key.id, value: key.id })))
+const vultrVpcs = computed<SelectOption[]>(() => (vultrCatalog.value?.vpcs ?? [])
+  .filter(vpc => !vpc.region || vpc.region === vultrForm.value.region)
+  .map(vpc => ({ label: vpc.description || vpc.id, value: vpc.id })))
+const vultrFirewallGroups = computed<SelectOption[]>(() => (vultrCatalog.value?.firewall_groups ?? [])
+  .map(group => ({ label: group.description || group.id, value: group.id })))
+
+const vultrProtocolOptions = awsProtocolOptions
+const submittingVultr = ref(false)
+
+function resetVultrForm() {
+  vultrForm.value = {
+    asset_name: '', region: 'sgp', vultr_token: '', default_plan: 'vc2-1c-1gb',
+    default_os_id: 2284, ssh_key_ids: [], vpc_ids: [], firewall_group_id: '',
+    tags_raw: 'shadowfleet', remarks: '', protocol_types: ['AnyTLS'], target_count: 1,
+    max_count: 0, priority: 100, allow_cdn_proxy: false, default_vcpu: 1,
+  }
+}
+
+async function queryVultrCatalog() {
+  if (!vultrForm.value.vultr_token.trim()) {
+    message.warning('请先填写 Vultr API Token')
+    return
+  }
+  queryingVultrCatalog.value = true
+  vultrCatalogError.value = null
+  try {
+    const { data } = await apiClient.post<VultrCatalogResponse>('/assets/vultr/query-catalog', {
+      vultr_token: vultrForm.value.vultr_token.trim(),
+    })
+    vultrCatalog.value = data
+    message.success('Vultr 资源目录已加载')
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { detail?: string } } }
+    vultrCatalogError.value = e.response?.data?.detail || 'Vultr 资源目录查询失败'
+    message.error(vultrCatalogError.value)
+  } finally {
+    queryingVultrCatalog.value = false
+  }
+}
+
+async function submitVultrForm() {
+  if (!vultrForm.value.asset_name.trim()) { message.warning('请填写资产名称'); return }
+  if (!vultrForm.value.region) { message.warning('请选择 Region'); return }
+  if (!vultrForm.value.vultr_token.trim()) { message.warning('请填写 Vultr API Token'); return }
+  if (!vultrForm.value.default_plan.trim()) { message.warning('请填写 Vultr Plan'); return }
+
+  submittingVultr.value = true
+  try {
+    const body: VultrAssetCreateRequest = {
+      asset_name: vultrForm.value.asset_name.trim(),
+      region: vultrForm.value.region,
+      vultr_token: vultrForm.value.vultr_token.trim(),
+      default_plan: vultrForm.value.default_plan.trim(),
+      default_os_id: vultrForm.value.default_os_id,
+      ssh_key_ids: vultrForm.value.ssh_key_ids,
+      vpc_ids: vultrForm.value.vpc_ids,
+      firewall_group_id: vultrForm.value.firewall_group_id || undefined,
+      tags: splitList(vultrForm.value.tags_raw),
+      remarks: vultrForm.value.remarks || undefined,
+      protocol_type: vultrForm.value.protocol_types[0] ?? null,
+      additional_protocol_types: vultrForm.value.protocol_types.slice(1),
+      target_count: vultrForm.value.target_count,
+      max_count: vultrForm.value.max_count,
+      priority: vultrForm.value.priority,
+      allow_cdn_proxy: vultrForm.value.allow_cdn_proxy,
+      default_vcpu: vultrForm.value.default_vcpu ?? undefined,
+    }
+    await apiClient.post<AssetResponse>('/assets/vultr', body)
+    message.success('Vultr 资产注册成功')
+    closeModal()
+    resetVultrForm()
+    await fetchAssets()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string; message?: string } } }
+    message.error(e.response?.data?.error || e.response?.data?.detail || e.response?.data?.message || '注册失败')
+  } finally {
+    submittingVultr.value = false
+  }
+}
+
+// ── Microsoft Azure Registration Form ─────────────────────────────────────────
+const azureForm = ref({
+  asset_name: '',
+  region: 'japaneast',
+  tenant_id: '',
+  client_id: '',
+  client_secret: '',
+  subscription_id: '',
+  resource_group: 'shadowfleet',
+  ssh_public_key: '',
+  default_vm_size: 'Standard_B1s',
+  admin_username: 'azureuser',
+  image_publisher: 'Canonical',
+  image_offer: '0001-com-ubuntu-server-jammy',
+  image_sku: '22_04-lts-gen2',
+  image_version: 'latest',
+  vnet_name: 'shadowfleet-vnet',
+  subnet_name: 'default',
+  tags_raw: 'shadowfleet',
+  remarks: '',
+  protocol_types: ['AnyTLS'] as string[],
+  target_count: 1,
+  max_count: 0,
+  priority: 100,
+  allow_cdn_proxy: false,
+  default_vcpu: 1 as number | null,
+})
+
+const defaultAzureLocations: SelectOption[] = [
+  { label: '日本东部 (japaneast)', value: 'japaneast' },
+  { label: '东南亚 (southeastasia)', value: 'southeastasia' },
+  { label: '东亚 (eastasia)', value: 'eastasia' },
+  { label: '美国西部 2 (westus2)', value: 'westus2' },
+  { label: '美国东部 (eastus)', value: 'eastus' },
+  { label: '英国南部 (uksouth)', value: 'uksouth' },
+  { label: '西欧 (westeurope)', value: 'westeurope' },
+  { label: '德国中西部 (germanywestcentral)', value: 'germanywestcentral' },
+  { label: '澳大利亚东部 (australiaeast)', value: 'australiaeast' },
+]
+
+const azureCatalog = ref<AzureCatalogResponse | null>(null)
+const queryingAzureCatalog = ref(false)
+const azureCatalogError = ref<string | null>(null)
+const azureLocations = computed<SelectOption[]>(() => {
+  const locations = azureCatalog.value?.locations ?? []
+  if (!locations.length) return defaultAzureLocations
+  return locations
+    .filter(location => location.name)
+    .map(location => ({
+      label: `${location.regionalDisplayName || location.displayName || location.name} (${location.name})`,
+      value: location.name as string,
+    }))
+})
+const azureVmSizes = computed<SelectOption[]>(() => {
+  const sizes = azureCatalog.value?.vm_sizes ?? []
+  if (!sizes.length) {
+    return [{ label: 'Standard_B1s', value: 'Standard_B1s' }]
+  }
+  return sizes
+    .filter(size => size.name)
+    .map(size => ({
+      label: `${size.name} · ${size.numberOfCores ?? '?'} vCPU · ${size.memoryInMB ?? '?'} MB`,
+      value: size.name as string,
+    }))
+})
+const submittingAzure = ref(false)
+
+function resetAzureForm() {
+  azureForm.value = {
+    asset_name: '', region: 'japaneast', tenant_id: '', client_id: '', client_secret: '',
+    subscription_id: '', resource_group: 'shadowfleet', ssh_public_key: '',
+    default_vm_size: 'Standard_B1s', admin_username: 'azureuser', image_publisher: 'Canonical',
+    image_offer: '0001-com-ubuntu-server-jammy', image_sku: '22_04-lts-gen2',
+    image_version: 'latest', vnet_name: 'shadowfleet-vnet', subnet_name: 'default',
+    tags_raw: 'shadowfleet', remarks: '', protocol_types: ['AnyTLS'], target_count: 1,
+    max_count: 0, priority: 100, allow_cdn_proxy: false, default_vcpu: 1,
+  }
+  azureCatalog.value = null
+  azureCatalogError.value = null
+}
+
+function azureCredentialsComplete(): boolean {
+  return [
+    azureForm.value.tenant_id,
+    azureForm.value.client_id,
+    azureForm.value.client_secret,
+    azureForm.value.subscription_id,
+  ].every(value => value.trim())
+}
+
+async function queryAzureCatalog() {
+  if (!azureCredentialsComplete()) {
+    message.warning('请先填写 Tenant ID、Client ID、Client Secret 和 Subscription ID')
+    return
+  }
+  queryingAzureCatalog.value = true
+  azureCatalogError.value = null
+  try {
+    const { data } = await apiClient.post<AzureCatalogResponse>('/assets/azure/query-catalog', {
+      tenant_id: azureForm.value.tenant_id.trim(),
+      client_id: azureForm.value.client_id.trim(),
+      client_secret: azureForm.value.client_secret.trim(),
+      subscription_id: azureForm.value.subscription_id.trim(),
+      location: azureForm.value.region || undefined,
+    })
+    azureCatalog.value = data
+    message.success('Azure 订阅与资源目录已验证')
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { detail?: string } } }
+    azureCatalogError.value = e.response?.data?.detail || 'Azure 资源目录查询失败'
+    message.error(azureCatalogError.value)
+  } finally {
+    queryingAzureCatalog.value = false
+  }
+}
+
+async function submitAzureForm() {
+  const required: Array<[string, string]> = [
+    ['资产名称', azureForm.value.asset_name],
+    ['Region', azureForm.value.region],
+    ['Tenant ID', azureForm.value.tenant_id],
+    ['Client ID', azureForm.value.client_id],
+    ['Client Secret', azureForm.value.client_secret],
+    ['Subscription ID', azureForm.value.subscription_id],
+    ['Resource Group', azureForm.value.resource_group],
+    ['SSH 公钥', azureForm.value.ssh_public_key],
+    ['VM Size', azureForm.value.default_vm_size],
+  ]
+  const missing = required.find(([, value]) => !value.trim())
+  if (missing) {
+    message.warning(`请填写${missing[0]}`)
+    return
+  }
+
+  submittingAzure.value = true
+  try {
+    const body: AzureAssetCreateRequest = {
+      asset_name: azureForm.value.asset_name.trim(),
+      region: azureForm.value.region.trim(),
+      tenant_id: azureForm.value.tenant_id.trim(),
+      client_id: azureForm.value.client_id.trim(),
+      client_secret: azureForm.value.client_secret.trim(),
+      subscription_id: azureForm.value.subscription_id.trim(),
+      resource_group: azureForm.value.resource_group.trim(),
+      ssh_public_key: azureForm.value.ssh_public_key.trim(),
+      default_vm_size: azureForm.value.default_vm_size.trim(),
+      admin_username: azureForm.value.admin_username.trim(),
+      image_publisher: azureForm.value.image_publisher.trim(),
+      image_offer: azureForm.value.image_offer.trim(),
+      image_sku: azureForm.value.image_sku.trim(),
+      image_version: azureForm.value.image_version.trim(),
+      vnet_name: azureForm.value.vnet_name.trim(),
+      subnet_name: azureForm.value.subnet_name.trim(),
+      tags: splitList(azureForm.value.tags_raw),
+      remarks: azureForm.value.remarks || undefined,
+      protocol_type: azureForm.value.protocol_types[0] ?? null,
+      additional_protocol_types: azureForm.value.protocol_types.slice(1),
+      target_count: azureForm.value.target_count,
+      max_count: azureForm.value.max_count,
+      priority: azureForm.value.priority,
+      allow_cdn_proxy: azureForm.value.allow_cdn_proxy,
+      default_vcpu: azureForm.value.default_vcpu ?? undefined,
+    }
+    await apiClient.post<AssetResponse>('/assets/azure', body)
+    message.success('Microsoft Azure 资产注册成功')
+    closeModal()
+    resetAzureForm()
+    await fetchAssets()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string; message?: string } } }
+    message.error(e.response?.data?.error || e.response?.data?.detail || e.response?.data?.message || '注册失败')
+  } finally {
+    submittingAzure.value = false
+  }
+}
+
 // ── Self-Hosted Registration Form ──────────────────────────────────────────────
 const selfForm = ref({
   asset_name: '',
@@ -735,7 +1057,7 @@ onMounted(fetchAssets)
     <div class="page-header">
       <div class="header-left">
         <h1 class="page-title">账号与资产池</h1>
-        <p class="page-subtitle">管理 AWS、DigitalOcean 与自建资产，统一调度节点配额与协议</p>
+        <p class="page-subtitle">管理 AWS、DigitalOcean、Vultr、Microsoft Azure 与自建资产，统一调度节点配额与协议</p>
       </div>
       <div class="header-right">
         <NSpace>
@@ -767,6 +1089,14 @@ onMounted(fetchAssets)
       <div class="stat-card stat-do">
         <div class="stat-value">{{ digitalOceanAssets.length }}</div>
         <div class="stat-label">DO 资产</div>
+      </div>
+      <div class="stat-card stat-vultr">
+        <div class="stat-value">{{ vultrAssets.length }}</div>
+        <div class="stat-label">Vultr 资产</div>
+      </div>
+      <div class="stat-card stat-azure">
+        <div class="stat-value">{{ azureAssets.length }}</div>
+        <div class="stat-label">Azure 资产</div>
       </div>
       <div class="stat-card stat-self">
         <div class="stat-value">{{ selfAssets.length }}</div>
@@ -813,6 +1143,22 @@ onMounted(fetchAssets)
           >
             DigitalOcean
             <span class="tab-badge tab-badge-do">{{ digitalOceanAssets.length }}</span>
+          </button>
+          <button
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'vultr' }"
+            @click="activeAssetFilter = 'vultr'"
+          >
+            Vultr
+            <span class="tab-badge tab-badge-vultr">{{ vultrAssets.length }}</span>
+          </button>
+          <button
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'azure' }"
+            @click="activeAssetFilter = 'azure'"
+          >
+            Azure
+            <span class="tab-badge tab-badge-azure">{{ azureAssets.length }}</span>
           </button>
           <button
             class="tab-btn"
@@ -1185,6 +1531,292 @@ onMounted(fetchAssets)
           </div>
         </NTabPane>
 
+        <!-- ── Vultr Tab ────────────────────────────────────────────────── -->
+        <NTabPane name="vultr" tab="Vultr 资产">
+          <div class="modal-form">
+            <NForm label-placement="left" label-width="140" size="medium">
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="资产名称" required>
+                    <NInput v-model:value="vultrForm.asset_name" placeholder="my-vultr-sgp-01" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Region" required>
+                    <NSelect v-model:value="vultrForm.region" :options="vultrRegions" placeholder="选择 Region" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Vultr API Token" required>
+                    <NSpace vertical style="width: 100%">
+                      <NSpace>
+                        <NInput v-model:value="vultrForm.vultr_token" type="password" placeholder="Vultr API Token" show-password-on="click" style="width: 420px" />
+                        <NButton :loading="queryingVultrCatalog" @click="queryVultrCatalog">加载资源</NButton>
+                      </NSpace>
+                      <NAlert v-if="vultrCatalogError" type="error" :title="vultrCatalogError" closable @close="vultrCatalogError = null" />
+                    </NSpace>
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="备注">
+                    <NInput v-model:value="vultrForm.remarks" type="textarea" placeholder="可选备注信息" :rows="2" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>实例配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="Plan" required>
+                    <NSelect v-model:value="vultrForm.default_plan" :options="vultrPlans" filterable tag placeholder="选择或输入 Plan" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="默认 vCPU">
+                    <NInputNumber v-model:value="vultrForm.default_vcpu" :min="1" :max="256" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="OS ID" required>
+                    <NSelect v-model:value="vultrForm.default_os_id" :options="vultrOperatingSystems" filterable placeholder="选择 OS" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="允许 CDN Proxy">
+                    <NSwitch v-model:value="vultrForm.allow_cdn_proxy" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>协议与容量配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="2">
+                  <NFormItem label="协议类型">
+                    <NCheckboxGroup v-model:value="vultrForm.protocol_types">
+                      <NSpace>
+                        <NCheckbox v-for="opt in vultrProtocolOptions" :key="String(opt.value)" :value="opt.value" :label="String(opt.label)" />
+                      </NSpace>
+                    </NCheckboxGroup>
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="目标节点数">
+                    <NInputNumber v-model:value="vultrForm.target_count" :min="1" :max="9999" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="最大节点数">
+                    <NInputNumber v-model:value="vultrForm.max_count" :min="0" :max="9999" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="优先级">
+                    <NInputNumber v-model:value="vultrForm.priority" :min="1" :max="1000" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NCollapse>
+                <NCollapseItem title="网络、SSH Key 与标签（可选）" name="vultr-network">
+                  <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                    <NGi span="1">
+                      <NFormItem label="VPCs">
+                        <NSelect v-model:value="vultrForm.vpc_ids" :options="vultrVpcs" multiple filterable tag clearable placeholder="选择或输入 VPC IDs" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="1">
+                      <NFormItem label="Firewall Group ID">
+                        <NSelect v-model:value="vultrForm.firewall_group_id" :options="vultrFirewallGroups" filterable tag clearable placeholder="选择或输入 Firewall Group" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="1">
+                      <NFormItem label="Tags">
+                        <NInput v-model:value="vultrForm.tags_raw" placeholder="shadowfleet, prod" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="2">
+                      <NFormItem label="SSH Key IDs">
+                        <NSelect v-model:value="vultrForm.ssh_key_ids" :options="vultrSshKeys" multiple filterable tag clearable placeholder="选择 SSH Keys" />
+                      </NFormItem>
+                    </NGi>
+                  </NGrid>
+                </NCollapseItem>
+              </NCollapse>
+            </NForm>
+
+            <div class="modal-footer">
+              <NSpace>
+                <NButton @click="closeModal">取消</NButton>
+                <NButton type="primary" :loading="submittingVultr" @click="submitVultrForm">注册 Vultr 资产</NButton>
+              </NSpace>
+            </div>
+          </div>
+        </NTabPane>
+
+        <!-- ── Microsoft Azure Tab ───────────────────────────────────────── -->
+        <NTabPane name="azure" tab="Microsoft Azure 资产">
+          <div class="modal-form">
+            <NForm label-placement="left" label-width="140" size="medium">
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="资产名称" required>
+                    <NInput v-model:value="azureForm.asset_name" placeholder="my-azure-jp-01" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Region" required>
+                    <NSelect v-model:value="azureForm.region" :options="azureLocations" filterable tag placeholder="选择或输入 Azure 区域" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Tenant ID" required>
+                    <NInput v-model:value="azureForm.tenant_id" placeholder="Directory (tenant) ID" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Subscription ID" required>
+                    <NInput v-model:value="azureForm.subscription_id" placeholder="Subscription ID" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Client ID" required>
+                    <NInput v-model:value="azureForm.client_id" placeholder="Application (client) ID" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Client Secret" required>
+                    <NInput v-model:value="azureForm.client_secret" type="password" show-password-on="click" placeholder="Client secret value" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="验证 Azure">
+                    <NSpace vertical style="width: 100%">
+                      <NButton :loading="queryingAzureCatalog" @click="queryAzureCatalog">验证订阅并加载资源</NButton>
+                      <NAlert v-if="azureCatalogError" type="error" :title="azureCatalogError" closable @close="azureCatalogError = null" />
+                    </NSpace>
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Resource Group" required>
+                    <NInput v-model:value="azureForm.resource_group" placeholder="shadowfleet" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="管理员用户名" required>
+                    <NInput v-model:value="azureForm.admin_username" placeholder="azureuser" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="SSH 公钥" required>
+                    <NInput v-model:value="azureForm.ssh_public_key" type="textarea" :rows="3" placeholder="ssh-ed25519 AAAA..." />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>虚拟机配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="VM Size" required>
+                    <NSelect v-model:value="azureForm.default_vm_size" :options="azureVmSizes" filterable tag placeholder="选择或输入 VM Size" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="默认 vCPU">
+                    <NInputNumber v-model:value="azureForm.default_vcpu" :min="1" :max="256" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Image Publisher">
+                    <NInput v-model:value="azureForm.image_publisher" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Image Offer">
+                    <NInput v-model:value="azureForm.image_offer" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Image SKU">
+                    <NInput v-model:value="azureForm.image_sku" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Image Version">
+                    <NInput v-model:value="azureForm.image_version" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="VNet">
+                    <NInput v-model:value="azureForm.vnet_name" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Subnet">
+                    <NInput v-model:value="azureForm.subnet_name" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="允许 CDN Proxy">
+                    <NSwitch v-model:value="azureForm.allow_cdn_proxy" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>协议与容量配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="2">
+                  <NFormItem label="协议类型">
+                    <NCheckboxGroup v-model:value="azureForm.protocol_types">
+                      <NSpace>
+                        <NCheckbox v-for="opt in awsProtocolOptions" :key="String(opt.value)" :value="opt.value" :label="String(opt.label)" />
+                      </NSpace>
+                    </NCheckboxGroup>
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="目标节点数">
+                    <NInputNumber v-model:value="azureForm.target_count" :min="0" :max="9999" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="最大节点数">
+                    <NInputNumber v-model:value="azureForm.max_count" :min="0" :max="9999" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="优先级">
+                    <NInputNumber v-model:value="azureForm.priority" :min="1" :max="1000" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NCollapse>
+                <NCollapseItem title="标签与备注（可选）" name="azure-metadata">
+                  <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                    <NGi span="1">
+                      <NFormItem label="Tags">
+                        <NInput v-model:value="azureForm.tags_raw" placeholder="shadowfleet, prod" />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="2">
+                      <NFormItem label="备注">
+                        <NInput v-model:value="azureForm.remarks" type="textarea" :rows="2" placeholder="可选备注信息" />
+                      </NFormItem>
+                    </NGi>
+                  </NGrid>
+                </NCollapseItem>
+              </NCollapse>
+            </NForm>
+
+            <div class="modal-footer">
+              <NSpace>
+                <NButton @click="closeModal">取消</NButton>
+                <NButton type="primary" :loading="submittingAzure" @click="submitAzureForm">注册 Microsoft Azure 资产</NButton>
+              </NSpace>
+            </div>
+          </div>
+        </NTabPane>
+
         <!-- ── Self-Hosted Tab ───────────────────────────────────────────── -->
         <NTabPane name="self" tab="自建资产">
           <div class="modal-form">
@@ -1396,6 +2028,8 @@ onMounted(fetchAssets)
 
 .stat-aws .stat-value  { color: #f59e0b; }
 .stat-do .stat-value   { color: #0080ff; }
+.stat-vultr .stat-value { color: #007bfc; }
+.stat-azure .stat-value { color: #0078d4; }
 .stat-self .stat-value { color: #8b5cf6; }
 .stat-active .stat-value { color: #10b981; }
 .stat-full .stat-value  { color: #f97316; }
@@ -1467,6 +2101,8 @@ onMounted(fetchAssets)
 
 .tab-badge-aws  { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
 .tab-badge-do   { background: rgba(0, 128, 255, 0.1); color: #0080ff; }
+.tab-badge-vultr { background: rgba(0, 123, 252, 0.1); color: #007bfc; }
+.tab-badge-azure { background: rgba(0, 120, 212, 0.1); color: #0078d4; }
 .tab-badge-self { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
 
 /* ── Table ──────────────────────────────────────────────────────────────────── */

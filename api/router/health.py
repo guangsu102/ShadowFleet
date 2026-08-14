@@ -31,6 +31,9 @@ class OrphanResourceReportResponse(BaseModel):
     scan_time: str
     total_count: int
     ec2_instances: list[dict]
+    vultr_instances: list[dict]
+    azure_vms: list[dict]
+    azure_network_resources: list[dict]
     dns_records: list[dict]
     asset_allocations: list[dict]
     xboard_nodes: list[dict]
@@ -38,6 +41,8 @@ class OrphanResourceReportResponse(BaseModel):
 
 class CleanupRequest(BaseModel):
     cleanup_ec2: bool = True
+    cleanup_vultr: bool = True
+    cleanup_azure: bool = True
     cleanup_dns: bool = True
     cleanup_allocations: bool = True
     cleanup_xboard: bool = True
@@ -106,6 +111,44 @@ async def scan_orphan_resources(
             }
             for inst in report.ec2_instances
         ],
+        vultr_instances=[
+            {
+                "instance_id": inst.instance_id,
+                "asset_id": inst.asset_id,
+                "region": inst.region,
+                "label": inst.label,
+                "created_at": inst.created_at,
+                "status": inst.status,
+                "tags": list(inst.tags),
+                "firewall_group_id": inst.firewall_group_id,
+            }
+            for inst in report.vultr_instances
+        ],
+        azure_vms=[
+            {
+                "vm_id": vm.vm_id,
+                "asset_id": vm.asset_id,
+                "location": vm.location,
+                "name": vm.name,
+                "created_at": vm.created_at,
+                "state": vm.state,
+                "tags": vm.tags,
+            }
+            for vm in report.azure_vms
+        ],
+        azure_network_resources=[
+            {
+                "resource_id": resource.resource_id,
+                "asset_id": resource.asset_id,
+                "resource_type": resource.resource_type,
+                "location": resource.location,
+                "name": resource.name,
+                "parent_vm_name": resource.parent_vm_name,
+                "created_at": resource.created_at,
+                "tags": resource.tags,
+            }
+            for resource in report.azure_network_resources
+        ],
         dns_records=[
             {
                 "record_id": rec.record_id,
@@ -157,6 +200,8 @@ async def cleanup_orphan_resources(
     cleanup_report = cleaner.cleanup_orphan_resources(
         orphan_report,
         cleanup_ec2=request.cleanup_ec2,
+        cleanup_vultr=request.cleanup_vultr,
+        cleanup_azure=request.cleanup_azure,
         cleanup_dns=request.cleanup_dns,
         cleanup_allocations=request.cleanup_allocations,
         cleanup_xboard=request.cleanup_xboard,
@@ -258,6 +303,11 @@ async def check_system_health(
         orphan_resource_summary={
             "total_count": report.orphan_resource_report.total_count,
             "ec2_instances": len(report.orphan_resource_report.ec2_instances),
+            "vultr_instances": len(report.orphan_resource_report.vultr_instances),
+            "azure_vms": len(report.orphan_resource_report.azure_vms),
+            "azure_network_resources": len(
+                report.orphan_resource_report.azure_network_resources
+            ),
             "dns_records": len(report.orphan_resource_report.dns_records),
             "asset_allocations": len(report.orphan_resource_report.asset_allocations),
             "xboard_nodes": len(report.orphan_resource_report.xboard_nodes),

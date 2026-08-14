@@ -8,7 +8,15 @@ from database.state_repo import (
     StateRepo,
     StateRepoError,
 )
-from database.xboard_repo import XboardNodeCreateRequest, XboardNodeNotFoundError, XboardRepo, XboardRepoError
+from database.xboard_repo import (
+    XboardNodeCreateRequest,
+    XboardNodeNotFoundError,
+    XboardNodeRuntimeRecord,
+    XboardRepo,
+    XboardRepoError,
+)
+from infrastructure.azure import AzureClient, AzureCredentials
+from infrastructure.vultr import VultrClient
 from services.node_registry_helpers import (
     compensate_registration_failure,
     require_registered_node,
@@ -23,6 +31,7 @@ from services.node_registry_models import (
     RegisterNodeResult,
 )
 from services.runtime_service import RuntimeContext
+from services.monitor_support import infer_node_asset_type
 from utils.logger import set_event_type
 
 __all__ = [
@@ -41,6 +50,10 @@ class NodeRegistryService:
         self._xboard_repo = XboardRepo(runtime_context)
         self._state_repo = StateRepo(runtime_context)
         self._asset_repo = AssetRepo(runtime_context)
+
+    def list_all_nodes(self) -> list[XboardNodeRuntimeRecord]:
+        """Return every ShadowFleet-managed node currently present in Xboard."""
+        return self._xboard_repo.list_all_shadowfleet_nodes()
 
     def register_node(self, request: RegisterNodeRequest) -> RegisterNodeResult:
         validate_register_request(request)
@@ -401,6 +414,8 @@ class NodeRegistryService:
         )
 
         try:
+            self._delete_vultr_instance(node_record)
+            self._delete_azure_instance(node_record)
             self._xboard_repo.delete_node(xboard_node_id)
             self._state_repo.update_node_status(
                 xboard_node_id=xboard_node_id,
@@ -433,6 +448,7 @@ class NodeRegistryService:
                 xboard_node_id=xboard_node_id,
                 status="deleted",
             )
+
         except XboardNodeNotFoundError:
             set_event_type("node_delete_xboard_not_found")
             self._logger.warning(
@@ -489,6 +505,106 @@ class NodeRegistryService:
             raise NodeRegistryServiceError(
                 "Node delete failed; manual review required"
             ) from exc
+
+    def _delete_vultr_instance(self, node_record: FleetNodeRecord) -> None:
+        if infer_node_asset_type(node_record) != "vultr":
+            return
+        if not node_record.aws_instance_id:
+            raise NodeRegistryServiceError("Vultr node is missing instance_id")
+
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node_record.xboard_node_id)
+        if asset is None and node_record.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node_record.aws_account_id
+                    )
+                    if candidate.asset_type == "vultr"
+                ),
+                None,
+            )
+        if asset is None or asset.asset_type != "vultr" or not asset.aws_access_key:
+            raise NodeRegistryServiceError("Vultr credentials not found for node allocation")
+
+        vultr_client = VultrClient(
+            self._runtime_context,
+            api_token=asset.aws_access_key,
+        )
+        vultr_client.delete_instance(node_record.aws_instance_id)
+        managed_firewall_deleted = False
+        if node_record.aws_security_group_id:
+            managed_firewall_deleted = vultr_client.delete_managed_firewall_group(
+                node_record.aws_security_group_id
+            )
+        self._state_repo.create_event(
+            FleetNodeEventCreateRequest(
+                node_id=node_record.id,
+                xboard_node_id=node_record.xboard_node_id,
+                event_type="vultr_instance_deleted",
+                correlation_id=self._runtime_context.correlation_id,
+                from_status="deleting",
+                to_status="deleting",
+                message="Vultr instance deleted before Xboard node removal.",
+                payload={
+                    "asset_id": asset.id,
+                    "instance_id": node_record.aws_instance_id,
+                    "managed_firewall_deleted": managed_firewall_deleted,
+                },
+            )
+        )
+
+    def _delete_azure_instance(self, node_record: FleetNodeRecord) -> None:
+        if infer_node_asset_type(node_record) != "azure":
+            return
+        if not node_record.aws_instance_id:
+            raise NodeRegistryServiceError("Azure node is missing VM resource ID")
+        asset = self._asset_repo.get_asset_by_xboard_node_id(node_record.xboard_node_id)
+        if asset is None and node_record.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node_record.aws_account_id
+                    )
+                    if candidate.asset_type == "azure"
+                ),
+                None,
+            )
+        provider_config = asset.provider_config if asset is not None else None
+        if (
+            asset is None
+            or asset.asset_type != "azure"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not isinstance(provider_config, dict)
+        ):
+            raise NodeRegistryServiceError("Azure credentials not found for node allocation")
+        tenant_id = str(provider_config.get("tenant_id") or "").strip()
+        subscription_id = str(provider_config.get("subscription_id") or "").strip()
+        if not tenant_id or not subscription_id:
+            raise NodeRegistryServiceError("Azure tenant_id or subscription_id is missing")
+        AzureClient(
+            self._runtime_context,
+            credentials=AzureCredentials(
+                tenant_id=tenant_id,
+                client_id=asset.aws_access_key,
+                client_secret=asset.aws_secret_key,
+                subscription_id=subscription_id,
+            ),
+        ).delete_vm(node_record.aws_instance_id)
+        self._state_repo.create_event(
+            FleetNodeEventCreateRequest(
+                node_id=node_record.id,
+                xboard_node_id=node_record.xboard_node_id,
+                event_type="azure_vm_deleted",
+                correlation_id=self._runtime_context.correlation_id,
+                from_status="deleting",
+                to_status="deleting",
+                message="Azure VM and dedicated network resources deleted before Xboard node removal.",
+                payload={"asset_id": asset.id, "vm_id": node_record.aws_instance_id},
+            )
+        )
 
     def sync_with_xboard(self) -> dict[str, int]:
         """
@@ -646,4 +762,3 @@ class NodeRegistryService:
         if name.startswith("sf-"):
             return name[3:]
         return name
-

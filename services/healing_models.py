@@ -6,6 +6,8 @@ from typing import Literal
 
 HealStrategy = Literal[
     "aws_ipv6_rotate",
+    "azure_ipv6_rotate",
+    "vultr_instance_replace",
     "cloudflare_enable_proxy",
     "manual_review_required",
     "aws_account_abandoned",

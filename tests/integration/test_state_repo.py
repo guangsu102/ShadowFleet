@@ -196,6 +196,54 @@ class TestStateRepoGetNode:
         assert result is not None
         assert result.asset_type == "digitalocean"
 
+    @pytest.mark.parametrize("account_id", ["vultr", "vultr:token-fingerprint"])
+    def test_get_vultr_node_derives_asset_type_without_allocation(
+        self,
+        in_memory_sqlite_db,
+        account_id: str,
+    ) -> None:
+        runtime_context = create_mock_runtime_context(in_memory_sqlite_db)
+        repo = StateRepo(runtime_context)
+        repo.create_node(
+            FleetNodeCreateRequest(
+                xboard_node_id=2003,
+                node_name="vultr-node",
+                node_type="Trojan",
+                status="provisioning",
+                aws_account_id=account_id,
+                aws_region="sgp",
+                aws_instance_id="vultr-instance-2003",
+            )
+        )
+
+        result = repo.get_node_by_xboard_node_id(2003)
+
+        assert result is not None
+        assert result.asset_type == "vultr"
+
+    def test_get_azure_node_derives_asset_type_without_allocation(
+        self,
+        in_memory_sqlite_db,
+    ) -> None:
+        runtime_context = create_mock_runtime_context(in_memory_sqlite_db)
+        repo = StateRepo(runtime_context)
+        repo.create_node(
+            FleetNodeCreateRequest(
+                xboard_node_id=2004,
+                node_name="azure-node",
+                node_type="Trojan",
+                status="provisioning",
+                aws_account_id="azure:subscription-id",
+                aws_region="japaneast",
+                aws_instance_id="/subscriptions/subscription-id/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/node",
+            )
+        )
+
+        result = repo.get_node_by_xboard_node_id(2004)
+
+        assert result is not None
+        assert result.asset_type == "azure"
+
     def test_get_nonexistent_node(self, in_memory_sqlite_db) -> None:
         """Should return None for non-existent node."""
         runtime_context = create_mock_runtime_context(in_memory_sqlite_db)

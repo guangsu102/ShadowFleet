@@ -6,7 +6,7 @@ import re
 from typing import Literal
 
 
-AssetProvider = Literal["aws", "digitalocean", "self_hosted"]
+AssetProvider = Literal["aws", "azure", "digitalocean", "vultr", "self_hosted"]
 ProtocolType = Literal["AnyTLS", "Trojan", "vless", "vmess", "Hysteria2"]
 CertMode = Literal["none", "http", "dns", "self"]
 V2bxLogLevel = Literal["info", "warn", "error", "none"]
@@ -91,7 +91,7 @@ PROTOCOL_CAPABILITIES: dict[ProtocolType, V2bxProtocolCapabilities] = {
         core_type="sing",
         requires_dns_record=True,
         supports_cdn_proxy=False,
-        supported_asset_providers=("aws", "digitalocean", "self_hosted"),
+        supported_asset_providers=("aws", "azure", "digitalocean", "vultr", "self_hosted"),
         enable_tfo=False,
         requires_nginx_stream=True,
         connlimit_port=443,
@@ -102,7 +102,7 @@ PROTOCOL_CAPABILITIES: dict[ProtocolType, V2bxProtocolCapabilities] = {
         core_type="xray",
         requires_dns_record=True,
         supports_cdn_proxy=True,
-        supported_asset_providers=("aws", "digitalocean", "self_hosted"),
+        supported_asset_providers=("aws", "azure", "digitalocean", "vultr", "self_hosted"),
         enable_tfo=True,
         connlimit_port=443,
     ),
@@ -112,7 +112,7 @@ PROTOCOL_CAPABILITIES: dict[ProtocolType, V2bxProtocolCapabilities] = {
         core_type="xray",
         requires_dns_record=True,
         supports_cdn_proxy=True,
-        supported_asset_providers=("aws", "digitalocean", "self_hosted"),
+        supported_asset_providers=("aws", "azure", "digitalocean", "vultr", "self_hosted"),
         enable_tfo=True,
         connlimit_port=443,
     ),
@@ -122,7 +122,7 @@ PROTOCOL_CAPABILITIES: dict[ProtocolType, V2bxProtocolCapabilities] = {
         core_type="xray",
         requires_dns_record=True,
         supports_cdn_proxy=True,
-        supported_asset_providers=("aws", "digitalocean", "self_hosted"),
+        supported_asset_providers=("aws", "azure", "digitalocean", "vultr", "self_hosted"),
         enable_tfo=True,
         connlimit_port=443,
     ),

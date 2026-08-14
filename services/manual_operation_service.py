@@ -11,7 +11,7 @@ from services.healer_service import HealerService
 from services.healing_models import HealRequest
 from services.healing_support import AWS_HEALABLE_PROTOCOLS, SELF_HOSTED_PROXY_PROTOCOLS
 from services.monitor_models import MonitorCandidate
-from services.monitor_support import is_in_heal_cooldown, to_monitor_candidate, utcnow
+from services.monitor_support import infer_node_asset_type, is_in_heal_cooldown, to_monitor_candidate, utcnow
 from services.node_registry_service import NodeRegistryService
 from services.probe_client import ProbeClient
 from services.runtime_service import RuntimeContext
@@ -42,7 +42,11 @@ class ManualOperationService:
         node_record = self._state_repo.get_node_by_xboard_node_id(request.xboard_node_id)
         if node_record is None:
             raise ValueError(f"节点不存在: xboard_node_id={request.xboard_node_id}")
-        self._validate_task_support(request=request, node_type=node_record.node_type, is_aws=node_record.aws_account_id is not None)
+        self._validate_task_support(
+            request=request,
+            node_type=node_record.node_type,
+            asset_type=infer_node_asset_type(node_record),
+        )
         if self._task_repo.has_pending_task(
             xboard_node_id=request.xboard_node_id,
             task_type=request.task_type,
@@ -146,6 +150,9 @@ class ManualOperationService:
         if self._node_registry is None:
             raise RuntimeError("Xboard is not configured; node decommission is unavailable")
         status_reason = str(task_record.request_payload.get("reason") or "manual_decommission")
+        node_record = self._state_repo.get_node_by_xboard_node_id(task_record.xboard_node_id)
+        if node_record is None:
+            raise RuntimeError(f"节点不存在: xboard_node_id={task_record.xboard_node_id}")
         result = self._node_registry.delete_node(
             xboard_node_id=task_record.xboard_node_id,
             status_reason=status_reason,
@@ -155,6 +162,7 @@ class ManualOperationService:
             "xboard_node_id": result.xboard_node_id,
             "status": result.status,
             "local_node_id": result.local_node_id,
+            "cloud_instance_deleted": infer_node_asset_type(node_record) in {"vultr", "azure"},
         }
 
     def _execute_reprobe(self, task_record: ManualOperationTaskRecord) -> dict[str, object]:
@@ -229,16 +237,24 @@ class ManualOperationService:
         *,
         request: ManualOperationRequest,
         node_type: str,
-        is_aws: bool,
+        asset_type: str | None = None,
+        is_aws: bool | None = None,
     ) -> None:
         if request.task_type in {"reprobe_node", "mark_manual_review", "decommission_node"}:
             return
         if request.task_type != "force_heal":
             raise ValueError(f"不支持的人工任务类型: {request.task_type}")
-        if is_aws and node_type not in AWS_HEALABLE_PROTOCOLS:
+        resolved_asset_type = asset_type or ("aws" if is_aws else "self_hosted")
+        if resolved_asset_type == "aws" and node_type not in AWS_HEALABLE_PROTOCOLS:
             raise ValueError(f"AWS 节点协议不支持强制换 IP: {node_type}")
-        if not is_aws and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
+        if resolved_asset_type == "vultr" and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
+            raise ValueError(f"Vultr 节点协议不支持 Cloudflare 保底: {node_type}")
+        if resolved_asset_type == "azure" and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
+            raise ValueError(f"Azure 节点协议不支持 Cloudflare 保底: {node_type}")
+        if resolved_asset_type == "self_hosted" and node_type not in SELF_HOSTED_PROXY_PROTOCOLS:
             raise ValueError(f"自建节点协议不支持 Cloudflare 保底: {node_type}")
+        if resolved_asset_type not in {"aws", "azure", "vultr", "self_hosted"}:
+            raise ValueError(f"{resolved_asset_type} 节点暂不支持强制自愈")
 
     @staticmethod
     def _normalize_optional_text(value: str | None) -> str | None:

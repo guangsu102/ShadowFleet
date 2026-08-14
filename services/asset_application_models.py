@@ -69,6 +69,58 @@ class DigitalOceanAssetRegistrationRequest:
 
 
 @dataclass(frozen=True)
+class VultrAssetRegistrationRequest:
+    asset_name: str
+    region: str
+    vultr_token: str
+    default_plan: str = "vc2-1c-1gb"
+    default_os_id: int = 2284
+    ssh_key_ids: tuple[str, ...] = ()
+    vpc_ids: tuple[str, ...] = ()
+    # Kept for API/database compatibility with the initial Vultr implementation.
+    vpc2: str | None = None
+    firewall_group_id: str | None = None
+    tags: tuple[str, ...] = ()
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: tuple[str, ...] = ()
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = None
+
+
+@dataclass(frozen=True)
+class AzureAssetRegistrationRequest:
+    asset_name: str
+    region: str
+    tenant_id: str
+    client_id: str
+    client_secret: str
+    subscription_id: str
+    resource_group: str
+    ssh_public_key: str
+    default_vm_size: str = "Standard_B1s"
+    admin_username: str = "azureuser"
+    image_publisher: str = "Canonical"
+    image_offer: str = "0001-com-ubuntu-server-jammy"
+    image_sku: str = "22_04-lts-gen2"
+    image_version: str = "latest"
+    vnet_name: str = "shadowfleet-vnet"
+    subnet_name: str = "default"
+    tags: tuple[str, ...] = ()
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: tuple[str, ...] = ()
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = None
+
+
+@dataclass(frozen=True)
 class SelfHostedAssetRegistrationRequest:
     """Request model for registering self-hosted (自建) assets."""
     asset_name: str

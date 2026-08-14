@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from database.sqlite_connection import SqliteConnectionManager
+
 
 
 def _get_table_columns(cursor: sqlite3.Cursor, table_name: str) -> set[str]:
@@ -185,7 +187,78 @@ class TestFleetAssetsSchema:
         ddl = cursor.fetchone()[0]
         assert "'aws'" in ddl
         assert "'digitalocean'" in ddl
+        assert "'vultr'" in ddl
         assert "'self_hosted'" in ddl
+
+
+def test_cloud_provider_migration_preserves_referenced_assets() -> None:
+    connection = sqlite3.connect(':memory:')
+    connection.row_factory = sqlite3.Row
+    connection.execute('PRAGMA foreign_keys=ON')
+    connection.executescript('''
+        CREATE TABLE schema_migrations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        );
+        CREATE TABLE fleet_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_type TEXT NOT NULL
+                CHECK (asset_type IN ('aws', 'digitalocean', 'self_hosted')),
+            asset_name TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK (status IN ('active', 'full', 'banned', 'offline', 'deploying')),
+            region TEXT, aws_account_id TEXT, aws_access_key TEXT,
+            aws_secret_key TEXT, ssh_host TEXT, ssh_port INTEGER,
+            ssh_username TEXT, ssh_password TEXT, ssh_private_key TEXT,
+            default_instance_type TEXT, default_vcpu INTEGER,
+            account_total_vcpu INTEGER, default_architecture TEXT,
+            cpu_cores INTEGER, memory_gb REAL, remarks TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE fleet_asset_protocols (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_id INTEGER NOT NULL REFERENCES fleet_assets(id)
+        );
+        INSERT INTO fleet_assets (
+            id, asset_type, asset_name, status, created_at, updated_at
+        ) VALUES (1, 'aws', 'existing-aws', 'active', 'now', 'now');
+        INSERT INTO fleet_asset_protocols (asset_id) VALUES (1);
+        INSERT INTO schema_migrations (name) VALUES
+            ('add_cpu_cores_memory_gb'),
+            ('add_account_total_vcpu'),
+            ('add_auth_users'),
+            ('add_sse_events'),
+            ('cleanup_duplicate_nodes_and_unique_index'),
+            ('add_xboard_status_fields');
+    ''')
+
+    manager = SqliteConnectionManager.__new__(SqliteConnectionManager)
+    manager._run_migrations(connection)
+
+    asset = connection.execute(
+        'SELECT asset_name FROM fleet_assets WHERE id = 1'
+    ).fetchone()
+    assert asset is not None
+    assert asset['asset_name'] == 'existing-aws'
+    assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
+    connection.execute('''
+        INSERT INTO fleet_assets (
+            asset_type, asset_name, status, created_at, updated_at
+        ) VALUES ('vultr', 'vultr-sgp', 'active', 'now', 'now')
+    ''')
+    connection.execute('''
+        INSERT INTO fleet_assets (
+            asset_type, asset_name, status, created_at, updated_at
+        ) VALUES ('azure', 'azure-japan', 'active', 'now', 'now')
+    ''')
+    assert connection.execute(
+        'SELECT COUNT(*) FROM fleet_assets WHERE asset_type = ?',
+        ('vultr',),
+    ).fetchone()[0] == 1
+    assert connection.execute(
+        'SELECT COUNT(*) FROM fleet_assets WHERE asset_type = ?',
+        ('azure',),
+    ).fetchone()[0] == 1
 
 
 class TestFleetProbesSchema:

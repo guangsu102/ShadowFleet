@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -35,6 +35,8 @@ def create_mock_node_record(
     """Create a mock FleetNodeRecord."""
     is_aws = asset_type == "aws"
     is_digitalocean = asset_type == "digitalocean"
+    is_vultr = asset_type == "vultr"
+    is_azure = asset_type == "azure"
     return FleetNodeRecord(
         id=1,
         xboard_node_id=12345,
@@ -42,10 +44,38 @@ def create_mock_node_record(
         node_type=node_type,
         status=status,
         status_reason=None,
-        aws_account_id="test-aws-account" if is_aws else "test-do-account" if is_digitalocean else None,
-        aws_region="ap-northeast-1" if is_aws else "sgp1" if is_digitalocean else None,
-        aws_instance_id="i-1234567890abcdef0" if is_aws else "do-droplet-123" if is_digitalocean else None,
-        aws_subnet_id="subnet-1234567890abcdef0" if is_aws else "do-vpc-123" if is_digitalocean else None,
+        aws_account_id=(
+            "test-aws-account"
+            if is_aws
+            else "test-do-account"
+            if is_digitalocean
+            else "vultr:test"
+            if is_vultr
+            else "azure:subscription"
+            if is_azure
+            else None
+        ),
+        aws_region=(
+            "ap-northeast-1"
+            if is_aws
+            else "sgp1"
+            if is_digitalocean or is_vultr
+            else "japaneast"
+            if is_azure
+            else None
+        ),
+        aws_instance_id=(
+            "i-1234567890abcdef0"
+            if is_aws
+            else "do-droplet-123"
+            if is_digitalocean
+            else "vultr-instance-123"
+            if is_vultr
+            else "/subscriptions/subscription/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/test-node"
+            if is_azure
+            else None
+        ),
+        aws_subnet_id="subnet-1234567890abcdef0" if is_aws else None,
         aws_security_group_id="sg-1234567890abcdef0" if is_aws else None,
         cloudflare_record_id="cf-record-123",
         domain_name="sf-12345.example.com",
@@ -185,6 +215,30 @@ class TestDetermineHealStrategy:
         strategy = determine_heal_strategy(node, request)
         assert strategy == "manual_review_required"
 
+    def test_vultr_proxy_protocol_uses_instance_replacement(self) -> None:
+        node = create_mock_node_record(asset_type="vultr", node_type="Trojan")
+        request = HealRequest(xboard_node_id=12345, reason="confirmed_blocked_by_gfw")
+
+        assert determine_heal_strategy(node, request) == "vultr_instance_replace"
+
+    def test_vultr_anytls_uses_instance_replacement(self) -> None:
+        node = create_mock_node_record(asset_type="vultr", node_type="AnyTLS")
+        request = HealRequest(xboard_node_id=12345, reason="confirmed_blocked_by_gfw")
+
+        assert determine_heal_strategy(node, request) == "vultr_instance_replace"
+
+    def test_azure_proxy_protocol_uses_ipv6_rotate(self) -> None:
+        node = create_mock_node_record(asset_type="azure", node_type="Trojan")
+        request = HealRequest(xboard_node_id=12345, reason="confirmed_blocked_by_gfw")
+
+        assert determine_heal_strategy(node, request) == "azure_ipv6_rotate"
+
+    def test_azure_anytls_uses_ipv6_rotate(self) -> None:
+        node = create_mock_node_record(asset_type="azure", node_type="AnyTLS")
+        request = HealRequest(xboard_node_id=12345, reason="confirmed_blocked_by_gfw")
+
+        assert determine_heal_strategy(node, request) == "azure_ipv6_rotate"
+
     def test_suspected_blocked_returns_manual_review(self) -> None:
         """Nodes with unsupported protocols should require manual review."""
         # This tests a node with unsupported protocol that would return manual_review_required
@@ -293,3 +347,45 @@ class TestHealerServiceIntegration:
         assert result.success is False
         # Implementation returns Chinese message: "节点当前已有自愈任务执行中，已跳过本次请求"
         assert "跳过" in result.message or "已跳过" in result.message
+
+    def test_azure_strategy_dispatches_to_azure_flow(self) -> None:
+        from services.healer_service import HealerService
+
+        node_record = create_mock_node_record(asset_type="azure")
+        mock_state_repo = MagicMock()
+        mock_state_repo.get_node_by_xboard_node_id.return_value = node_record
+        mock_state_repo.acquire_operation_lock.return_value = True
+        mock_context = create_mock_runtime_context()
+        mock_context.sqlite_manager = MagicMock()
+        healer = HealerService(mock_context)
+        healer._state_repo = mock_state_repo
+        healer._asset_repo = MagicMock()
+        healer._xboard_repo = MagicMock()
+        expected_result = MagicMock(spec=HealResult)
+
+        with patch(
+            "services.healer_service.heal_azure_node",
+            return_value=expected_result,
+        ) as heal_azure:
+            result = healer.heal_node(
+                HealRequest(
+                    xboard_node_id=node_record.xboard_node_id,
+                    reason="confirmed_blocked_by_gfw",
+                )
+            )
+
+        assert result is expected_result
+        lock_request = mock_state_repo.acquire_operation_lock.call_args.args[0]
+        assert lock_request.expires_in_seconds == 2100
+        heal_azure.assert_called_once_with(
+            runtime_context=mock_context,
+            asset_repo=healer._asset_repo,
+            state_repo=mock_state_repo,
+            xboard_repo=healer._xboard_repo,
+            node_record=node_record,
+            request=ANY,
+            started_monotonic=ANY,
+        )
+        mock_state_repo.release_operation_lock.assert_called_once_with(
+            f"healing:{node_record.xboard_node_id}"
+        )

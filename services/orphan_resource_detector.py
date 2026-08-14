@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -18,8 +18,22 @@ from database.asset_repo import AssetRepo
 from database.state_repo import StateRepo
 from database.xboard_repo import XboardRepo
 from infrastructure.aws.ec2_client import EC2Client
+from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.cloudflare.cf_client import CFClient
+from infrastructure.vultr import VultrClient
 from models.aws_credentials import AwsCredentials
+from services.orphan_azure_support import (
+    AZURE_NETWORK_RESOURCE_SPECS,
+    AzureNetworkResourceType,
+    azure_parent_vm_is_live,
+    azure_parent_vm_name_from_resource,
+    azure_public_ip_is_attached,
+    azure_resource_created_at,
+    is_azure_healing_public_ip,
+    azure_resource_tags,
+    azure_vm_name,
+    is_shadowfleet_azure_resource,
+)
 from utils.logger import set_event_type
 
 if TYPE_CHECKING:
@@ -34,6 +48,42 @@ class OrphanEc2Instance:
     account_id: str
     launch_time: str
     state: str
+    tags: dict[str, str]
+
+
+@dataclass(frozen=True)
+class OrphanVultrInstance:
+    """Vultr instance managed by ShadowFleet but missing locally."""
+    instance_id: str
+    asset_id: int
+    region: str
+    label: str
+    created_at: str
+    status: str
+    tags: tuple[str, ...]
+    firewall_group_id: str | None = None
+
+
+@dataclass(frozen=True)
+class OrphanAzureVm:
+    vm_id: str
+    asset_id: int
+    location: str
+    name: str
+    created_at: str
+    state: str
+    tags: dict[str, str]
+
+
+@dataclass(frozen=True)
+class OrphanAzureNetworkResource:
+    resource_id: str
+    asset_id: int
+    resource_type: AzureNetworkResourceType
+    location: str
+    name: str
+    parent_vm_name: str
+    created_at: str
     tags: dict[str, str]
 
 
@@ -77,6 +127,11 @@ class OrphanResourceReport:
     asset_allocations: list[OrphanAssetAllocation]
     xboard_nodes: list[OrphanXboardNode]
     total_count: int
+    vultr_instances: list[OrphanVultrInstance] = field(default_factory=list)
+    azure_vms: list[OrphanAzureVm] = field(default_factory=list)
+    azure_network_resources: list[OrphanAzureNetworkResource] = field(
+        default_factory=list
+    )
 
 
 class OrphanResourceDetectorError(RuntimeError):
@@ -99,6 +154,8 @@ class OrphanResourceDetector:
         scan_dns: bool = True,
         scan_allocations: bool = True,
         scan_xboard: bool = True,
+        scan_vultr: bool = True,
+        scan_azure: bool = True,
     ) -> OrphanResourceReport:
         """
         扫描所有孤儿资源
@@ -116,6 +173,9 @@ class OrphanResourceDetector:
         self._logger.info("Starting orphan resource scan")
 
         orphan_ec2_instances: list[OrphanEc2Instance] = []
+        orphan_vultr_instances: list[OrphanVultrInstance] = []
+        orphan_azure_vms: list[OrphanAzureVm] = []
+        orphan_azure_network_resources: list[OrphanAzureNetworkResource] = []
         orphan_dns_records: list[OrphanDnsRecord] = []
         orphan_allocations: list[OrphanAssetAllocation] = []
         orphan_xboard_nodes: list[OrphanXboardNode] = []
@@ -124,6 +184,21 @@ class OrphanResourceDetector:
             if scan_ec2:
                 orphan_ec2_instances = self._scan_orphan_ec2_instances()
                 self._logger.info("Found %d orphan EC2 instances", len(orphan_ec2_instances))
+
+            if scan_vultr:
+                orphan_vultr_instances = self._scan_orphan_vultr_instances()
+                self._logger.info("Found %d orphan Vultr instances", len(orphan_vultr_instances))
+
+            if scan_azure:
+                orphan_azure_vms = self._scan_orphan_azure_vms()
+                self._logger.info("Found %d orphan Azure VMs", len(orphan_azure_vms))
+                orphan_azure_network_resources = (
+                    self._scan_orphan_azure_network_resources()
+                )
+                self._logger.info(
+                    "Found %d orphan Azure network resources",
+                    len(orphan_azure_network_resources),
+                )
 
             if scan_dns:
                 orphan_dns_records = self._scan_orphan_dns_records()
@@ -139,6 +214,9 @@ class OrphanResourceDetector:
 
             total_count = (
                 len(orphan_ec2_instances)
+                + len(orphan_vultr_instances)
+                + len(orphan_azure_vms)
+                + len(orphan_azure_network_resources)
                 + len(orphan_dns_records)
                 + len(orphan_allocations)
                 + len(orphan_xboard_nodes)
@@ -147,6 +225,9 @@ class OrphanResourceDetector:
             report = OrphanResourceReport(
                 scan_time=datetime.utcnow().isoformat(),
                 ec2_instances=orphan_ec2_instances,
+                vultr_instances=orphan_vultr_instances,
+                azure_vms=orphan_azure_vms,
+                azure_network_resources=orphan_azure_network_resources,
                 dns_records=orphan_dns_records,
                 asset_allocations=orphan_allocations,
                 xboard_nodes=orphan_xboard_nodes,
@@ -227,6 +308,238 @@ class OrphanResourceDetector:
                 )
 
         return orphan_instances
+
+    def _scan_orphan_vultr_instances(self) -> list[OrphanVultrInstance]:
+        orphan_instances: list[OrphanVultrInstance] = []
+        active_assets = self._asset_repo.list_assets_by_status("active")
+        vultr_assets = [
+            asset
+            for asset in active_assets
+            if asset.asset_type == "vultr" and asset.aws_access_key
+        ]
+        known_instance_ids = {
+            node.aws_instance_id
+            for node in self._state_repo.list_active_nodes()
+            if node.aws_instance_id
+        }
+
+        for asset in vultr_assets:
+            try:
+                client = VultrClient(self._runtime, api_token=asset.aws_access_key or "")
+                for instance in client.list_instances():
+                    instance_id = str(instance.get("id") or "").strip()
+                    raw_tags = instance.get("tags")
+                    tags = tuple(
+                        str(tag).strip()
+                        for tag in raw_tags
+                        if str(tag).strip()
+                    ) if isinstance(raw_tags, list) else ()
+                    if not instance_id or "shadowfleet" not in {tag.lower() for tag in tags}:
+                        continue
+                    if instance_id in known_instance_ids:
+                        continue
+                    created_at = str(instance.get("date_created") or "").strip()
+                    if not _is_older_than(created_at, timedelta(hours=1)):
+                        continue
+                    orphan_instances.append(
+                        OrphanVultrInstance(
+                            instance_id=instance_id,
+                            asset_id=asset.id,
+                            region=str(instance.get("region") or asset.region or ""),
+                            label=str(instance.get("label") or ""),
+                            created_at=created_at,
+                            status=str(instance.get("status") or "unknown"),
+                            tags=tags,
+                            firewall_group_id=(
+                                str(instance.get("firewall_group_id") or "").strip() or None
+                            ),
+                        )
+                    )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan Vultr instances for asset_id=%s: %s",
+                    asset.id,
+                    exc,
+                )
+        return orphan_instances
+
+    def _scan_orphan_azure_vms(self) -> list[OrphanAzureVm]:
+        orphan_vms: list[OrphanAzureVm] = []
+        active_assets = self._asset_repo.list_assets_by_status("active")
+        scanned_scopes: set[tuple[str, str]] = set()
+        known_ids = {
+            str(node.aws_instance_id).lower()
+            for node in self._state_repo.list_active_nodes()
+            if node.aws_instance_id
+        }
+        for asset in active_assets:
+            if asset.asset_type != "azure":
+                continue
+            provider_config = asset.provider_config
+            if (
+                not asset.aws_access_key
+                or not asset.aws_secret_key
+                or not isinstance(provider_config, dict)
+            ):
+                continue
+            tenant_id = str(provider_config.get("tenant_id") or "").strip()
+            subscription_id = str(provider_config.get("subscription_id") or "").strip()
+            resource_group = str(provider_config.get("resource_group") or "").strip()
+            if not tenant_id or not subscription_id or not resource_group:
+                continue
+            scope = (subscription_id.casefold(), resource_group.casefold())
+            if scope in scanned_scopes:
+                continue
+            try:
+                client = AzureClient(
+                    self._runtime,
+                    AzureCredentials(
+                        tenant_id=tenant_id,
+                        client_id=asset.aws_access_key,
+                        client_secret=asset.aws_secret_key,
+                        subscription_id=subscription_id,
+                    ),
+                )
+                virtual_machines = client.list_virtual_machines(resource_group)
+                scanned_scopes.add(scope)
+                for vm in virtual_machines:
+                    vm_id = str(vm.get("id") or "").strip()
+                    raw_tags = vm.get("tags")
+                    tags = {
+                        str(key): str(value)
+                        for key, value in raw_tags.items()
+                    } if isinstance(raw_tags, dict) else {}
+                    managed = str(tags.get("shadowfleet") or "").lower() == "true"
+                    if not vm_id or not managed or vm_id.lower() in known_ids:
+                        continue
+                    properties = vm.get("properties")
+                    created_at = str(
+                        properties.get("timeCreated") if isinstance(properties, dict) else ""
+                    ).strip()
+                    if not _is_older_than(created_at, timedelta(hours=1)):
+                        continue
+                    orphan_vms.append(
+                        OrphanAzureVm(
+                            vm_id=vm_id,
+                            asset_id=asset.id,
+                            location=str(vm.get("location") or asset.region or ""),
+                            name=str(vm.get("name") or ""),
+                            created_at=created_at,
+                            state=client.get_vm_power_state(vm_id) or "unknown",
+                            tags=tags,
+                        )
+                    )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan Azure VMs for asset_id=%s: %s", asset.id, exc
+                )
+        return orphan_vms
+
+    def _scan_orphan_azure_network_resources(
+        self,
+    ) -> list[OrphanAzureNetworkResource]:
+        orphan_resources: list[OrphanAzureNetworkResource] = []
+        active_assets = self._asset_repo.list_assets_by_status("active")
+        scanned_scopes: set[tuple[str, str]] = set()
+        for asset in active_assets:
+            if asset.asset_type != "azure":
+                continue
+            provider_config = asset.provider_config
+            if (
+                not asset.aws_access_key
+                or not asset.aws_secret_key
+                or not isinstance(provider_config, dict)
+            ):
+                continue
+            tenant_id = str(provider_config.get("tenant_id") or "").strip()
+            subscription_id = str(
+                provider_config.get("subscription_id") or ""
+            ).strip()
+            resource_group = str(provider_config.get("resource_group") or "").strip()
+            if not tenant_id or not subscription_id or not resource_group:
+                continue
+            scope = (subscription_id.casefold(), resource_group.casefold())
+            if scope in scanned_scopes:
+                continue
+            try:
+                client = AzureClient(
+                    self._runtime,
+                    AzureCredentials(
+                        tenant_id=tenant_id,
+                        client_id=asset.aws_access_key,
+                        client_secret=asset.aws_secret_key,
+                        subscription_id=subscription_id,
+                    ),
+                )
+                virtual_machines = client.list_virtual_machines(resource_group)
+                scanned_scopes.add(scope)
+                live_vm_names = {
+                    azure_vm_name(vm).casefold()
+                    for vm in virtual_machines
+                    if azure_vm_name(vm)
+                }
+                resource_collections = (
+                    client.list_network_interfaces(resource_group),
+                    client.list_public_ip_addresses(resource_group),
+                    client.list_network_security_groups(resource_group),
+                )
+                for spec, resources in zip(
+                    AZURE_NETWORK_RESOURCE_SPECS,
+                    resource_collections,
+                    strict=True,
+                ):
+                    for resource in resources:
+                        if not is_shadowfleet_azure_resource(resource):
+                            continue
+                        resource_id = str(resource.get("id") or "").strip()
+                        name = str(resource.get("name") or "").strip()
+                        parent_vm_name = azure_parent_vm_name_from_resource(
+                            spec.resource_type,
+                            resource,
+                        )
+                        healing_public_ip = (
+                            spec.resource_type == "azure_public_ip_address"
+                            and is_azure_healing_public_ip(resource)
+                        )
+                        parent_is_live = (
+                            parent_vm_name is not None
+                            and azure_parent_vm_is_live(
+                                parent_vm_name,
+                                live_vm_names,
+                                healing_public_ip=healing_public_ip,
+                            )
+                        )
+                        if not resource_id or parent_vm_name is None:
+                            continue
+                        if parent_is_live and (
+                            not healing_public_ip
+                            or azure_public_ip_is_attached(resource)
+                        ):
+                            continue
+                        created_at = azure_resource_created_at(resource)
+                        if not _is_older_than(created_at, timedelta(hours=1)):
+                            continue
+                        orphan_resources.append(
+                            OrphanAzureNetworkResource(
+                                resource_id=resource_id,
+                                asset_id=asset.id,
+                                resource_type=spec.resource_type,
+                                location=str(
+                                    resource.get("location") or asset.region or ""
+                                ),
+                                name=name,
+                                parent_vm_name=parent_vm_name,
+                                created_at=created_at,
+                                tags=azure_resource_tags(resource),
+                            )
+                        )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan Azure network resources for asset_id=%s: %s",
+                    asset.id,
+                    exc,
+                )
+        return orphan_resources
 
     def _scan_orphan_dns_records(self) -> list[OrphanDnsRecord]:
         """扫描孤儿 DNS 记录"""
@@ -336,3 +649,13 @@ class OrphanResourceDetector:
             self._logger.warning("Failed to scan Xboard nodes: %s", exc)
 
         return orphan_nodes
+
+
+def _is_older_than(value: str, minimum_age: timedelta) -> bool:
+    if not value:
+        return False
+    try:
+        created_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return datetime.utcnow() - created_at.replace(tzinfo=None) > minimum_age

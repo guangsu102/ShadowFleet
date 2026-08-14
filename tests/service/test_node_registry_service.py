@@ -291,6 +291,79 @@ class TestNodeRegistryService:
             assert result.status == "deleted"
             mock_state.update_node_status.assert_called()
 
+    def test_delete_vultr_node_deletes_instance_first(
+        self, node_registry: NodeRegistryService
+    ) -> None:
+        with patch.object(node_registry, "_xboard_repo") as mock_xboard, \
+             patch.object(node_registry, "_state_repo") as mock_state, \
+             patch.object(node_registry, "_asset_repo") as mock_asset, \
+             patch("services.node_registry_service.require_registered_node") as mock_require, \
+             patch("services.node_registry_service.VultrClient") as mock_vultr:
+            node = MagicMock()
+            node.id = 1
+            node.status = "offline"
+            node.asset_type = "vultr"
+            node.aws_instance_id = "vultr-instance-1"
+            node.xboard_node_id = 12345
+            mock_require.return_value = node
+            asset = MagicMock(id=8, asset_type="vultr", aws_access_key="token")
+            mock_asset.get_asset_by_xboard_node_id.return_value = asset
+
+            result = node_registry.delete_node(12345)
+
+            assert result.status == "deleted"
+            mock_vultr.return_value.delete_instance.assert_called_once_with("vultr-instance-1")
+            mock_xboard.delete_node.assert_called_once_with(12345)
+
+    def test_delete_vultr_node_recovers_asset_without_allocation(
+        self, node_registry: NodeRegistryService
+    ) -> None:
+        with patch.object(node_registry, "_asset_repo") as mock_asset, \
+             patch("services.node_registry_service.VultrClient") as mock_vultr:
+            node = MagicMock()
+            node.id = 1
+            node.asset_type = "aws"
+            node.aws_account_id = "vultr"
+            node.aws_instance_id = "vultr-instance-legacy"
+            node.xboard_node_id = 12346
+            asset = MagicMock(id=9, asset_type="vultr", aws_access_key="legacy-token")
+            mock_asset.get_asset_by_xboard_node_id.return_value = None
+            mock_asset.list_assets_by_aws_account_id.return_value = [asset]
+
+            node_registry._delete_vultr_instance(node)
+
+            mock_vultr.return_value.delete_instance.assert_called_once_with(
+                "vultr-instance-legacy"
+            )
+            mock_asset.list_assets_by_aws_account_id.assert_called_once_with("vultr")
+
+    def test_delete_azure_node_recovers_asset_without_allocation(
+        self, node_registry: NodeRegistryService
+    ) -> None:
+        with patch.object(node_registry, "_asset_repo") as mock_asset, \
+             patch("services.node_registry_service.AzureClient") as azure_client:
+            node = MagicMock(
+                id=1,
+                asset_type="aws",
+                aws_account_id="azure:sub-id",
+                aws_instance_id="/subscriptions/sub-id/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/sf-node",
+                xboard_node_id=12347,
+            )
+            asset = MagicMock(
+                id=10,
+                asset_type="azure",
+                aws_access_key="client",
+                aws_secret_key="secret",
+                provider_config={"tenant_id": "tenant", "subscription_id": "sub-id"},
+            )
+            mock_asset.get_asset_by_xboard_node_id.return_value = None
+            mock_asset.list_assets_by_aws_account_id.return_value = [asset]
+
+            node_registry._delete_azure_instance(node)
+
+            azure_client.return_value.delete_vm.assert_called_once_with(node.aws_instance_id)
+            mock_asset.list_assets_by_aws_account_id.assert_called_once_with("azure:sub-id")
+
     def test_sync_with_xboard_creates_new_nodes(
         self, node_registry: NodeRegistryService
     ) -> None:

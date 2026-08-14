@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+
 
 from database.asset_models import AssetCreateRequest, AssetEventCreateRequest, AssetProtocolConfigRequest
 from database.asset_repo import AssetRepo
 from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.aws.sts_client import StsClientError, resolve_aws_account_id
+from infrastructure.azure import AzureClient, AzureCredentials, resolve_azure_vnet_name
 from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.vultr import VultrClient
 from infrastructure.self_hosted.ssh_client import SelfHostedSshClient, SelfHostedSshConfig
 from models.aws_credentials import AwsCredentials
 from services.asset_application_models import (
     AssetRegistrationRequest,
     AssetRegistrationResult,
+    AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
+    VultrAssetRegistrationRequest,
 )
 from services.runtime_service import RuntimeContext
 
@@ -221,6 +227,208 @@ class AssetApplicationService:
             protocol_config_id=first_protocol_config_id,
         )
 
+    def register_vultr_asset(
+        self,
+        request: VultrAssetRegistrationRequest,
+    ) -> AssetRegistrationResult:
+        self._validate_vultr_registration_request(request)
+        vultr_client = self._build_vultr_client(request.vultr_token)
+        vultr_client.validate_account()
+        provider_account_id = self._vultr_provider_account_id(request.vultr_token)
+
+        tags = tuple(tag.strip() for tag in request.tags if tag and tag.strip())
+        provider_config: dict[str, object] = {
+            "ssh_key_ids": [key.strip() for key in request.ssh_key_ids if key and key.strip()],
+            "tags": list(dict.fromkeys(("shadowfleet", *tags))),
+        }
+        vpc_ids = tuple(
+            dict.fromkeys(vpc_id.strip() for vpc_id in request.vpc_ids if vpc_id and vpc_id.strip())
+        )
+        legacy_vpc_id = self._normalize_optional_text(request.vpc2)
+        if not vpc_ids and legacy_vpc_id:
+            vpc_ids = (legacy_vpc_id,)
+        firewall_group_id = self._normalize_optional_text(request.firewall_group_id)
+        vultr_client.validate_provisioning_target(
+            region=request.region.strip(),
+            plan=request.default_plan.strip(),
+            os_id=request.default_os_id,
+            ssh_key_ids=tuple(provider_config["ssh_key_ids"]),
+            vpc_ids=vpc_ids,
+            firewall_group_id=firewall_group_id,
+        )
+        if vpc_ids:
+            provider_config["vpc_ids"] = list(vpc_ids)
+        if firewall_group_id:
+            provider_config["firewall_group_id"] = firewall_group_id
+
+        asset_id = self._asset_repo.create_asset(
+            AssetCreateRequest(
+                asset_type="vultr",
+                asset_name=request.asset_name.strip(),
+                region=request.region.strip(),
+                aws_account_id=provider_account_id,
+                aws_access_key=request.vultr_token.strip(),
+                default_instance_type=request.default_plan.strip(),
+                default_vcpu=request.default_vcpu,
+                default_architecture="x64",
+                provider_config=provider_config,
+                remarks=self._normalize_optional_text(request.remarks),
+            )
+        )
+        all_protocol_types = [request.protocol_type] + list(request.additional_protocol_types)
+        all_protocol_types = [protocol for protocol in all_protocol_types if protocol]
+
+        first_protocol_config_id: int | None = None
+        for index, protocol_type in enumerate(all_protocol_types):
+            is_first = index == 0
+            protocol_config_id = self._asset_repo.upsert_asset_protocol_config(
+                AssetProtocolConfigRequest(
+                    asset_id=asset_id,
+                    protocol_type=protocol_type,
+                    target_count=request.target_count,
+                    max_count=request.max_count,
+                    priority=request.priority if is_first else request.priority + index,
+                    allow_cdn_proxy=request.allow_cdn_proxy,
+                    instance_type=request.default_plan.strip(),
+                    vcpu=request.default_vcpu,
+                    architecture="x64",
+                    ami_id=str(request.default_os_id),
+                    subnet_id=vpc_ids[0] if vpc_ids else None,
+                    security_group_id=firewall_group_id,
+                )
+            )
+            if is_first:
+                first_protocol_config_id = protocol_config_id
+
+        self._asset_repo.create_asset_event(
+            AssetEventCreateRequest(
+                asset_id=asset_id,
+                event_type="asset_registered_from_dashboard",
+                correlation_id=self._runtime_context.correlation_id,
+                message="Vultr asset registered from dashboard.",
+                payload={
+                    "asset_name": request.asset_name.strip(),
+                    "region": request.region.strip(),
+                    "protocol_type": request.protocol_type,
+                },
+            )
+        )
+        self._logger.info(
+            "Registered Vultr asset id=%s name=%s region=%s",
+            asset_id,
+            request.asset_name,
+            request.region,
+        )
+        return AssetRegistrationResult(
+            asset_id=asset_id,
+            asset_name=request.asset_name.strip(),
+            protocol_config_id=first_protocol_config_id,
+        )
+
+    def register_azure_asset(
+        self,
+        request: AzureAssetRegistrationRequest,
+    ) -> AssetRegistrationResult:
+        self._validate_azure_registration_request(request)
+        credentials = AzureCredentials(
+            tenant_id=request.tenant_id.strip(),
+            client_id=request.client_id.strip(),
+            client_secret=request.client_secret.strip(),
+            subscription_id=request.subscription_id.strip(),
+        )
+        azure_client = self._build_azure_client(credentials)
+        azure_client.validate_subscription()
+        provider_account_id = f"azure:{request.subscription_id.strip().lower()}"
+        tags = tuple(tag.strip() for tag in request.tags if tag and tag.strip())
+        vnet_name = resolve_azure_vnet_name(request.region, request.vnet_name)
+        azure_client.validate_provisioning_target(
+            location=request.region.strip(),
+            vm_size=request.default_vm_size.strip(),
+            resource_group=request.resource_group.strip(),
+            vnet_name=vnet_name,
+            subnet_name=request.subnet_name.strip(),
+        )
+        provider_config: dict[str, object] = {
+            "tenant_id": request.tenant_id.strip(),
+            "subscription_id": request.subscription_id.strip(),
+            "resource_group": request.resource_group.strip(),
+            "ssh_public_key": request.ssh_public_key.strip(),
+            "admin_username": request.admin_username.strip(),
+            "image_publisher": request.image_publisher.strip(),
+            "image_offer": request.image_offer.strip(),
+            "image_sku": request.image_sku.strip(),
+            "image_version": request.image_version.strip(),
+            "vnet_name": vnet_name,
+            "subnet_name": request.subnet_name.strip(),
+            "tags": list(dict.fromkeys(("shadowfleet", *tags))),
+        }
+        asset_id = self._asset_repo.create_asset(
+            AssetCreateRequest(
+                asset_type="azure",
+                asset_name=request.asset_name.strip(),
+                region=request.region.strip(),
+                aws_account_id=provider_account_id,
+                aws_access_key=request.client_id.strip(),
+                aws_secret_key=request.client_secret.strip(),
+                default_instance_type=request.default_vm_size.strip(),
+                default_vcpu=request.default_vcpu,
+                default_architecture="x64",
+                provider_config=provider_config,
+                remarks=self._normalize_optional_text(request.remarks),
+            )
+        )
+        protocol_types = [request.protocol_type, *request.additional_protocol_types]
+        first_protocol_config_id: int | None = None
+        for index, protocol_type in enumerate(protocol for protocol in protocol_types if protocol):
+            protocol_config_id = self._asset_repo.upsert_asset_protocol_config(
+                AssetProtocolConfigRequest(
+                    asset_id=asset_id,
+                    protocol_type=protocol_type,
+                    target_count=request.target_count,
+                    max_count=request.max_count,
+                    priority=request.priority + index,
+                    allow_cdn_proxy=request.allow_cdn_proxy,
+                    instance_type=request.default_vm_size.strip(),
+                    vcpu=request.default_vcpu,
+                    architecture="x64",
+                )
+            )
+            if first_protocol_config_id is None:
+                first_protocol_config_id = protocol_config_id
+
+        self._asset_repo.create_asset_event(
+            AssetEventCreateRequest(
+                asset_id=asset_id,
+                event_type="asset_registered_from_dashboard",
+                correlation_id=self._runtime_context.correlation_id,
+                message="Azure asset registered from dashboard.",
+                payload={
+                    "asset_name": request.asset_name.strip(),
+                    "region": request.region.strip(),
+                    "subscription_id": request.subscription_id.strip(),
+                    "resource_group": request.resource_group.strip(),
+                    "protocol_type": request.protocol_type,
+                },
+            )
+        )
+        self._logger.info(
+            "Registered Azure asset id=%s name=%s region=%s subscription_id=%s",
+            asset_id,
+            request.asset_name,
+            request.region,
+            request.subscription_id,
+        )
+        return AssetRegistrationResult(
+            asset_id=asset_id,
+            asset_name=request.asset_name.strip(),
+            protocol_config_id=first_protocol_config_id,
+        )
+
+    @staticmethod
+    def _vultr_provider_account_id(api_token: str) -> str:
+        fingerprint = hashlib.sha256(api_token.strip().encode("utf-8")).hexdigest()[:24]
+        return f"vultr:{fingerprint}"
+
     @staticmethod
     def _validate_registration_request(request: AssetRegistrationRequest) -> None:
         if not request.asset_name or not request.asset_name.strip():
@@ -326,6 +534,40 @@ class AssetApplicationService:
     ) -> list[dict[str, object]]:
         return self._build_digitalocean_client(digitalocean_token).list_sizes(per_page=limit)
 
+    def query_vultr_catalog(self, vultr_token: str) -> dict[str, list[dict[str, object]]]:
+        client = self._build_vultr_client(vultr_token)
+        client.validate_account()
+        return {
+            "regions": client.list_regions(),
+            "plans": client.list_plans(),
+            "operating_systems": client.list_operating_systems(),
+            "ssh_keys": client.list_ssh_keys(),
+            "vpcs": client.list_vpcs(),
+            "firewall_groups": client.list_firewall_groups(),
+        }
+
+    def query_azure_catalog(
+        self,
+        tenant_id: str,
+        client_id: str,
+        client_secret: str,
+        subscription_id: str,
+        location: str | None = None,
+    ) -> dict[str, list[dict[str, object]]]:
+        client = self._build_azure_client(
+            AzureCredentials(
+                tenant_id=tenant_id,
+                client_id=client_id,
+                client_secret=client_secret,
+                subscription_id=subscription_id,
+            )
+        )
+        client.validate_subscription()
+        return {
+            "locations": client.list_locations(),
+            "vm_sizes": client.list_vm_sizes(location.strip()) if location and location.strip() else [],
+        }
+
     def _build_ec2_client(
         self,
         aws_account_id: str,
@@ -350,6 +592,15 @@ class AssetApplicationService:
             api_token=digitalocean_token,
         )
 
+    def _build_vultr_client(self, vultr_token: str) -> VultrClient:
+        return VultrClient(
+            runtime_context=self._runtime_context,
+            api_token=vultr_token,
+        )
+
+    def _build_azure_client(self, credentials: AzureCredentials) -> AzureClient:
+        return AzureClient(runtime_context=self._runtime_context, credentials=credentials)
+
     @staticmethod
     def _validate_digitalocean_registration_request(
         request: DigitalOceanAssetRegistrationRequest,
@@ -370,6 +621,51 @@ class AssetApplicationService:
             raise ValueError("target_count 不能小于 0")
         if request.max_count < 0:
             raise ValueError("max_count 不能小于 0")
+        if request.max_count > 0 and request.target_count > request.max_count:
+            raise ValueError("target_count 不能大于 max_count")
+
+    @staticmethod
+    def _validate_vultr_registration_request(request: VultrAssetRegistrationRequest) -> None:
+        if not request.asset_name or not request.asset_name.strip():
+            raise ValueError("资产名称不能为空")
+        if not request.region or not request.region.strip():
+            raise ValueError("区域不能为空")
+        if not request.vultr_token or not request.vultr_token.strip():
+            raise ValueError("Vultr Token 不能为空")
+        if not request.default_plan or not request.default_plan.strip():
+            raise ValueError("Vultr Plan 不能为空")
+        if request.default_os_id <= 0:
+            raise ValueError("Vultr OS ID 必须大于 0")
+        if request.default_vcpu is not None and request.default_vcpu <= 0:
+            raise ValueError("默认 vCPU 必须大于 0")
+        if request.target_count < 0:
+            raise ValueError("target_count 不能小于 0")
+        if request.max_count < 0:
+            raise ValueError("max_count 不能小于 0")
+        if request.max_count > 0 and request.target_count > request.max_count:
+            raise ValueError("target_count 不能大于 max_count")
+
+    @staticmethod
+    def _validate_azure_registration_request(request: AzureAssetRegistrationRequest) -> None:
+        required = {
+            "资产名称": request.asset_name,
+            "Azure 区域": request.region,
+            "Tenant ID": request.tenant_id,
+            "Client ID": request.client_id,
+            "Client Secret": request.client_secret,
+            "Subscription ID": request.subscription_id,
+            "Resource Group": request.resource_group,
+            "SSH 公钥": request.ssh_public_key,
+            "VM Size": request.default_vm_size,
+            "管理员用户名": request.admin_username,
+        }
+        for label, value in required.items():
+            if not value or not value.strip():
+                raise ValueError(f"{label}不能为空")
+        if request.default_vcpu is not None and request.default_vcpu <= 0:
+            raise ValueError("默认 vCPU 必须大于 0")
+        if request.target_count < 0 or request.max_count < 0:
+            raise ValueError("target_count 和 max_count 不能小于 0")
         if request.max_count > 0 and request.target_count > request.max_count:
             raise ValueError("target_count 不能大于 max_count")
 

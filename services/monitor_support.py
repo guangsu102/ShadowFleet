@@ -8,9 +8,30 @@ from services.monitor_models import MonitorCandidate, XboardSentinelNodeRuntime
 
 def infer_node_asset_type(node_record: FleetNodeRecord) -> str:
     asset_type = getattr(node_record, "asset_type", None)
+    account_id = node_record.aws_account_id
+    if isinstance(account_id, str):
+        normalized_account_id = account_id.strip().lower()
+        if (
+            normalized_account_id == "vultr"
+            or normalized_account_id.startswith("vultr:")
+        ) and (
+            not isinstance(asset_type, str)
+            or not asset_type.strip()
+            or asset_type.strip() == "aws"
+        ):
+            return "vultr"
+        if (
+            normalized_account_id == "azure"
+            or normalized_account_id.startswith("azure:")
+        ) and (
+            not isinstance(asset_type, str)
+            or not asset_type.strip()
+            or asset_type.strip() == "aws"
+        ):
+            return "azure"
     if isinstance(asset_type, str) and asset_type.strip():
         return asset_type.strip()
-    return "aws" if node_record.aws_account_id is not None else "self_hosted"
+    return "aws" if account_id is not None else "self_hosted"
 
 
 def to_monitor_candidate(

@@ -49,6 +49,25 @@ const REGION_MAP: Record<string, string> = {
   'eu-west-1': '伦敦',
   'eu-west-2': '巴黎',
   'eu-central-1': '法兰克福',
+  sgp: '新加坡 (Vultr)',
+  nrt: '东京 (Vultr)',
+  icn: '首尔 (Vultr)',
+  lax: '洛杉矶 (Vultr)',
+  sjc: '硅谷 (Vultr)',
+  sea: '西雅图 (Vultr)',
+  ord: '芝加哥 (Vultr)',
+  ewr: '纽约 (Vultr)',
+  lhr: '伦敦 (Vultr)',
+  fra: '法兰克福 (Vultr)',
+  japaneast: '日本东部 (Azure)',
+  southeastasia: '东南亚 (Azure)',
+  eastasia: '东亚 (Azure)',
+  westus2: '美国西部 2 (Azure)',
+  eastus: '美国东部 (Azure)',
+  uksouth: '英国南部 (Azure)',
+  westeurope: '西欧 (Azure)',
+  germanywestcentral: '德国中西部 (Azure)',
+  australiaeast: '澳大利亚东部 (Azure)',
 }
 const ALL_REGIONS = Object.keys(REGION_MAP)
 
@@ -277,7 +296,7 @@ const schedulerCooldown = ref(60.0)
 const schedulerMaxTasks = ref(5)
 const schedulerEnabledRegions = ref<string[]>(['*'])
 const schedulerEnabledProtocols = ref<string[]>(['*'])
-const schedulerEnabledAssetTypes = ref<string[]>(['digitalocean', 'aws'])
+const schedulerEnabledAssetTypes = ref<string[]>(['digitalocean', 'vultr', 'azure', 'aws'])
 
 const regionListOptions: SelectOption[] = [
   { label: '全部区域 (*)', value: '*' },
@@ -295,6 +314,8 @@ const protocolListOptions: SelectOption[] = [
 
 const cloudAssetTypeOptions: SelectOption[] = [
   { label: 'DigitalOcean', value: 'digitalocean' },
+  { label: 'Vultr', value: 'vultr' },
+  { label: 'Microsoft Azure', value: 'azure' },
   { label: 'AWS', value: 'aws' },
 ]
 
@@ -307,7 +328,7 @@ function buildFleetSchedulerForm() {
   schedulerMaxTasks.value = (scheduler.max_tasks_per_cycle as number) ?? 5
   schedulerEnabledRegions.value = (scheduler.enabled_regions as string[]) ?? ['*']
   schedulerEnabledProtocols.value = (scheduler.enabled_protocols as string[]) ?? ['*']
-  schedulerEnabledAssetTypes.value = (scheduler.enabled_asset_types as string[]) ?? ['digitalocean', 'aws']
+  schedulerEnabledAssetTypes.value = (scheduler.enabled_asset_types as string[]) ?? ['digitalocean', 'vultr', 'azure', 'aws']
 }
 
 // ---------------------------------------------------------------------------

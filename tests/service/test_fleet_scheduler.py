@@ -268,6 +268,39 @@ class TestCloudAssetSelection:
         assert selector.select_asset.call_args.args[0].asset_type == "aws"
 
 
+    def test_config_can_limit_scheduler_to_vultr(self, mock_runtime):
+        mock_runtime.config.fleet_scheduler.enabled_asset_types = ['vultr']
+        with patch('services.fleet_scheduler_service.StateRepo'), \
+             patch('services.fleet_scheduler_service.ProvisioningTaskRepo'), \
+             patch('services.fleet_scheduler_service.AssetRepo'), \
+             patch('services.fleet_scheduler_service.AssetSelectorService') as MockAssetSelector:
+            selector = MagicMock()
+            selector.select_asset.return_value = 'vultr-selection'
+            MockAssetSelector.return_value = selector
+            service = FleetSchedulerService(mock_runtime)
+            result = service._select_cloud_asset_for_gap(self._gap())
+
+        assert result == 'vultr-selection'
+        selector.select_asset.assert_called_once()
+        assert selector.select_asset.call_args.args[0].asset_type == 'vultr'
+
+    def test_config_can_limit_scheduler_to_azure(self, mock_runtime):
+        mock_runtime.config.fleet_scheduler.enabled_asset_types = ['azure']
+        with patch('services.fleet_scheduler_service.StateRepo'), \
+             patch('services.fleet_scheduler_service.ProvisioningTaskRepo'), \
+             patch('services.fleet_scheduler_service.AssetRepo'), \
+             patch('services.fleet_scheduler_service.AssetSelectorService') as MockAssetSelector:
+            selector = MagicMock()
+            selector.select_asset.return_value = 'azure-selection'
+            MockAssetSelector.return_value = selector
+            service = FleetSchedulerService(mock_runtime)
+            result = service._select_cloud_asset_for_gap(self._gap())
+
+        assert result == 'azure-selection'
+        selector.select_asset.assert_called_once()
+        assert selector.select_asset.call_args.args[0].asset_type == 'azure'
+
+
 class TestRegionProtocolGap:
     """测试 RegionProtocolGap 数据类"""
 

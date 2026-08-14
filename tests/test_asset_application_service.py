@@ -8,7 +8,9 @@ import pytest
 from services.asset_application_service import AssetApplicationService
 from services.asset_application_models import (
     AssetRegistrationRequest,
+    AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    VultrAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
 )
 
@@ -72,6 +74,44 @@ class TestAssetApplicationService:
 
             assert service._runtime_context == mock_runtime_context
             mock_repo.assert_called_once_with(mock_runtime_context)
+
+    def test_register_azure_asset_stores_service_principal_and_provider_config(
+        self, service
+    ):
+        service._asset_repo.create_asset.return_value = 77
+        service._asset_repo.upsert_asset_protocol_config.return_value = 88
+        with patch.object(service, "_build_azure_client") as build_client:
+            result = service.register_azure_asset(
+                AzureAssetRegistrationRequest(
+                    asset_name="azure-jp",
+                    region="japaneast",
+                    tenant_id="tenant",
+                    client_id="client",
+                    client_secret="secret",
+                    subscription_id="SUB-ID",
+                    resource_group="shadowfleet-rg",
+                    ssh_public_key="ssh-ed25519 AAAA test",
+                    protocol_type="Trojan",
+                )
+            )
+
+        build_client.return_value.validate_subscription.assert_called_once()
+        build_client.return_value.validate_provisioning_target.assert_called_once_with(
+            location="japaneast",
+            vm_size="Standard_B1s",
+            resource_group="shadowfleet-rg",
+            vnet_name="shadowfleet-vnet-japaneast",
+            subnet_name="default",
+        )
+        create_request = service._asset_repo.create_asset.call_args.args[0]
+        assert create_request.asset_type == "azure"
+        assert create_request.aws_account_id == "azure:sub-id"
+        assert create_request.aws_access_key == "client"
+        assert create_request.aws_secret_key == "secret"
+        assert create_request.provider_config["tenant_id"] == "tenant"
+        assert create_request.provider_config["resource_group"] == "shadowfleet-rg"
+        assert create_request.provider_config["vnet_name"] == "shadowfleet-vnet-japaneast"
+        assert result.asset_id == 77
 
     def test_validate_registration_request_valid(self, aws_registration_request):
         """Test _validate_registration_request with valid request"""
@@ -232,6 +272,53 @@ class TestAssetApplicationService:
         assert protocol_config.instance_type == "s-2vcpu-2gb"
         assert protocol_config.ami_id == "ubuntu-24-04-x64"
         assert protocol_config.subnet_id == "vpc-123"
+
+    def test_register_vultr_asset_creates_asset_and_protocol(self, service):
+        request = VultrAssetRegistrationRequest(
+            asset_name="vultr-sgp",
+            region="sgp",
+            vultr_token="vultr-test-token",
+            default_plan="vc2-1c-1gb",
+            default_os_id=2284,
+            ssh_key_ids=("ssh-key-1",),
+            vpc_ids=("vpc-id",),
+            firewall_group_id="firewall-id",
+            tags=("prod",),
+            protocol_type="Trojan",
+            target_count=1,
+            max_count=2,
+            default_vcpu=1,
+        )
+        service._asset_repo.create_asset.return_value = 43
+        service._asset_repo.upsert_asset_protocol_config.return_value = 8
+
+        with patch("services.asset_application_service.VultrClient") as mock_client_cls:
+            result = service.register_vultr_asset(request)
+
+        assert result.asset_id == 43
+        mock_client_cls.return_value.validate_account.assert_called_once_with()
+        mock_client_cls.return_value.validate_provisioning_target.assert_called_once_with(
+            region="sgp",
+            plan="vc2-1c-1gb",
+            os_id=2284,
+            ssh_key_ids=("ssh-key-1",),
+            vpc_ids=("vpc-id",),
+            firewall_group_id="firewall-id",
+        )
+        created_asset = service._asset_repo.create_asset.call_args.args[0]
+        assert created_asset.asset_type == "vultr"
+        assert created_asset.aws_access_key == "vultr-test-token"
+        assert created_asset.aws_account_id.startswith("vultr:")
+        assert created_asset.aws_account_id != "vultr"
+        assert created_asset.provider_config == {
+            "ssh_key_ids": ["ssh-key-1"],
+            "tags": ["shadowfleet", "prod"],
+            "vpc_ids": ["vpc-id"],
+            "firewall_group_id": "firewall-id",
+        }
+        protocol_config = service._asset_repo.upsert_asset_protocol_config.call_args.args[0]
+        assert protocol_config.instance_type == "vc2-1c-1gb"
+        assert protocol_config.ami_id == "2284"
 
     def test_validate_self_hosted_request_empty_asset_name(self):
         """Test _validate_self_hosted_request with empty asset name"""

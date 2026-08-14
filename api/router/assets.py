@@ -7,8 +7,10 @@ from api.auth.dependencies import get_current_user, require_operator
 from api.deps import get_runtime_context
 from services.asset_application_models import (
     AssetRegistrationRequest,
+    AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
+    VultrAssetRegistrationRequest,
 )
 from services.asset_application_service import AssetApplicationService
 from services.dashboard_service import DashboardService
@@ -92,6 +94,55 @@ class DigitalOceanAssetCreateRequest(BaseModel):
     default_image: str = Field(default="ubuntu-24-04-x64", min_length=1)
     ssh_keys: list[str] = Field(default_factory=list)
     vpc_uuid: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: list[str] = Field(default_factory=list)
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = None
+
+
+class VultrAssetCreateRequest(BaseModel):
+    asset_name: str = Field(..., min_length=1, max_length=128)
+    region: str = Field(..., min_length=1)
+    vultr_token: str = Field(..., min_length=1)
+    default_plan: str = Field(default="vc2-1c-1gb", min_length=1)
+    default_os_id: int = Field(default=2284, gt=0)
+    ssh_key_ids: list[str] = Field(default_factory=list)
+    vpc_ids: list[str] = Field(default_factory=list)
+    vpc2: str | None = None
+    firewall_group_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: list[str] = Field(default_factory=list)
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = None
+
+
+class AzureAssetCreateRequest(BaseModel):
+    asset_name: str = Field(..., min_length=1, max_length=128)
+    region: str = Field(..., min_length=1)
+    tenant_id: str = Field(..., min_length=1)
+    client_id: str = Field(..., min_length=1)
+    client_secret: str = Field(..., min_length=1)
+    subscription_id: str = Field(..., min_length=1)
+    resource_group: str = Field(..., min_length=1)
+    ssh_public_key: str = Field(..., min_length=1)
+    default_vm_size: str = Field(default="Standard_B1s", min_length=1)
+    admin_username: str = Field(default="azureuser", min_length=1)
+    image_publisher: str = Field(default="Canonical", min_length=1)
+    image_offer: str = Field(default="0001-com-ubuntu-server-jammy", min_length=1)
+    image_sku: str = Field(default="22_04-lts-gen2", min_length=1)
+    image_version: str = Field(default="latest", min_length=1)
+    vnet_name: str = Field(default="shadowfleet-vnet", min_length=1)
+    subnet_name: str = Field(default="default", min_length=1)
     tags: list[str] = Field(default_factory=list)
     remarks: str | None = None
     protocol_type: str | None = None
@@ -229,6 +280,95 @@ async def register_digitalocean_asset(
     )
 
 
+@router.post("/vultr", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
+async def register_vultr_asset(
+    request: VultrAssetCreateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> AssetResponse:
+    service = AssetApplicationService(ctx)
+    try:
+        result = service.register_vultr_asset(
+            VultrAssetRegistrationRequest(
+                asset_name=request.asset_name,
+                region=request.region,
+                vultr_token=request.vultr_token,
+                default_plan=request.default_plan,
+                default_os_id=request.default_os_id,
+                ssh_key_ids=tuple(request.ssh_key_ids),
+                vpc_ids=tuple(request.vpc_ids),
+                vpc2=request.vpc2,
+                firewall_group_id=request.firewall_group_id,
+                tags=tuple(request.tags),
+                remarks=request.remarks,
+                protocol_type=request.protocol_type,
+                additional_protocol_types=tuple(request.additional_protocol_types),
+                target_count=request.target_count,
+                max_count=request.max_count,
+                priority=request.priority,
+                allow_cdn_proxy=request.allow_cdn_proxy,
+                default_vcpu=request.default_vcpu,
+            )
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return AssetResponse(
+        asset_id=result.asset_id,
+        asset_name=result.asset_name,
+        asset_type="vultr",
+        region=request.region,
+        status="active",
+    )
+
+
+@router.post("/azure", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
+async def register_azure_asset(
+    request: AzureAssetCreateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> AssetResponse:
+    try:
+        result = AssetApplicationService(ctx).register_azure_asset(
+            AzureAssetRegistrationRequest(
+                asset_name=request.asset_name,
+                region=request.region,
+                tenant_id=request.tenant_id,
+                client_id=request.client_id,
+                client_secret=request.client_secret,
+                subscription_id=request.subscription_id,
+                resource_group=request.resource_group,
+                ssh_public_key=request.ssh_public_key,
+                default_vm_size=request.default_vm_size,
+                admin_username=request.admin_username,
+                image_publisher=request.image_publisher,
+                image_offer=request.image_offer,
+                image_sku=request.image_sku,
+                image_version=request.image_version,
+                vnet_name=request.vnet_name,
+                subnet_name=request.subnet_name,
+                tags=tuple(request.tags),
+                remarks=request.remarks,
+                protocol_type=request.protocol_type,
+                additional_protocol_types=tuple(request.additional_protocol_types),
+                target_count=request.target_count,
+                max_count=request.max_count,
+                priority=request.priority,
+                allow_cdn_proxy=request.allow_cdn_proxy,
+                default_vcpu=request.default_vcpu,
+            )
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return AssetResponse(
+        asset_id=result.asset_id,
+        asset_name=result.asset_name,
+        asset_type="azure",
+        region=request.region,
+        status="active",
+        aws_account_id=f"azure:{request.subscription_id.strip().lower()}",
+    )
+
+
 @router.get("/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     asset_id: int,
@@ -265,9 +405,10 @@ async def delete_asset(
     ctx: RuntimeContext = Depends(get_runtime_context),
     _current_user: None = Depends(require_operator),
 ) -> None:
-    from database.asset_repo import AssetRepo
     try:
-        AssetRepo(ctx).delete_asset(asset_id)
+        AssetApplicationService(ctx).delete_asset(asset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
@@ -375,6 +516,18 @@ class DigitalOceanCatalogRequest(BaseModel):
     limit: int = 100
 
 
+class VultrCatalogRequest(BaseModel):
+    vultr_token: str = Field(..., min_length=1)
+
+
+class AzureCatalogRequest(BaseModel):
+    tenant_id: str = Field(..., min_length=1)
+    client_id: str = Field(..., min_length=1)
+    client_secret: str = Field(..., min_length=1)
+    subscription_id: str = Field(..., min_length=1)
+    location: str | None = None
+
+
 @router.post("/query-amis")
 async def query_amis(
     request: AmiQueryRequest,
@@ -475,6 +628,42 @@ async def query_digitalocean_sizes(
             for size in sizes
         ]
     }
+
+
+@router.post("/vultr/query-catalog")
+async def query_vultr_catalog(
+    request: VultrCatalogRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> dict[str, object]:
+    try:
+        return AssetApplicationService(ctx).query_vultr_catalog(request.vultr_token)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Vultr catalog query failed: {e}",
+        ) from e
+
+
+@router.post("/azure/query-catalog")
+async def query_azure_catalog(
+    request: AzureCatalogRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> dict[str, object]:
+    try:
+        return AssetApplicationService(ctx).query_azure_catalog(
+            tenant_id=request.tenant_id,
+            client_id=request.client_id,
+            client_secret=request.client_secret,
+            subscription_id=request.subscription_id,
+            location=request.location,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Azure catalog query failed: {e}",
+        ) from e
 
 
 

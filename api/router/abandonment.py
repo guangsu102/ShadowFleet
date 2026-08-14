@@ -50,6 +50,8 @@ async def list_quotas(
     grouped: dict[str, list[AssetRecord]] = {}
     for status_val in all_statuses:
         for asset in repo.list_assets_by_status(status_val):
+            if asset.asset_type != "aws":
+                continue
             account_id = asset.aws_account_id or "Unknown"
             grouped.setdefault(account_id, []).append(asset)
 

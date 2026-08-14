@@ -620,7 +620,7 @@ export const zhMessages: Messages = {
     schedulerEnabledProtocols: '启用调度的协议',
     schedulerEnabledProtocolsDesc: '留空或选择 * 表示所有协议',
     schedulerEnabledAssetTypes: '启用调度的云厂商',
-    schedulerEnabledAssetTypesDesc: '按选择顺序尝试创建节点；默认先 DigitalOcean，后 AWS',
+    schedulerEnabledAssetTypesDesc: '按选择顺序尝试创建节点；默认依次为 DigitalOcean、Vultr、Microsoft Azure、AWS',
     schedulerAlertTitle: '调度触发条件',
     schedulerAlertContent: '调度器会持续监控 fleet_matrix 中的配置，当在线节点数低于期望数时自动补充。账号被封后也会立即触发紧急补充。',
     schedulerSaved: 'Fleet Scheduler 配置已保存',
@@ -701,7 +701,7 @@ export const zhMessages: Messages = {
 
   provisioner: {
     title: '节点初始化',
-    headerNote: '当前页面只负责提交任务到 SQLite 请求队列，不直接执行 AWS / Cloudflare / Xboard 开机流水线。',
+    headerNote: '当前页面只负责提交任务到 SQLite 请求队列，不直接执行云厂商 / Cloudflare / Xboard 开机流水线。',
     initTaskForm: '初始化任务请求表单',
     protocolType: '协议类型',
     assetType: '资产类型',
@@ -1457,7 +1457,7 @@ export const enMessages = {
     schedulerEnabledProtocols: 'Enabled Protocols',
     schedulerEnabledProtocolsDesc: 'Leave empty or select * for all protocols',
     schedulerEnabledAssetTypes: 'Enabled Cloud Providers',
-    schedulerEnabledAssetTypesDesc: 'Providers are tried in the selected order. Default is DigitalOcean, then AWS.',
+    schedulerEnabledAssetTypesDesc: 'Providers are tried in order: DigitalOcean, Vultr, Microsoft Azure, then AWS by default.',
     schedulerAlertTitle: 'Scheduling Trigger Conditions',
     schedulerAlertContent: 'Scheduler continuously monitors fleet_matrix config and automatically replenishes when online nodes fall below desired count. Also immediately triggers emergency replenishment after account abandonment.',
     schedulerSaved: 'Fleet Scheduler config saved',
@@ -1477,7 +1477,7 @@ export const enMessages = {
 
   provisioner: {
     title: 'Node Provisioner',
-    headerNote: 'This page only submits tasks to the SQLite request queue. It does not directly execute AWS / Cloudflare / Xboard provisioning pipelines.',
+    headerNote: 'This page only submits tasks to the SQLite request queue. It does not directly execute cloud provider / Cloudflare / Xboard provisioning pipelines.',
     initTaskForm: 'Initialize Task Request Form',
     protocolType: 'Protocol Type',
     assetType: 'Asset Type',

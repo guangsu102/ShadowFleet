@@ -259,6 +259,76 @@ class TestDashboardServiceBuildSnapshot:
         node_row = next(row for row in snapshot.node_rows if row.xboard_node_id == 9090)
         assert node_row.asset_type == "digitalocean"
 
+    def test_node_rows_derive_vultr_type_without_allocation(
+        self, in_memory_sqlite_db
+    ) -> None:
+        runtime_context = _make_runtime_context(in_memory_sqlite_db)
+        state_repo = StateRepo(runtime_context)
+        state_repo.create_node(
+            FleetNodeCreateRequest(
+                xboard_node_id=9091,
+                node_name="vultr-node",
+                node_type="AnyTLS",
+                status="provisioning",
+                aws_account_id="vultr:token-fingerprint",
+                aws_region="sgp",
+                aws_instance_id="vultr-instance-9091",
+            )
+        )
+
+        mock_probe_repo = MagicMock()
+        mock_probe_repo.list_probes.return_value = []
+        mock_probe_repo.list_recent_measurements.return_value = []
+        mock_monitor_repo = MagicMock()
+        mock_monitor_repo.get_latest_cycle.return_value = None
+
+        with patch(
+            "services.dashboard_service.ProbeRepo", return_value=mock_probe_repo
+        ), patch(
+            "services.dashboard_service.MonitorRepo", return_value=mock_monitor_repo
+        ):
+            from services.dashboard_service import DashboardService
+
+            snapshot = DashboardService(runtime_context).build_snapshot()
+
+        node_row = next(row for row in snapshot.node_rows if row.xboard_node_id == 9091)
+        assert node_row.asset_type == "vultr"
+
+    def test_node_rows_derive_azure_type_without_allocation(
+        self, in_memory_sqlite_db
+    ) -> None:
+        runtime_context = _make_runtime_context(in_memory_sqlite_db)
+        state_repo = StateRepo(runtime_context)
+        state_repo.create_node(
+            FleetNodeCreateRequest(
+                xboard_node_id=9092,
+                node_name="azure-node",
+                node_type="Trojan",
+                status="provisioning",
+                aws_account_id="azure:subscription-id",
+                aws_region="japaneast",
+                aws_instance_id="/subscriptions/subscription-id/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/node",
+            )
+        )
+
+        mock_probe_repo = MagicMock()
+        mock_probe_repo.list_probes.return_value = []
+        mock_probe_repo.list_recent_measurements.return_value = []
+        mock_monitor_repo = MagicMock()
+        mock_monitor_repo.get_latest_cycle.return_value = None
+
+        with patch(
+            "services.dashboard_service.ProbeRepo", return_value=mock_probe_repo
+        ), patch(
+            "services.dashboard_service.MonitorRepo", return_value=mock_monitor_repo
+        ):
+            from services.dashboard_service import DashboardService
+
+            snapshot = DashboardService(runtime_context).build_snapshot()
+
+        node_row = next(row for row in snapshot.node_rows if row.xboard_node_id == 9092)
+        assert node_row.asset_type == "azure"
+
     def test_build_overview_survival_rate(self, in_memory_sqlite_db) -> None:
         runtime_context = _make_runtime_context(in_memory_sqlite_db)
         state_repo = StateRepo(runtime_context)

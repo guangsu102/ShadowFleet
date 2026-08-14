@@ -11,11 +11,14 @@ import pytest
 
 from services.orphan_resource_detector import (
     OrphanAssetAllocation,
+    OrphanAzureNetworkResource,
+    OrphanAzureVm,
     OrphanDnsRecord,
     OrphanEc2Instance,
     OrphanResourceDetector,
     OrphanResourceDetectorError,
     OrphanResourceReport,
+    OrphanVultrInstance,
     OrphanXboardNode,
 )
 
@@ -210,6 +213,250 @@ class TestOrphanResourceDetector:
     def test_initialization(self, detector: OrphanResourceDetector) -> None:
         """Test OrphanResourceDetector initializes correctly."""
         assert detector is not None
+
+    def test_scan_vultr_orphans_filters_known_and_recent_instances(
+        self, detector: OrphanResourceDetector
+    ) -> None:
+        old_timestamp = "2026-05-10T10:00:00Z"
+        asset = MagicMock(id=9, asset_type="vultr", aws_access_key="token", region="sgp")
+        known_node = MagicMock(aws_instance_id="known-instance")
+        with patch.object(detector, "_asset_repo") as asset_repo, \
+             patch.object(detector, "_state_repo") as state_repo, \
+             patch("services.orphan_resource_detector.VultrClient") as client_cls, \
+             patch("services.orphan_resource_detector._is_older_than", return_value=True):
+            asset_repo.list_assets_by_status.return_value = [asset]
+            state_repo.list_active_nodes.return_value = [known_node]
+            client_cls.return_value.list_instances.return_value = [
+                {"id": "known-instance", "tags": ["shadowfleet"], "date_created": old_timestamp},
+                {"id": "foreign", "tags": ["other"], "date_created": old_timestamp},
+                {
+                    "id": "orphan",
+                    "tags": ["shadowfleet"],
+                    "date_created": old_timestamp,
+                    "region": "sgp",
+                    "firewall_group_id": "firewall-id",
+                },
+            ]
+
+            result = detector._scan_orphan_vultr_instances()
+
+        assert result == [
+            OrphanVultrInstance(
+                instance_id="orphan",
+                firewall_group_id="firewall-id",
+                asset_id=9,
+                region="sgp",
+                label="",
+                created_at=old_timestamp,
+                status="unknown",
+                tags=("shadowfleet",),
+            )
+        ]
+
+    def test_scan_azure_orphans_filters_known_and_untagged_vms(
+        self, detector: OrphanResourceDetector
+    ) -> None:
+        old_timestamp = "2026-05-10T10:00:00Z"
+        orphan_id = (
+            "/subscriptions/sub/resourceGroups/rg/providers/"
+            "Microsoft.Compute/virtualMachines/orphan"
+        )
+        known_id = orphan_id.replace("orphan", "known")
+        asset = MagicMock(
+            id=10,
+            asset_type="azure",
+            aws_access_key="client",
+            aws_secret_key="secret",
+            region="japaneast",
+            provider_config={
+                "tenant_id": "tenant",
+                "subscription_id": "sub",
+                "resource_group": "rg",
+            },
+        )
+        duplicate_scope_asset = MagicMock(
+            id=12,
+            asset_type="azure",
+            aws_access_key="other-client",
+            aws_secret_key="other-secret",
+            region="eastus",
+            provider_config={
+                "tenant_id": "tenant",
+                "subscription_id": "SUB",
+                "resource_group": "RG",
+            },
+        )
+        known_node = MagicMock(aws_instance_id=known_id)
+        with patch.object(detector, "_asset_repo") as asset_repo, \
+             patch.object(detector, "_state_repo") as state_repo, \
+             patch("services.orphan_resource_detector.AzureClient") as client_cls, \
+             patch("services.orphan_resource_detector._is_older_than", return_value=True):
+            asset_repo.list_assets_by_status.return_value = [
+                asset,
+                duplicate_scope_asset,
+            ]
+            state_repo.list_active_nodes.return_value = [known_node]
+            client_cls.return_value.list_virtual_machines.return_value = [
+                {
+                    "id": known_id,
+                    "name": "known",
+                    "location": "japaneast",
+                    "tags": {"shadowfleet": "true"},
+                    "properties": {"timeCreated": old_timestamp},
+                },
+                {
+                    "id": orphan_id.replace("orphan", "foreign"),
+                    "name": "foreign",
+                    "location": "japaneast",
+                    "tags": {"owner": "other"},
+                    "properties": {"timeCreated": old_timestamp},
+                },
+                {
+                    "id": orphan_id,
+                    "name": "orphan",
+                    "location": "japaneast",
+                    "tags": {"shadowfleet": "true"},
+                    "properties": {"timeCreated": old_timestamp},
+                },
+            ]
+            client_cls.return_value.get_vm_power_state.return_value = "running"
+
+            result = detector._scan_orphan_azure_vms()
+
+        assert result == [
+            OrphanAzureVm(
+                vm_id=orphan_id,
+                asset_id=10,
+                location="japaneast",
+                name="orphan",
+                created_at=old_timestamp,
+                state="running",
+                tags={"shadowfleet": "true"},
+            )
+        ]
+        client_cls.return_value.list_virtual_machines.assert_called_once_with("rg")
+        assert client_cls.call_count == 1
+
+    def test_scan_azure_network_orphans_requires_missing_parent_and_age_tag(
+        self, detector: OrphanResourceDetector
+    ) -> None:
+        old_timestamp = "2000-01-01T00:00:00Z"
+        asset = MagicMock(
+            id=10,
+            asset_type="azure",
+            aws_access_key="client",
+            aws_secret_key="secret",
+            region="japaneast",
+            provider_config={
+                "tenant_id": "tenant",
+                "subscription_id": "sub",
+                "resource_group": "rg",
+            },
+        )
+        duplicate_scope_asset = MagicMock(
+            id=12,
+            asset_type="azure",
+            aws_access_key="other-client",
+            aws_secret_key="other-secret",
+            region="eastus",
+            provider_config={
+                "tenant_id": "tenant",
+                "subscription_id": "SUB",
+                "resource_group": "RG",
+            },
+        )
+        managed_tags = {
+            "shadowfleet": "true",
+            "shadowfleet_created_at": old_timestamp,
+        }
+        with (
+            patch.object(detector, "_asset_repo") as asset_repo,
+            patch("services.orphan_resource_detector.AzureClient") as client_cls,
+        ):
+            asset_repo.list_assets_by_status.return_value = [
+                asset,
+                duplicate_scope_asset,
+            ]
+            client = client_cls.return_value
+            client.list_virtual_machines.return_value = [{"name": "live"}]
+            client.list_network_interfaces.return_value = [
+                {
+                    "id": "nic-live",
+                    "name": "live-nic",
+                    "location": "japaneast",
+                    "tags": managed_tags,
+                },
+                {
+                    "id": "nic-orphan",
+                    "name": "orphan-nic",
+                    "location": "japaneast",
+                    "tags": managed_tags,
+                },
+                {
+                    "id": "nic-legacy",
+                    "name": "legacy-nic",
+                    "location": "japaneast",
+                    "tags": {"shadowfleet": "true"},
+                },
+            ]
+            client.list_public_ip_addresses.return_value = [
+                {
+                    "id": "pip-orphan",
+                    "name": "orphan-ipv4",
+                    "location": "japaneast",
+                    "tags": managed_tags,
+                }
+            ]
+            client.list_network_security_groups.return_value = [
+                {
+                    "id": "nsg-orphan",
+                    "name": "orphan-nsg",
+                    "location": "japaneast",
+                    "tags": managed_tags,
+                },
+                {
+                    "id": "nsg-foreign",
+                    "name": "foreign-nsg",
+                    "location": "japaneast",
+                    "tags": {"owner": "other"},
+                },
+            ]
+
+            result = detector._scan_orphan_azure_network_resources()
+
+        assert result == [
+            OrphanAzureNetworkResource(
+                resource_id="nic-orphan",
+                asset_id=10,
+                resource_type="azure_network_interface",
+                location="japaneast",
+                name="orphan-nic",
+                parent_vm_name="orphan",
+                created_at=old_timestamp,
+                tags=managed_tags,
+            ),
+            OrphanAzureNetworkResource(
+                resource_id="pip-orphan",
+                asset_id=10,
+                resource_type="azure_public_ip_address",
+                location="japaneast",
+                name="orphan-ipv4",
+                parent_vm_name="orphan",
+                created_at=old_timestamp,
+                tags=managed_tags,
+            ),
+            OrphanAzureNetworkResource(
+                resource_id="nsg-orphan",
+                asset_id=10,
+                resource_type="azure_network_security_group",
+                location="japaneast",
+                name="orphan-nsg",
+                parent_vm_name="orphan",
+                created_at=old_timestamp,
+                tags=managed_tags,
+            ),
+        ]
+        assert client_cls.call_count == 1
 
     def test_scan_all_orphan_resources_empty(
         self, detector: OrphanResourceDetector

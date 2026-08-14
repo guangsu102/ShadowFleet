@@ -28,7 +28,7 @@ class OrphanNodeCleanupServiceError(RuntimeError):
 class OrphanNodeCleanupService:
     """
     Handles cleanup of orphan nodes when their underlying infrastructure no longer exists.
-    When an EC2 instance is manually terminated, this service:
+    When a provider resource is removed outside ShadowFleet, this service:
     1. Deletes the node from Xboard (avoid dirty data)
     2. Marks the local record as deleted
     3. Triggers fleet scheduler to replenish the capacity gap
@@ -55,11 +55,11 @@ class OrphanNodeCleanupService:
         reason: str,
     ) -> OrphanNodeCleanupResult:
         """
-        Clean up an orphan node whose underlying EC2 instance no longer exists.
+        Clean up a node whose underlying provider resource no longer exists.
 
         Args:
             node_record: The local fleet node record to clean up
-            reason: Reason for cleanup (e.g., "ec2_instance_not_found")
+            reason: Provider-neutral reason describing the missing resource
 
         Returns:
             OrphanNodeCleanupResult with cleanup status and replenishment info
@@ -92,7 +92,29 @@ class OrphanNodeCleanupService:
         )
 
         # Step 1: Delete from Xboard and mark local record as deleted
-        deleted = self._delete_node_from_xboard(node_record)
+        deleted = self._delete_node_from_xboard(node_record, reason)
+        if not deleted:
+            self._state_repo.create_event(
+                FleetNodeEventCreateRequest(
+                    node_id=node_record.id,
+                    xboard_node_id=node_record.xboard_node_id,
+                    event_type="orphan_cleanup_failed",
+                    correlation_id=self._runtime_context.correlation_id,
+                    from_status=node_record.status,
+                    to_status=node_record.status,
+                    message="Orphan node cleanup stopped because node deletion failed.",
+                    payload={"reason": reason},
+                )
+            )
+            set_event_type("orphan_node_cleanup_failed")
+            return OrphanNodeCleanupResult(
+                xboard_node_id=node_record.xboard_node_id,
+                node_name=node_record.node_name,
+                node_type=node_record.node_type,
+                deleted=False,
+                replenishment_triggered=False,
+                replenishment_task_ids=[],
+            )
 
         # Step 2: Release asset allocation
         self._release_asset_allocation(node_record.xboard_node_id)
@@ -137,12 +159,16 @@ class OrphanNodeCleanupService:
             replenishment_task_ids=replenishment_task_ids,
         )
 
-    def _delete_node_from_xboard(self, node_record: FleetNodeRecord) -> bool:
+    def _delete_node_from_xboard(
+        self,
+        node_record: FleetNodeRecord,
+        reason: str,
+    ) -> bool:
         """Delete node from Xboard and mark local record as deleted."""
         try:
             self._node_registry.delete_node(
                 xboard_node_id=node_record.xboard_node_id,
-                status_reason="EC2实例已不存在，节点已从Xboard销毁",
+                status_reason=f"底层云资源已不存在：{reason}",
             )
             return True
         except NodeRegistryServiceError as exc:
@@ -151,21 +177,7 @@ class OrphanNodeCleanupService:
                 node_record.xboard_node_id,
                 exc,
             )
-            # Even if Xboard deletion fails, mark local record as deleted
-            self._mark_local_deleted(node_record, "xboard_deletion_failed")
             return False
-
-    def _mark_local_deleted(self, node_record: FleetNodeRecord, reason: str) -> None:
-        """Mark local record as deleted without touching Xboard."""
-        self._state_repo.mark_node_deleted(
-            xboard_node_id=node_record.xboard_node_id,
-            reason=f"orphan_cleanup: {reason}",
-        )
-        self._logger.info(
-            "Marked local node as deleted xboard_node_id=%s reason=%s",
-            node_record.xboard_node_id,
-            reason,
-        )
 
     def _release_asset_allocation(self, xboard_node_id: int) -> None:
         """Release asset allocation for the node."""

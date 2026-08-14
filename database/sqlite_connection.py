@@ -20,7 +20,7 @@ FLEET_NODE_STATUSES = (
     "deleted",
     "failed",
 )
-FLEET_ASSET_TYPES = ("aws", "digitalocean", "self_hosted")
+FLEET_ASSET_TYPES = ("aws", "azure", "digitalocean", "vultr", "self_hosted")
 FLEET_ASSET_STATUSES = ("active", "full", "banned", "offline", "deploying")
 FLEET_PROTOCOL_TYPES = ("AnyTLS", "Trojan", "vless", "vmess", "Hysteria2")
 FLEET_ALLOCATION_STATUSES = ("allocated", "released", "failed")
@@ -228,10 +228,13 @@ class SqliteConnectionManager:
                     except sqlite3.OperationalError:
                         pass
             connection.execute("INSERT INTO schema_migrations (name) VALUES (?)", (name,))
-        self._ensure_fleet_assets_supports_digitalocean(connection)
+        # PRAGMA foreign_keys cannot change while a transaction is active.
+        # Finish incremental migrations before rebuilding the referenced asset table.
+        connection.commit()
+        self._ensure_fleet_assets_supports_cloud_providers(connection)
         connection.commit()
 
-    def _ensure_fleet_assets_supports_digitalocean(self, connection: sqlite3.Connection) -> None:
+    def _ensure_fleet_assets_supports_cloud_providers(self, connection: sqlite3.Connection) -> None:
         row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='fleet_assets'"
         ).fetchone()
@@ -245,7 +248,7 @@ class SqliteConnectionManager:
         if "provider_config_json" not in columns:
             connection.execute("ALTER TABLE fleet_assets ADD COLUMN provider_config_json TEXT")
             columns.add("provider_config_json")
-        if "'digitalocean'" in ddl:
+        if "'digitalocean'" in ddl and "'vultr'" in ddl and "'azure'" in ddl:
             return
 
         connection.execute("PRAGMA foreign_keys=OFF")
@@ -253,7 +256,7 @@ class SqliteConnectionManager:
             """
             CREATE TABLE fleet_assets_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'digitalocean', 'self_hosted')),
+                asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'azure', 'digitalocean', 'vultr', 'self_hosted')),
                 asset_name TEXT NOT NULL,
                 status TEXT NOT NULL CHECK (status IN ('active', 'full', 'banned', 'offline', 'deploying')),
                 region TEXT,
@@ -346,6 +349,12 @@ class SqliteConnectionManager:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_fleet_assets_ssh_host ON fleet_assets (ssh_host)"
         )
+        connection.commit()
+        foreign_key_violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if foreign_key_violations:
+            raise sqlite3.IntegrityError(
+                "fleet_assets migration introduced foreign key violations"
+            )
         connection.execute("PRAGMA foreign_keys=ON")
 
     def _resolve_database_path(self) -> Path:

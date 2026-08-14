@@ -213,6 +213,24 @@ class AssetRepo:
             raise AssetNotFoundError(f"Asset not found: asset_id={asset_id}")
         return map_asset_record(row)
 
+    def get_asset_by_xboard_node_id(self, xboard_node_id: int) -> AssetRecord | None:
+        """Return the most recent asset allocated to a node."""
+        with self._sqlite_manager.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT a.*
+                FROM fleet_asset_allocations AS alloc
+                JOIN fleet_assets AS a ON a.id = alloc.asset_id
+                WHERE alloc.xboard_node_id = ?
+                ORDER BY
+                    CASE WHEN alloc.allocation_status = 'allocated' THEN 0 ELSE 1 END,
+                    alloc.id DESC
+                LIMIT 1
+                """,
+                (xboard_node_id,),
+            ).fetchone()
+        return map_asset_record(row) if row is not None else None
+
     def list_assets_by_aws_account_id(self, aws_account_id: str) -> list[AssetRecord]:
         if not aws_account_id or not aws_account_id.strip():
             raise ValueError("aws_account_id must not be empty")
@@ -376,6 +394,76 @@ class AssetRepo:
         set_event_type("sqlite_asset_allocation_created")
         self._logger.info("Created asset allocation id=%s asset_id=%s protocol=%s vcpu=%s", allocation_id, request.asset_id, request.protocol_type, request.vcpu_count)
         return allocation_id
+
+    def release_allocation_by_id(
+        self,
+        allocation_id: int,
+        allocation_status: AllocationStatus = "released",
+    ) -> bool:
+        if allocation_id <= 0:
+            raise ValueError("allocation_id must be greater than 0")
+        timestamp = utcnow_iso()
+        port_released_count = 0
+        with self._sqlite_manager.connection() as connection:
+            allocation = connection.execute(
+                """
+                SELECT asset_id, fleet_node_id, xboard_node_id
+                FROM fleet_asset_allocations
+                WHERE id = ? AND allocation_status = 'allocated'
+                """,
+                (allocation_id,),
+            ).fetchone()
+            if allocation is None:
+                return False
+            cursor = connection.execute(
+                """
+                UPDATE fleet_asset_allocations
+                SET allocation_status = ?, updated_at = ?
+                WHERE id = ? AND allocation_status = 'allocated'
+                """,
+                (allocation_status, timestamp, allocation_id),
+            )
+            released = cursor.rowcount > 0
+            if released and allocation["xboard_node_id"] is not None:
+                port_cursor = connection.execute(
+                    """
+                    UPDATE fleet_asset_port_allocations
+                    SET allocation_status = ?, updated_at = ?
+                    WHERE asset_id = ? AND xboard_node_id = ?
+                      AND allocation_status = 'allocated'
+                    """,
+                    (
+                        allocation_status,
+                        timestamp,
+                        allocation["asset_id"],
+                        allocation["xboard_node_id"],
+                    ),
+                )
+                port_released_count = port_cursor.rowcount
+            elif released and allocation["fleet_node_id"] is not None:
+                port_cursor = connection.execute(
+                    """
+                    UPDATE fleet_asset_port_allocations
+                    SET allocation_status = ?, updated_at = ?
+                    WHERE asset_id = ? AND fleet_node_id = ?
+                      AND allocation_status = 'allocated'
+                    """,
+                    (
+                        allocation_status,
+                        timestamp,
+                        allocation["asset_id"],
+                        allocation["fleet_node_id"],
+                    ),
+                )
+                port_released_count = port_cursor.rowcount
+        if released:
+            set_event_type("sqlite_asset_allocation_released")
+            self._logger.info(
+                "Released asset allocation by id=%s (ports=%s)",
+                allocation_id,
+                port_released_count,
+            )
+        return released
 
     def release_allocation_by_xboard_node_id(
         self,
@@ -754,4 +842,3 @@ class AssetRepo:
                 port_restored,
             )
         return restored_count
-

@@ -80,6 +80,9 @@ class SystemHealthMonitor:
                 alerts.append(
                     f"发现 {orphan_report.total_count} 个孤儿资源: "
                     f"EC2={len(orphan_report.ec2_instances)}, "
+                    f"Vultr={len(orphan_report.vultr_instances)}, "
+                    f"Azure={len(orphan_report.azure_vms)}, "
+                    f"AzureNetwork={len(orphan_report.azure_network_resources)}, "
                     f"DNS={len(orphan_report.dns_records)}, "
                     f"资产分配={len(orphan_report.asset_allocations)}, "
                     f"Xboard节点={len(orphan_report.xboard_nodes)}"
@@ -176,6 +179,12 @@ class SystemHealthMonitor:
                 f"",
                 f"**孤儿资源**:",
                 f"- EC2 实例: {len(report.orphan_resource_report.ec2_instances)}",
+                f"- Vultr 实例: {len(report.orphan_resource_report.vultr_instances)}",
+                f"- Azure VM: {len(report.orphan_resource_report.azure_vms)}",
+                (
+                    "- Azure network resources: "
+                    f"{len(report.orphan_resource_report.azure_network_resources)}"
+                ),
                 f"- DNS 记录: {len(report.orphan_resource_report.dns_records)}",
                 f"- 资产分配: {len(report.orphan_resource_report.asset_allocations)}",
                 f"- Xboard 节点: {len(report.orphan_resource_report.xboard_nodes)}",

@@ -5,7 +5,9 @@ from database.xboard_repo import XboardRepo
 from database.asset_repo import AssetRepo
 from services.account_abandonment_service import AccountAbandonmentService
 from services.healing_aws_flow import heal_aws_node
+from services.healing_azure_flow import heal_azure_node
 from services.healing_failure_handler import handle_healing_failure
+from services.healing_vultr_flow import heal_vultr_node
 from services.healing_models import AwsAccountBannedError, HealRequest, HealResult, HealerServiceError, InstanceNotFoundError
 from services.healing_self_hosted_flow import heal_self_hosted_node
 from services.healing_support import (
@@ -15,7 +17,9 @@ from services.healing_support import (
     classify_aws_client_error,
     determine_heal_strategy,
     ensure_aws_healing_eligible,
+    ensure_azure_healing_eligible,
     ensure_self_hosted_healing_eligible,
+    ensure_vultr_healing_eligible,
     get_duration_ms,
 )
 from services.monitor_support import infer_node_asset_type, is_in_heal_cooldown, utcnow
@@ -117,7 +121,11 @@ class HealerService:
                 correlation_id=self._runtime_context.correlation_id,
             )
 
-        lock_request = build_heal_lock(node_record, self._runtime_context.correlation_id)
+        lock_request = build_heal_lock(
+            node_record,
+            self._runtime_context.correlation_id,
+            strategy,
+        )
         if not self._state_repo.acquire_operation_lock(lock_request):
             message = "节点当前已有自愈任务执行中，已跳过本次请求"
             self._state_repo.create_event(
@@ -195,6 +203,28 @@ class HealerService:
                     request=request,
                     started_monotonic=context.started_monotonic,
                 )
+            if strategy == "azure_ipv6_rotate":
+                ensure_azure_healing_eligible(node_record)
+                return heal_azure_node(
+                    runtime_context=self._runtime_context,
+                    asset_repo=self._asset_repo,
+                    state_repo=self._state_repo,
+                    xboard_repo=self._xboard_repo,
+                    node_record=node_record,
+                    request=request,
+                    started_monotonic=context.started_monotonic,
+                )
+            if strategy == "vultr_instance_replace":
+                ensure_vultr_healing_eligible(node_record)
+                return heal_vultr_node(
+                    runtime_context=self._runtime_context,
+                    asset_repo=self._asset_repo,
+                    state_repo=self._state_repo,
+                    xboard_repo=self._xboard_repo,
+                    node_record=node_record,
+                    request=request,
+                    started_monotonic=context.started_monotonic,
+                )
             ensure_self_hosted_healing_eligible(node_record)
             return heal_self_hosted_node(
                 runtime_context=self._runtime_context,
@@ -255,4 +285,3 @@ class HealerService:
             raise
         finally:
             self._state_repo.release_operation_lock(build_heal_lock_key(node_record.xboard_node_id))
-

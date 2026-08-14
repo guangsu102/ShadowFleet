@@ -108,6 +108,17 @@ def _handle_instance_not_found(
             node_record=node_record,
             reason=f"EC2 instance not found: {error.instance_id}",
         )
+        if not result.deleted:
+            error_message = (
+                "Orphan cleanup failed: node deletion did not complete; "
+                "local state and allocation were preserved"
+            )
+            state_repo.update_node_error_state(
+                xboard_node_id=xboard_node_id,
+                status_reason=f"ec2_instance_not_found: {error.instance_id}",
+                last_error=error_message,
+            )
+            return error_message
         if result.replenishment_triggered:
             return (
                 f"EC2实例已不存在，节点已清理。补充任务已触发 "
@@ -118,10 +129,8 @@ def _handle_instance_not_found(
     except Exception as cleanup_error:
         error_message = f"Orphan cleanup failed: {cleanup_error}"
         runtime_context.logger.exception(error_message)
-        # Mark node as deleted locally even if Xboard cleanup fails
-        state_repo.update_node_status(
+        state_repo.update_node_error_state(
             xboard_node_id=xboard_node_id,
-            status="deleted",
             status_reason=f"ec2_instance_not_found: {error.instance_id}",
             last_error=error_message,
         )

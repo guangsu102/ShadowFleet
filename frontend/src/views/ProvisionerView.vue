@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   NGrid,
   NGi,
@@ -171,10 +171,50 @@ const showFlowField = computed(() => protocolType.value === 'vless')
 // ── Options ──────────────────────────────────────────────────────────────────
 const protocolOptions: SelectOption[] = PROTOCOLS.map(p => ({ label: p, value: p }))
 const regionOptions: SelectOption[] = REGIONS.map(r => ({ label: `${REGION_MAP[r]} (${r})`, value: r }))
+const vultrRegionOptions: SelectOption[] = [
+  { label: '新加坡 (sgp)', value: 'sgp' },
+  { label: '东京 (nrt)', value: 'nrt' },
+  { label: '首尔 (icn)', value: 'icn' },
+  { label: '洛杉矶 (lax)', value: 'lax' },
+  { label: '硅谷 (sjc)', value: 'sjc' },
+  { label: '西雅图 (sea)', value: 'sea' },
+  { label: '芝加哥 (ord)', value: 'ord' },
+  { label: '纽约 (ewr)', value: 'ewr' },
+  { label: '伦敦 (lhr)', value: 'lhr' },
+  { label: '法兰克福 (fra)', value: 'fra' },
+]
+const azureRegionOptions: SelectOption[] = [
+  { label: '日本东部 (japaneast)', value: 'japaneast' },
+  { label: '东南亚 (southeastasia)', value: 'southeastasia' },
+  { label: '东亚 (eastasia)', value: 'eastasia' },
+  { label: '美国西部 2 (westus2)', value: 'westus2' },
+  { label: '美国东部 (eastus)', value: 'eastus' },
+  { label: '英国南部 (uksouth)', value: 'uksouth' },
+  { label: '西欧 (westeurope)', value: 'westeurope' },
+  { label: '德国中西部 (germanywestcentral)', value: 'germanywestcentral' },
+  { label: '澳大利亚东部 (australiaeast)', value: 'australiaeast' },
+]
+const selectedRegionOptions = computed(() => {
+  if (assetType.value === 'vultr') return vultrRegionOptions
+  if (assetType.value === 'azure') return azureRegionOptions
+  return regionOptions
+})
 const assetTypeOptions: SelectOption[] = [
   { label: 'AWS', value: 'aws' },
+  { label: 'Vultr', value: 'vultr' },
+  { label: 'Microsoft Azure', value: 'azure' },
   { label: '自建服务器', value: 'self_hosted' },
 ]
+watch(assetType, (nextAssetType, previousAssetType) => {
+  const defaultRegions: Record<string, string> = {
+    aws: 'ap-northeast-1',
+    vultr: 'sgp',
+    azure: 'japaneast',
+  }
+  if (nextAssetType !== previousAssetType && defaultRegions[nextAssetType]) {
+    region.value = defaultRegions[nextAssetType]
+  }
+})
 const groupOptions = computed<SelectOption[]>(() =>
   groups.value.map(g => ({ label: g.name, value: g.id }))
 )
@@ -387,7 +427,7 @@ async function handleSubmit() {
     server_port: serverPort.value,
     rate: rate.value ?? 1.0,
     asset_type: assetType.value,
-    region: assetType.value === 'aws' ? region.value : undefined,
+    region: ['aws', 'vultr', 'azure'].includes(assetType.value) ? region.value : undefined,
     require_cdn_proxy: requireCdnProxy.value,
     show: showNode.value,
     parent_id: undefined,
@@ -707,12 +747,12 @@ export default { name: 'ProvisionerView' }
                 <NInput v-model:value="nodeName" placeholder="sf-xxx" clearable />
               </NFormItem>
             </NGi>
-            <NGi v-if="assetType === 'aws'">
+            <NGi v-if="['aws', 'vultr', 'azure'].includes(assetType)">
               <NFormItem label="目标区域">
-                <NSelect v-model:value="region" :options="regionOptions" />
+                <NSelect v-model:value="region" :options="selectedRegionOptions" />
               </NFormItem>
             </NGi>
-            <NGi v-if="assetType === 'aws'">
+            <NGi v-if="['aws', 'vultr', 'azure'].includes(assetType)">
               <NFormItem label="服务监听端口">
                 <NInputNumber v-model:value="serverPort" :min="1" :max="65535" style="width: 100%" />
               </NFormItem>

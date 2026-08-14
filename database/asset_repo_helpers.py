@@ -6,10 +6,12 @@ import sqlite3
 
 from database.asset_models import (
     AWS_SUPPORTED_PROTOCOLS,
+    AZURE_SUPPORTED_PROTOCOLS,
     CDN_PROXY_SUPPORTED_PROTOCOLS,
     DIGITALOCEAN_SUPPORTED_PROTOCOLS,
     DNS_REQUIRED_PROTOCOLS,
     SELF_HOSTED_SUPPORTED_PROTOCOLS,
+    VULTR_SUPPORTED_PROTOCOLS,
     AssetCreateRequest,
     AssetProtocolConfigRecord,
     AssetProtocolConfigRequest,
@@ -35,6 +37,20 @@ def validate_asset_request(request: AssetCreateRequest) -> None:
             raise ValueError("region is required for digitalocean assets")
         if not request.aws_access_key or not request.aws_access_key.strip():
             raise ValueError("digitalocean_token is required for digitalocean assets")
+    if request.asset_type == "vultr":
+        if not request.region or not request.region.strip():
+            raise ValueError("region is required for vultr assets")
+        if not request.aws_access_key or not request.aws_access_key.strip():
+            raise ValueError("vultr_token is required for vultr assets")
+    if request.asset_type == "azure":
+        if not request.region or not request.region.strip():
+            raise ValueError("region is required for azure assets")
+        if not request.aws_account_id or not request.aws_account_id.strip():
+            raise ValueError("subscription_id is required for azure assets")
+        if not request.aws_access_key or not request.aws_access_key.strip():
+            raise ValueError("client_id is required for azure assets")
+        if not request.aws_secret_key or not request.aws_secret_key.strip():
+            raise ValueError("client_secret is required for azure assets")
     if request.asset_type == "self_hosted":
         if not request.ssh_host or not request.ssh_host.strip():
             raise ValueError("ssh_host is required for self_hosted assets")
@@ -70,6 +86,10 @@ def validate_protocol_config_request(
         supported_protocols = AWS_SUPPORTED_PROTOCOLS
     elif asset.asset_type == "digitalocean":
         supported_protocols = DIGITALOCEAN_SUPPORTED_PROTOCOLS
+    elif asset.asset_type == "vultr":
+        supported_protocols = VULTR_SUPPORTED_PROTOCOLS
+    elif asset.asset_type == "azure":
+        supported_protocols = AZURE_SUPPORTED_PROTOCOLS
     else:
         supported_protocols = SELF_HOSTED_SUPPORTED_PROTOCOLS
     if request.protocol_type not in supported_protocols:

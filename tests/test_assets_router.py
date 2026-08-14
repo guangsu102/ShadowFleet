@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 from api.router import assets as assets_router
 from services.asset_application_models import (
     AssetRegistrationResult,
+    AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    VultrAssetRegistrationRequest,
 )
 
 
@@ -136,4 +138,122 @@ def test_digitalocean_catalog_routes(assets_client: TestClient) -> None:
     service.query_digitalocean_sizes.assert_called_once_with(
         digitalocean_token="dop_v1_test",
         limit=10,
+    )
+
+
+def test_register_vultr_asset_route_maps_request(assets_client: TestClient) -> None:
+    with patch("api.router.assets.AssetApplicationService") as service_cls:
+        service = service_cls.return_value
+        service.register_vultr_asset.return_value = AssetRegistrationResult(
+            asset_id=13,
+            asset_name="vultr-sgp",
+            protocol_config_id=35,
+        )
+
+        response = assets_client.post(
+            "/api/v1/assets/vultr",
+            json={
+                "asset_name": "vultr-sgp",
+                "region": "sgp",
+                "vultr_token": "vultr-test-token",
+                "default_plan": "vc2-1c-1gb",
+                "default_os_id": 2284,
+                "ssh_key_ids": ["ssh-key-1"],
+                "vpc_ids": ["vpc-id"],
+                "firewall_group_id": "firewall-id",
+                "tags": ["prod"],
+                "protocol_type": "Trojan",
+                "additional_protocol_types": ["AnyTLS"],
+                "target_count": 1,
+                "max_count": 2,
+                "priority": 80,
+                "allow_cdn_proxy": True,
+                "default_vcpu": 1,
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["asset_type"] == "vultr"
+    assert response.json()["aws_access_key"] is None
+    request = service.register_vultr_asset.call_args.args[0]
+    assert isinstance(request, VultrAssetRegistrationRequest)
+    assert request.vultr_token == "vultr-test-token"
+    assert request.ssh_key_ids == ("ssh-key-1",)
+    assert request.vpc_ids == ("vpc-id",)
+    assert request.firewall_group_id == "firewall-id"
+
+
+def test_register_azure_asset_route_maps_request(assets_client: TestClient) -> None:
+    with patch("api.router.assets.AssetApplicationService") as service_cls:
+        service = service_cls.return_value
+        service.register_azure_asset.return_value = AssetRegistrationResult(
+            asset_id=14,
+            asset_name="azure-japan",
+            protocol_config_id=36,
+        )
+
+        response = assets_client.post(
+            "/api/v1/assets/azure",
+            json={
+                "asset_name": "azure-japan",
+                "region": "japaneast",
+                "tenant_id": "tenant-id",
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+                "subscription_id": "SUB-ID",
+                "resource_group": "shadowfleet",
+                "ssh_public_key": "ssh-ed25519 AAAA test",
+                "default_vm_size": "Standard_B1s",
+                "tags": ["prod"],
+                "protocol_type": "Trojan",
+                "additional_protocol_types": ["AnyTLS"],
+                "target_count": 1,
+                "max_count": 2,
+                "priority": 80,
+                "allow_cdn_proxy": True,
+                "default_vcpu": 1,
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["asset_type"] == "azure"
+    assert response.json()["aws_account_id"] == "azure:sub-id"
+    assert response.json()["aws_access_key"] is None
+    request = service.register_azure_asset.call_args.args[0]
+    assert isinstance(request, AzureAssetRegistrationRequest)
+    assert request.tenant_id == "tenant-id"
+    assert request.subscription_id == "SUB-ID"
+    assert request.resource_group == "shadowfleet"
+    assert request.additional_protocol_types == ("AnyTLS",)
+
+
+def test_azure_catalog_route_maps_credentials_and_location(
+    assets_client: TestClient,
+) -> None:
+    with patch("api.router.assets.AssetApplicationService") as service_cls:
+        service = service_cls.return_value
+        service.query_azure_catalog.return_value = {
+            "locations": [{"name": "japaneast"}],
+            "vm_sizes": [{"name": "Standard_B1s"}],
+        }
+
+        response = assets_client.post(
+            "/api/v1/assets/azure/query-catalog",
+            json={
+                "tenant_id": "tenant-id",
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+                "subscription_id": "subscription-id",
+                "location": "japaneast",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["vm_sizes"][0]["name"] == "Standard_B1s"
+    service.query_azure_catalog.assert_called_once_with(
+        tenant_id="tenant-id",
+        client_id="client-id",
+        client_secret="client-secret",
+        subscription_id="subscription-id",
+        location="japaneast",
     )

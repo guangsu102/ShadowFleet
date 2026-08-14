@@ -190,6 +190,36 @@ class TestMonitorSupportPureFunctions:
 
         assert candidate.asset_type == "digitalocean"
 
+    def test_to_monitor_candidate_recovers_vultr_from_legacy_aws_fallback(self) -> None:
+        record = make_node_record(
+            xboard_node_id=7789,
+            aws_account_id="vultr:token-fingerprint",
+            asset_type="aws",
+        )
+        xboard_runtime = MagicMock()
+        xboard_runtime.host = "sf-7789.example.com"
+        xboard_runtime.port = "443"
+        xboard_runtime.server_port = 443
+
+        candidate = to_monitor_candidate(record, xboard_runtime)
+
+        assert candidate.asset_type == "vultr"
+
+    def test_to_monitor_candidate_recovers_azure_from_legacy_aws_fallback(self) -> None:
+        record = make_node_record(
+            xboard_node_id=7790,
+            aws_account_id="azure:subscription-id",
+            asset_type="aws",
+        )
+        xboard_runtime = MagicMock()
+        xboard_runtime.host = "sf-7790.example.com"
+        xboard_runtime.port = "443"
+        xboard_runtime.server_port = 443
+
+        candidate = to_monitor_candidate(record, xboard_runtime)
+
+        assert candidate.asset_type == "azure"
+
     def test_utcnow_returns_utc_datetime(self) -> None:
         """utcnow() should return a timezone-aware UTC datetime."""
         now = utcnow()
