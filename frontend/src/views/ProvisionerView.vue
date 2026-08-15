@@ -199,6 +199,17 @@ const vultrRegionOptions: SelectOption[] = [
   { label: '伦敦 (lhr)', value: 'lhr' },
   { label: '法兰克福 (fra)', value: 'fra' },
 ]
+const gcpRegionOptions: SelectOption[] = [
+  { label: '东京 (asia-northeast1-a)', value: 'asia-northeast1-a' },
+  { label: '大阪 (asia-northeast2-a)', value: 'asia-northeast2-a' },
+  { label: '首尔 (asia-northeast3-a)', value: 'asia-northeast3-a' },
+  { label: '新加坡 (asia-southeast1-a)', value: 'asia-southeast1-a' },
+  { label: '台湾 (asia-east1-a)', value: 'asia-east1-a' },
+  { label: '悉尼 (australia-southeast1-a)', value: 'australia-southeast1-a' },
+  { label: '美国西部 (us-west1-a)', value: 'us-west1-a' },
+  { label: '美国中部 (us-central1-a)', value: 'us-central1-a' },
+  { label: '比利时 (europe-west1-b)', value: 'europe-west1-b' },
+]
 const azureRegionOptions: SelectOption[] = [
   { label: '日本东部 (japaneast)', value: 'japaneast' },
   { label: '东南亚 (southeastasia)', value: 'southeastasia' },
@@ -239,6 +250,7 @@ const selectedRegionOptions = computed<SelectOption[]>(() => {
   }
   if (assetType.value === 'digitalocean') return digitalOceanRegionOptions
   if (assetType.value === 'vultr') return vultrRegionOptions
+  if (assetType.value === 'gcp') return gcpRegionOptions
   if (assetType.value === 'azure') return azureRegionOptions
   if (assetType.value === 'oci') return ociRegionOptions
   if (assetType.value === 'kamatera') return kamateraRegionOptions
@@ -248,6 +260,7 @@ const assetTypeOptions: SelectOption[] = [
   { label: 'AWS', value: 'aws' },
   { label: 'DigitalOcean', value: 'digitalocean' },
   { label: 'Vultr', value: 'vultr' },
+  { label: 'Google Cloud', value: 'gcp' },
   { label: 'Microsoft Azure', value: 'azure' },
   { label: 'Oracle Cloud', value: 'oci' },
   { label: 'Kamatera', value: 'kamatera' },
@@ -258,6 +271,7 @@ watch(assetType, (nextAssetType, previousAssetType) => {
     aws: 'ap-northeast-1',
     digitalocean: 'sgp1',
     vultr: 'sgp',
+    gcp: 'asia-northeast1-a',
     azure: 'japaneast',
     oci: 'ap-tokyo-1',
     kamatera: 'AS',
@@ -490,7 +504,7 @@ async function handleSubmit() {
     server_port: serverPort.value,
     rate: rate.value ?? 1.0,
     asset_type: assetType.value,
-    region: ['aws', 'digitalocean', 'vultr', 'kamatera', 'azure', 'oci'].includes(assetType.value) ? region.value : undefined,
+    region: ['aws', 'digitalocean', 'vultr', 'gcp', 'kamatera', 'azure', 'oci'].includes(assetType.value) ? region.value : undefined,
     require_cdn_proxy: requireCdnProxy.value,
     show: showNode.value,
     parent_id: undefined,
@@ -811,12 +825,12 @@ export default { name: 'ProvisionerView' }
                 <NInput v-model:value="nodeName" placeholder="sf-xxx" clearable />
               </NFormItem>
             </NGi>
-            <NGi v-if="['aws', 'digitalocean', 'vultr', 'kamatera', 'azure', 'oci'].includes(assetType)">
+            <NGi v-if="['aws', 'digitalocean', 'vultr', 'gcp', 'kamatera', 'azure', 'oci'].includes(assetType)">
               <NFormItem label="目标区域">
                 <NSelect v-model:value="region" :options="selectedRegionOptions" />
               </NFormItem>
             </NGi>
-            <NGi v-if="['aws', 'digitalocean', 'vultr', 'kamatera', 'azure', 'oci'].includes(assetType)">
+            <NGi v-if="['aws', 'digitalocean', 'vultr', 'gcp', 'kamatera', 'azure', 'oci'].includes(assetType)">
               <NFormItem label="服务监听端口">
                 <NInputNumber v-model:value="serverPort" :min="1" :max="65535" style="width: 100%" />
               </NFormItem>

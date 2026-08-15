@@ -20,7 +20,7 @@ FLEET_NODE_STATUSES = (
     "deleted",
     "failed",
 )
-FLEET_ASSET_TYPES = ("aws", "azure", "digitalocean", "kamatera", "oci", "vultr", "self_hosted")
+FLEET_ASSET_TYPES = ("aws", "azure", "digitalocean", "gcp", "kamatera", "oci", "vultr", "self_hosted")
 FLEET_ASSET_STATUSES = ("active", "full", "banned", "offline", "deploying")
 FLEET_PROTOCOL_TYPES = ("AnyTLS", "Trojan", "vless", "vmess", "Hysteria2")
 FLEET_ALLOCATION_STATUSES = ("allocated", "released", "failed")
@@ -248,7 +248,7 @@ class SqliteConnectionManager:
         if "provider_config_json" not in columns:
             connection.execute("ALTER TABLE fleet_assets ADD COLUMN provider_config_json TEXT")
             columns.add("provider_config_json")
-        if all(provider in ddl for provider in ("'digitalocean'", "'vultr'", "'azure'", "'oci'", "'kamatera'")):
+        if all(provider in ddl for provider in ("'digitalocean'", "'vultr'", "'azure'", "'gcp'", "'oci'", "'kamatera'")):
             return
 
         connection.execute("PRAGMA foreign_keys=OFF")
@@ -256,7 +256,7 @@ class SqliteConnectionManager:
             """
             CREATE TABLE fleet_assets_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'azure', 'digitalocean', 'kamatera', 'oci', 'vultr', 'self_hosted')),
+                asset_type TEXT NOT NULL CHECK (asset_type IN ('aws', 'azure', 'digitalocean', 'gcp', 'kamatera', 'oci', 'vultr', 'self_hosted')),
                 asset_name TEXT NOT NULL,
                 status TEXT NOT NULL CHECK (status IN ('active', 'full', 'banned', 'offline', 'deploying')),
                 region TEXT,

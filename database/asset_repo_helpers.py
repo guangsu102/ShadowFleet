@@ -10,6 +10,7 @@ from database.asset_models import (
     CDN_PROXY_SUPPORTED_PROTOCOLS,
     DIGITALOCEAN_SUPPORTED_PROTOCOLS,
     DNS_REQUIRED_PROTOCOLS,
+    GCP_SUPPORTED_PROTOCOLS,
     KAMATERA_SUPPORTED_PROTOCOLS,
     OCI_SUPPORTED_PROTOCOLS,
     SELF_HOSTED_SUPPORTED_PROTOCOLS,
@@ -39,6 +40,15 @@ def validate_asset_request(request: AssetCreateRequest) -> None:
             raise ValueError("region is required for digitalocean assets")
         if not request.aws_access_key or not request.aws_access_key.strip():
             raise ValueError("digitalocean_token is required for digitalocean assets")
+    if request.asset_type == "gcp":
+        if not request.region or not request.region.strip():
+            raise ValueError("zone is required for gcp assets")
+        if not request.aws_account_id or not request.aws_account_id.strip():
+            raise ValueError("project_id is required for gcp assets")
+        if not request.aws_access_key or not request.aws_access_key.strip():
+            raise ValueError("gcp client_email is required for gcp assets")
+        if not request.aws_secret_key or not request.aws_secret_key.strip():
+            raise ValueError("gcp private_key is required for gcp assets")
     if request.asset_type == "kamatera":
         if not request.region or not request.region.strip():
             raise ValueError("region is required for kamatera assets")
@@ -106,6 +116,8 @@ def validate_protocol_config_request(
         supported_protocols = DIGITALOCEAN_SUPPORTED_PROTOCOLS
     elif asset.asset_type == "vultr":
         supported_protocols = VULTR_SUPPORTED_PROTOCOLS
+    elif asset.asset_type == "gcp":
+        supported_protocols = GCP_SUPPORTED_PROTOCOLS
     elif asset.asset_type == "azure":
         supported_protocols = AZURE_SUPPORTED_PROTOCOLS
     elif asset.asset_type == "kamatera":

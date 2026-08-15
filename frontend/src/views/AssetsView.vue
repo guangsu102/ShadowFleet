@@ -44,14 +44,16 @@ import type {
   KamateraCatalogResponse,
   AzureAssetCreateRequest,
   AzureCatalogResponse,
+  GCPAssetCreateRequest,
+  GCPCatalogResponse,
   OCIAssetCreateRequest,
   OCICatalogResponse,
   AmiQueryResponse,
   AmiInfo,
 } from '@/types/api'
 
-type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'vultr' | 'kamatera' | 'azure' | 'oci' | 'self_hosted'
-type AssetModalTab = 'aws' | 'digitalocean' | 'vultr' | 'kamatera' | 'azure' | 'oci' | 'self'
+type AssetFilter = 'all' | 'aws' | 'digitalocean' | 'vultr' | 'gcp' | 'kamatera' | 'azure' | 'oci' | 'self_hosted'
+type AssetModalTab = 'aws' | 'digitalocean' | 'vultr' | 'gcp' | 'kamatera' | 'azure' | 'oci' | 'self'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function statusTagType(status: string): 'success' | 'warning' | 'error' | 'info' | 'default' {
@@ -86,6 +88,7 @@ function assetTypeLabel(assetType: string): string {
   if (assetType === 'aws') return 'AWS'
   if (assetType === 'digitalocean') return 'DO'
   if (assetType === 'vultr') return 'Vultr'
+  if (assetType === 'gcp') return 'GCP'
   if (assetType === 'kamatera') return 'Kamatera'
   if (assetType === 'azure') return 'Azure'
   if (assetType === 'oci') return 'OCI'
@@ -97,6 +100,7 @@ function assetTypeTagType(assetType: string): 'success' | 'warning' | 'error' | 
   if (assetType === 'aws') return 'info'
   if (assetType === 'digitalocean') return 'success'
   if (assetType === 'vultr') return 'error'
+  if (assetType === 'gcp') return 'success'
   if (assetType === 'kamatera') return 'default'
   if (assetType === 'azure') return 'info'
   if (assetType === 'oci') return 'warning'
@@ -108,6 +112,7 @@ function modalTitle(tab: AssetModalTab): string {
   if (tab === 'aws') return '新增 AWS 资产'
   if (tab === 'digitalocean') return '新增 DigitalOcean 资产'
   if (tab === 'vultr') return '新增 Vultr 资产'
+  if (tab === 'gcp') return '新增 Google Cloud 资产'
   if (tab === 'kamatera') return '新增 Kamatera 资产'
   if (tab === 'azure') return '新增 Microsoft Azure 资产'
   if (tab === 'oci') return '新增 Oracle Cloud 资产'
@@ -206,6 +211,7 @@ async function batchDeleteAssets() {
 const awsAssets  = computed(() => assets.value.filter(a => a.asset_type === 'aws'))
 const digitalOceanAssets = computed(() => assets.value.filter(a => a.asset_type === 'digitalocean'))
 const vultrAssets = computed(() => assets.value.filter(a => a.asset_type === 'vultr'))
+const gcpAssets = computed(() => assets.value.filter(a => a.asset_type === 'gcp'))
 const kamateraAssets = computed(() => assets.value.filter(a => a.asset_type === 'kamatera'))
 const azureAssets = computed(() => assets.value.filter(a => a.asset_type === 'azure'))
 const ociAssets = computed(() => assets.value.filter(a => a.asset_type === 'oci'))
@@ -784,7 +790,7 @@ async function submitVultrForm() {
 // ── Kamatera Registration Form ───────────────────────────────────────────────
 const kamateraForm = ref({
   asset_name: '',
-  datacenter: 'AS',
+  datacenter: '',
   client_id: '',
   secret: '',
   image: '',
@@ -825,21 +831,125 @@ const kamateraImages = computed<SelectOption[]>(() =>
       value: item.id as string,
     }))
 )
-const kamateraCpuTypes: SelectOption[] = [
+const defaultKamateraCpuTypes: SelectOption[] = [
   { label: 'A - Availability', value: 'A' },
   { label: 'B - General Purpose', value: 'B' },
   { label: 'T - Burstable', value: 'T' },
   { label: 'D - Dedicated', value: 'D' },
 ]
-const kamateraBillingCycles: SelectOption[] = [
+const defaultKamateraBillingCycles: SelectOption[] = [
   { label: '按小时计费', value: 'hourly' },
   { label: '按月计费', value: 'monthly' },
 ]
+
+type KamateraCapabilityValue = string | number
+
+function normalizeKamateraCapabilityKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function kamateraCapabilityItemValue(item: unknown): KamateraCapabilityValue | null {
+  if (typeof item === 'string' || typeof item === 'number') return item
+  if (!item || typeof item !== 'object') return null
+  const record = item as Record<string, unknown>
+  for (const key of ['id', 'value', 'name', 'code']) {
+    const value = record[key]
+    if (typeof value === 'string' || typeof value === 'number') return value
+  }
+  return null
+}
+
+function kamateraCapabilityValues(raw: unknown): KamateraCapabilityValue[] {
+  let values: unknown = raw
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const record = raw as Record<string, unknown>
+    const normalized = new Map(
+      Object.entries(record).map(([key, value]) => [normalizeKamateraCapabilityKey(key), value])
+    )
+    values = ['values', 'options', 'allowed', 'items']
+      .map(key => normalized.get(key))
+      .find(value => Array.isArray(value))
+  }
+  if (!Array.isArray(values)) return []
+  return values
+    .map(kamateraCapabilityItemValue)
+    .filter((value): value is KamateraCapabilityValue => value !== null)
+}
+
+function readKamateraCapabilityValues(...aliases: string[]): KamateraCapabilityValue[] {
+  const capabilities = kamateraCatalog.value?.capabilities
+  if (!capabilities) return []
+  const normalizedAliases = new Set(aliases.map(normalizeKamateraCapabilityKey))
+  const pending: Array<{ value: Record<string, unknown>; depth: number }> = [
+    { value: capabilities, depth: 0 },
+  ]
+  while (pending.length) {
+    const current = pending.shift()
+    if (!current) break
+    for (const [key, value] of Object.entries(current.value)) {
+      if (normalizedAliases.has(normalizeKamateraCapabilityKey(key))) {
+        return kamateraCapabilityValues(value)
+      }
+    }
+    if (current.depth >= 2) continue
+    for (const value of Object.values(current.value)) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        pending.push({ value: value as Record<string, unknown>, depth: current.depth + 1 })
+      }
+    }
+  }
+  return []
+}
+
+const kamateraCpuCodes = computed(() =>
+  readKamateraCapabilityValues('cpu', 'cpus')
+    .map(value => String(value).trim().toUpperCase())
+    .filter(value => /^\d+[ABTD]$/.test(value))
+)
+const kamateraCpuTypes = computed<SelectOption[]>(() => {
+  const available = new Set(kamateraCpuCodes.value.map(value => value.slice(-1)))
+  if (!available.size) return defaultKamateraCpuTypes
+  return defaultKamateraCpuTypes.filter(option => available.has(String(option.value)))
+})
+const kamateraCpuCoreOptions = computed<SelectOption[]>(() => {
+  const cpuType = kamateraForm.value.cpu_type.toUpperCase()
+  const values = kamateraCpuCodes.value
+    .filter(value => value.endsWith(cpuType))
+    .map(value => Number(value.slice(0, -1)))
+    .filter(value => Number.isInteger(value) && value > 0)
+  return [...new Set(values)].sort((left, right) => left - right)
+    .map(value => ({ label: String(value), value }))
+})
+function numericKamateraCapabilityOptions(...aliases: string[]): SelectOption[] {
+  const values = readKamateraCapabilityValues(...aliases)
+    .map(value => Number(value))
+    .filter(value => Number.isFinite(value) && value > 0)
+  return [...new Set(values)].sort((left, right) => left - right)
+    .map(value => ({ label: String(value), value }))
+}
+const kamateraRamOptions = computed<SelectOption[]>(() =>
+  numericKamateraCapabilityOptions('ram', 'memory', 'ram_mb')
+)
+const kamateraDiskOptions = computed<SelectOption[]>(() =>
+  numericKamateraCapabilityOptions('disk', 'disk_size', 'disk_sizes')
+)
+const kamateraBillingCycles = computed<SelectOption[]>(() => {
+  const values = readKamateraCapabilityValues('billingcycle', 'billing_cycle', 'billing_cycles')
+    .map(value => String(value).trim().toLowerCase())
+    .filter(value => value === 'hourly' || value === 'monthly')
+  if (!values.length) return defaultKamateraBillingCycles
+  const available = new Set<string>(values)
+  return defaultKamateraBillingCycles.filter(option => available.has(String(option.value)))
+})
+const kamateraMonthlyPackageOptions = computed<SelectOption[]>(() =>
+  readKamateraCapabilityValues('monthlypackage', 'monthly_package', 'monthly_packages')
+    .map(value => ({ label: String(value), value: String(value) }))
+)
 const kamateraProtocolOptions = awsProtocolOptions
 
 function resetKamateraForm() {
   kamateraForm.value = {
-    asset_name: '', datacenter: 'AS', client_id: '', secret: '', image: '',
+    asset_name: '', datacenter: '', client_id: '', secret: '', image: '',
     ssh_public_key: '', cpu_type: 'B', cpu_cores: 2, ram_mb: 2048,
     disk_size_gb: 20, billing_cycle: 'hourly', monthly_package: '',
     daily_backup: false, managed: false, tags_raw: 'shadowfleet', remarks: '',
@@ -850,6 +960,53 @@ function resetKamateraForm() {
   kamateraCatalogError.value = null
 }
 
+async function requestKamateraCatalog(datacenter?: string): Promise<KamateraCatalogResponse> {
+  const { data } = await apiClient.post<KamateraCatalogResponse>('/assets/kamatera/query-catalog', {
+    client_id: kamateraForm.value.client_id.trim(),
+    secret: kamateraForm.value.secret.trim(),
+    datacenter: datacenter || undefined,
+  })
+  return data
+}
+
+function normalizeKamateraCapabilitySelections() {
+  const cpuTypes = kamateraCpuTypes.value.map(option => String(option.value))
+  if (cpuTypes.length && !cpuTypes.includes(kamateraForm.value.cpu_type)) {
+    kamateraForm.value.cpu_type = cpuTypes[0]
+  }
+  const cpuCores = kamateraCpuCoreOptions.value.map(option => Number(option.value))
+  if (cpuCores.length && !cpuCores.includes(kamateraForm.value.cpu_cores)) {
+    kamateraForm.value.cpu_cores = cpuCores[0]
+  }
+  const ramValues = kamateraRamOptions.value.map(option => Number(option.value))
+  if (ramValues.length && !ramValues.includes(kamateraForm.value.ram_mb)) {
+    kamateraForm.value.ram_mb = ramValues[0]
+  }
+  const diskValues = kamateraDiskOptions.value.map(option => Number(option.value))
+  if (diskValues.length && !diskValues.includes(kamateraForm.value.disk_size_gb)) {
+    kamateraForm.value.disk_size_gb = diskValues[0]
+  }
+  const billingCycles = kamateraBillingCycles.value.map(option => String(option.value))
+  if (billingCycles.length && !billingCycles.includes(kamateraForm.value.billing_cycle)) {
+    kamateraForm.value.billing_cycle = billingCycles[0]
+  }
+  const monthlyPackages = kamateraMonthlyPackageOptions.value.map(option => String(option.value))
+  if (
+    monthlyPackages.length
+    && kamateraForm.value.monthly_package
+    && !monthlyPackages.includes(kamateraForm.value.monthly_package)
+  ) {
+    kamateraForm.value.monthly_package = ''
+  }
+}
+
+function selectFirstAvailableKamateraImage() {
+  const imageIds = kamateraImages.value.map(option => String(option.value))
+  if (!imageIds.includes(kamateraForm.value.image)) {
+    kamateraForm.value.image = imageIds[0] ?? ''
+  }
+}
+
 async function queryKamateraCatalog() {
   if (!kamateraForm.value.client_id.trim() || !kamateraForm.value.secret.trim()) {
     message.warning('请填写 Kamatera Client ID 和 Secret')
@@ -858,17 +1015,26 @@ async function queryKamateraCatalog() {
   queryingKamateraCatalog.value = true
   kamateraCatalogError.value = null
   try {
-    const { data } = await apiClient.post<KamateraCatalogResponse>('/assets/kamatera/query-catalog', {
-      client_id: kamateraForm.value.client_id.trim(),
-      secret: kamateraForm.value.secret.trim(),
-      datacenter: kamateraForm.value.datacenter || undefined,
-    })
-    kamateraCatalog.value = data
-    if (!kamateraForm.value.datacenter && kamateraDatacenters.value[0]) {
-      kamateraForm.value.datacenter = String(kamateraDatacenters.value[0].value)
-    }
-    if (!kamateraForm.value.image && kamateraImages.value[0]) {
-      kamateraForm.value.image = String(kamateraImages.value[0].value)
+    const accountCatalog = await requestKamateraCatalog()
+    const datacenterIds = accountCatalog.datacenters
+      .map(item => String(item.id ?? '').trim())
+      .filter(Boolean)
+    const selectedDatacenter = datacenterIds.includes(kamateraForm.value.datacenter)
+      ? kamateraForm.value.datacenter
+      : (datacenterIds[0] ?? '')
+    kamateraForm.value.datacenter = selectedDatacenter
+    if (!selectedDatacenter) {
+      kamateraCatalog.value = accountCatalog
+      kamateraForm.value.image = ''
+    } else {
+      const scopedCatalog = await requestKamateraCatalog(selectedDatacenter)
+      kamateraCatalog.value = {
+        datacenters: accountCatalog.datacenters,
+        images: scopedCatalog.images,
+        capabilities: scopedCatalog.capabilities,
+      }
+      selectFirstAvailableKamateraImage()
+      normalizeKamateraCapabilitySelections()
     }
     message.success('Kamatera 凭据验证成功，资源目录已加载')
   } catch (err: unknown) {
@@ -879,6 +1045,43 @@ async function queryKamateraCatalog() {
     queryingKamateraCatalog.value = false
   }
 }
+
+async function handleKamateraDatacenterChange(value: string | null) {
+  kamateraForm.value.datacenter = String(value ?? '')
+  kamateraForm.value.image = ''
+  if (
+    !kamateraForm.value.datacenter
+    || !kamateraForm.value.client_id.trim()
+    || !kamateraForm.value.secret.trim()
+  ) {
+    return
+  }
+  queryingKamateraCatalog.value = true
+  kamateraCatalogError.value = null
+  try {
+    const scopedCatalog = await requestKamateraCatalog(kamateraForm.value.datacenter)
+    kamateraCatalog.value = {
+      datacenters: kamateraCatalog.value?.datacenters ?? scopedCatalog.datacenters,
+      images: scopedCatalog.images,
+      capabilities: scopedCatalog.capabilities,
+    }
+    selectFirstAvailableKamateraImage()
+    normalizeKamateraCapabilitySelections()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { detail?: string } } }
+    kamateraCatalogError.value = e.response?.data?.detail || 'Kamatera Datacenter 资源加载失败'
+    message.error(kamateraCatalogError.value)
+  } finally {
+    queryingKamateraCatalog.value = false
+  }
+}
+
+watch(() => kamateraForm.value.cpu_type, () => {
+  const cpuCores = kamateraCpuCoreOptions.value.map(option => Number(option.value))
+  if (cpuCores.length && !cpuCores.includes(kamateraForm.value.cpu_cores)) {
+    kamateraForm.value.cpu_cores = cpuCores[0]
+  }
+})
 
 async function submitKamateraForm() {
   const required: Array<[string, string]> = [
@@ -1109,6 +1312,271 @@ async function submitAzureForm() {
     submittingAzure.value = false
   }
 }
+// -- Google Cloud Platform Registration Form ---------------------------------
+const gcpForm = ref({
+  asset_name: '',
+  project_id: '',
+  service_account_json: '',
+  zone: '',
+  machine_type: 'e2-small',
+  source_image: 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64',
+  network: 'default',
+  subnetwork: '',
+  ssh_username: 'ubuntu',
+  ssh_public_key: '',
+  labels_raw: '',
+  remarks: '',
+  protocol_types: ['AnyTLS'] as string[],
+  target_count: 1,
+  max_count: 0,
+  priority: 100,
+  allow_cdn_proxy: false,
+  default_vcpu: 2 as number | null,
+})
+
+const gcpCatalog = ref<GCPCatalogResponse | null>(null)
+const queryingGcpCatalog = ref(false)
+const gcpCatalogError = ref<string | null>(null)
+const submittingGcp = ref(false)
+
+const gcpZones = computed<SelectOption[]>(() =>
+  (gcpCatalog.value?.zones ?? [])
+    .filter(item => item.name && item.status !== 'DOWN')
+    .map(item => ({
+      label: String(item.name),
+      value: String(item.name),
+    }))
+)
+const gcpMachineTypes = computed<SelectOption[]>(() =>
+  (gcpCatalog.value?.machine_types ?? [])
+    .filter(item => item.name)
+    .map(item => ({
+      label: String(item.name) + ' · ' + String(item.guestCpus ?? '?') + ' vCPU · ' +
+        String(item.memoryMb ? Math.round(item.memoryMb / 1024 * 10) / 10 : '?') + ' GB',
+      value: String(item.name),
+    }))
+)
+const gcpImages = computed<SelectOption[]>(() =>
+  (gcpCatalog.value?.images ?? [])
+    .filter(item => item.selfLink && item.status !== 'DEPRECATED')
+    .map(item => ({
+      label: String(item.family || item.name) + ' · ' + String(item.architecture || ''),
+      value: String(item.selfLink),
+    }))
+)
+const gcpNetworks = computed<SelectOption[]>(() =>
+  (gcpCatalog.value?.networks ?? [])
+    .filter(item => item.name)
+    .map(item => ({
+      label: String(item.name) + (item.autoCreateSubnetworks ? ' · auto' : ' · custom'),
+      value: String(item.name),
+    }))
+)
+function gcpResourceName(value: unknown): string {
+  return String(value ?? '').replace(/\/$/, '').split('/').pop() ?? ''
+}
+
+const gcpSubnetworks = computed<SelectOption[]>(() => {
+  const selectedNetwork = gcpResourceName(gcpForm.value.network)
+  return (gcpCatalog.value?.subnetworks ?? [])
+    .filter(item =>
+      item.name
+      && (!item.network || gcpResourceName(item.network) === selectedNetwork)
+    )
+    .map(item => ({
+      label: String(item.name) + ' · ' + String(item.ipCidrRange || ''),
+      value: String(item.name),
+    }))
+})
+
+function resetGcpForm() {
+  gcpForm.value = {
+    asset_name: '',
+    project_id: '',
+    service_account_json: '',
+    zone: '',
+    machine_type: 'e2-small',
+    source_image: 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64',
+    network: 'default',
+    subnetwork: '',
+    ssh_username: 'ubuntu',
+    ssh_public_key: '',
+    labels_raw: '',
+    remarks: '',
+    protocol_types: ['AnyTLS'],
+    target_count: 1,
+    max_count: 0,
+    priority: 100,
+    allow_cdn_proxy: false,
+    default_vcpu: 2,
+  }
+  gcpCatalog.value = null
+  gcpCatalogError.value = null
+}
+
+function applyProjectIdFromServiceAccount() {
+  try {
+    const parsed = JSON.parse(gcpForm.value.service_account_json) as { project_id?: string }
+    if (parsed.project_id && !gcpForm.value.project_id.trim()) {
+      gcpForm.value.project_id = parsed.project_id
+    }
+  } catch {
+    // The backend returns the authoritative validation error.
+  }
+}
+
+async function requestGcpCatalog(zone?: string): Promise<GCPCatalogResponse> {
+  const { data } = await apiClient.post<GCPCatalogResponse>('/assets/gcp/query-catalog', {
+    service_account_json: gcpForm.value.service_account_json,
+    project_id: gcpForm.value.project_id.trim() || undefined,
+    zone: zone || undefined,
+    image_project: 'ubuntu-os-cloud',
+  })
+  return data
+}
+
+function applyGcpCatalog(data: GCPCatalogResponse) {
+  gcpCatalog.value = data
+  const machineTypes = data.machine_types
+    .map(item => String(item.name ?? ''))
+    .filter(Boolean)
+  if (!machineTypes.includes(gcpForm.value.machine_type)) {
+    gcpForm.value.machine_type = machineTypes[0] ?? ''
+  }
+  if (!gcpForm.value.source_image && gcpImages.value[0]) {
+    gcpForm.value.source_image = String(gcpImages.value[0].value)
+  }
+  const networks = data.networks
+    .map(item => String(item.name ?? ''))
+    .filter(Boolean)
+  if (!networks.includes(gcpForm.value.network)) {
+    gcpForm.value.network = networks[0] ?? ''
+  }
+  const subnetworks = gcpSubnetworks.value.map(option => String(option.value))
+  if (!subnetworks.includes(gcpForm.value.subnetwork)) {
+    gcpForm.value.subnetwork = ''
+  }
+  const selectedMachine = data.machine_types.find(
+    item => item.name === gcpForm.value.machine_type
+  )
+  if (selectedMachine?.guestCpus) {
+    gcpForm.value.default_vcpu = selectedMachine.guestCpus
+  }
+}
+
+async function queryGcpCatalog() {
+  if (!gcpForm.value.service_account_json.trim()) {
+    message.warning('请填写服务账号 JSON')
+    return
+  }
+  applyProjectIdFromServiceAccount()
+  queryingGcpCatalog.value = true
+  gcpCatalogError.value = null
+  try {
+    let data = await requestGcpCatalog(gcpForm.value.zone || undefined)
+    if (!gcpForm.value.zone && data.zones[0]?.name) {
+      gcpForm.value.zone = String(data.zones[0].name)
+      data = await requestGcpCatalog(gcpForm.value.zone)
+    }
+    applyGcpCatalog(data)
+    message.success('GCP 服务账号验证成功，资源目录已加载')
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { detail?: string } } }
+    gcpCatalogError.value = e.response?.data?.detail || 'GCP 资源目录查询失败'
+    message.error(gcpCatalogError.value)
+  } finally {
+    queryingGcpCatalog.value = false
+  }
+}
+
+async function handleGcpZoneChange(value: string | null) {
+  gcpForm.value.zone = String(value ?? '')
+  gcpForm.value.subnetwork = ''
+  if (!gcpForm.value.zone || !gcpForm.value.service_account_json.trim()) return
+  queryingGcpCatalog.value = true
+  gcpCatalogError.value = null
+  try {
+    applyGcpCatalog(await requestGcpCatalog(gcpForm.value.zone))
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { detail?: string } } }
+    gcpCatalogError.value = e.response?.data?.detail || 'GCP Zone 资源加载失败'
+    message.error(gcpCatalogError.value)
+  } finally {
+    queryingGcpCatalog.value = false
+  }
+}
+
+watch(() => gcpForm.value.machine_type, machineType => {
+  const selected = gcpCatalog.value?.machine_types.find(item => item.name === machineType)
+  if (selected?.guestCpus) gcpForm.value.default_vcpu = selected.guestCpus
+})
+
+watch(() => gcpForm.value.network, () => {
+  const subnetworks = gcpSubnetworks.value.map(option => String(option.value))
+  if (!subnetworks.includes(gcpForm.value.subnetwork)) {
+    gcpForm.value.subnetwork = ''
+  }
+})
+
+async function submitGcpForm() {
+  applyProjectIdFromServiceAccount()
+  const required: Array<[string, string]> = [
+    ['资产名称', gcpForm.value.asset_name],
+    ['Project ID', gcpForm.value.project_id],
+    ['服务账号 JSON', gcpForm.value.service_account_json],
+    ['Zone', gcpForm.value.zone],
+    ['Machine Type', gcpForm.value.machine_type],
+    ['Source Image', gcpForm.value.source_image],
+    ['Network', gcpForm.value.network],
+    ['SSH 用户名', gcpForm.value.ssh_username],
+    ['SSH 公钥', gcpForm.value.ssh_public_key],
+  ]
+  const missing = required.find(([, value]) => !value.trim())
+  if (missing) {
+    message.warning('请填写' + missing[0])
+    return
+  }
+  submittingGcp.value = true
+  try {
+    const body: GCPAssetCreateRequest = {
+      asset_name: gcpForm.value.asset_name.trim(),
+      project_id: gcpForm.value.project_id.trim(),
+      service_account_json: gcpForm.value.service_account_json.trim(),
+      zone: gcpForm.value.zone.trim(),
+      machine_type: gcpForm.value.machine_type.trim(),
+      source_image: gcpForm.value.source_image.trim(),
+      network: gcpForm.value.network.trim(),
+      subnetwork: gcpForm.value.subnetwork.trim() || undefined,
+      ssh_username: gcpForm.value.ssh_username.trim(),
+      ssh_public_key: gcpForm.value.ssh_public_key.trim(),
+      labels: splitList(gcpForm.value.labels_raw),
+      remarks: gcpForm.value.remarks || undefined,
+      protocol_type: gcpForm.value.protocol_types[0] ?? null,
+      additional_protocol_types: gcpForm.value.protocol_types.slice(1),
+      target_count: gcpForm.value.target_count,
+      max_count: gcpForm.value.max_count,
+      priority: gcpForm.value.priority,
+      allow_cdn_proxy: gcpForm.value.allow_cdn_proxy,
+      default_vcpu: gcpForm.value.default_vcpu ?? undefined,
+    }
+    await apiClient.post<AssetResponse>('/assets/gcp', body)
+    message.success('Google Cloud 资产注册成功')
+    closeModal()
+    resetGcpForm()
+    await fetchAssets()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string; detail?: string; message?: string } } }
+    message.error(
+      e.response?.data?.error ||
+      e.response?.data?.detail ||
+      e.response?.data?.message ||
+      '注册失败'
+    )
+  } finally {
+    submittingGcp.value = false
+  }
+}
+
 // -- Oracle Cloud Infrastructure Registration Form --------------------------
 const ociForm = ref({
   asset_name: '',
@@ -1427,7 +1895,7 @@ onMounted(fetchAssets)
     <div class="page-header">
       <div class="header-left">
         <h1 class="page-title">账号与资产池</h1>
-        <p class="page-subtitle">管理 AWS、DigitalOcean、Vultr、Kamatera、Microsoft Azure、Oracle Cloud 与自建资产，统一调度节点配额与协议</p>
+        <p class="page-subtitle">管理 AWS、DigitalOcean、Vultr、Google Cloud、Kamatera、Microsoft Azure、Oracle Cloud 与自建资产，统一调度节点配额与协议</p>
       </div>
       <div class="header-right">
         <NSpace>
@@ -1463,6 +1931,10 @@ onMounted(fetchAssets)
       <div class="stat-card stat-vultr">
         <div class="stat-value">{{ vultrAssets.length }}</div>
         <div class="stat-label">Vultr 资产</div>
+      </div>
+      <div class="stat-card stat-gcp">
+        <div class="stat-value">{{ gcpAssets.length }}</div>
+        <div class="stat-label">GCP 资产</div>
       </div>
       <div class="stat-card stat-kamatera">
         <div class="stat-value">{{ kamateraAssets.length }}</div>
@@ -1529,6 +2001,14 @@ onMounted(fetchAssets)
           >
             Vultr
             <span class="tab-badge tab-badge-vultr">{{ vultrAssets.length }}</span>
+          </button>
+          <button
+            class="tab-btn"
+            :class="{ active: activeAssetFilter === 'gcp' }"
+            @click="activeAssetFilter = 'gcp'"
+          >
+            GCP
+            <span class="tab-badge tab-badge-gcp">{{ gcpAssets.length }}</span>
           </button>
           <button
             class="tab-btn"
@@ -2059,7 +2539,15 @@ onMounted(fetchAssets)
                 </NGi>
                 <NGi span="1">
                   <NFormItem label="Datacenter" required>
-                    <NSelect v-model:value="kamateraForm.datacenter" :options="kamateraDatacenters" filterable tag placeholder="选择或输入 Datacenter" />
+                    <NSelect
+                      v-model:value="kamateraForm.datacenter"
+                      :options="kamateraDatacenters"
+                      :disabled="queryingKamateraCatalog"
+                      filterable
+                      tag
+                      placeholder="选择或输入 Datacenter"
+                      @update:value="handleKamateraDatacenterChange"
+                    />
                   </NFormItem>
                 </NGi>
                 <NGi span="1">
@@ -2092,17 +2580,34 @@ onMounted(fetchAssets)
                 </NGi>
                 <NGi span="1">
                   <NFormItem label="CPU 核数">
-                    <NInputNumber v-model:value="kamateraForm.cpu_cores" :min="1" :max="104" style="width: 100%" />
+                    <NSelect
+                      v-if="kamateraCpuCoreOptions.length"
+                      v-model:value="kamateraForm.cpu_cores"
+                      :options="kamateraCpuCoreOptions"
+                    />
+                    <NInputNumber v-else v-model:value="kamateraForm.cpu_cores" :min="1" :max="104" style="width: 100%" />
                   </NFormItem>
                 </NGi>
                 <NGi span="1">
                   <NFormItem label="内存 (MB)">
-                    <NInputNumber v-model:value="kamateraForm.ram_mb" :min="256" :step="256" style="width: 100%" />
+                    <NSelect
+                      v-if="kamateraRamOptions.length"
+                      v-model:value="kamateraForm.ram_mb"
+                      :options="kamateraRamOptions"
+                      filterable
+                    />
+                    <NInputNumber v-else v-model:value="kamateraForm.ram_mb" :min="256" :step="256" style="width: 100%" />
                   </NFormItem>
                 </NGi>
                 <NGi span="1">
                   <NFormItem label="系统盘 (GB)">
-                    <NInputNumber v-model:value="kamateraForm.disk_size_gb" :min="10" :max="4000" style="width: 100%" />
+                    <NSelect
+                      v-if="kamateraDiskOptions.length"
+                      v-model:value="kamateraForm.disk_size_gb"
+                      :options="kamateraDiskOptions"
+                      filterable
+                    />
+                    <NInputNumber v-else v-model:value="kamateraForm.disk_size_gb" :min="10" :max="4000" style="width: 100%" />
                   </NFormItem>
                 </NGi>
                 <NGi span="2">
@@ -2117,7 +2622,13 @@ onMounted(fetchAssets)
                 </NGi>
                 <NGi span="1" v-if="kamateraForm.billing_cycle === 'monthly'">
                   <NFormItem label="Monthly Package" required>
-                    <NInput v-model:value="kamateraForm.monthly_package" placeholder="t5000" />
+                    <NSelect
+                      v-if="kamateraMonthlyPackageOptions.length"
+                      v-model:value="kamateraForm.monthly_package"
+                      :options="kamateraMonthlyPackageOptions"
+                      filterable
+                    />
+                    <NInput v-else v-model:value="kamateraForm.monthly_package" placeholder="t5000" />
                   </NFormItem>
                 </NGi>
                 <NGi span="1">
@@ -2348,6 +2859,211 @@ onMounted(fetchAssets)
             </div>
           </div>
         </NTabPane>
+        <!-- Google Cloud Platform Tab -->
+        <NTabPane name="gcp" tab="Google Cloud 资产">
+          <div class="modal-form">
+            <NForm label-placement="left" label-width="150" size="medium">
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="资产名称" required>
+                    <NInput v-model:value="gcpForm.asset_name" placeholder="my-gcp-tokyo-01" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Project ID" required>
+                    <NInput v-model:value="gcpForm.project_id" placeholder="my-gcp-project" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="服务账号 JSON" required>
+                    <NSpace vertical style="width: 100%">
+                      <NInput
+                        v-model:value="gcpForm.service_account_json"
+                        type="textarea"
+                        :autosize="{ minRows: 5, maxRows: 10 }"
+                        placeholder='{"type":"service_account","project_id":"..."}'
+                        style="font-family: monospace; font-size: 12px"
+                        @blur="applyProjectIdFromServiceAccount"
+                      />
+                      <NButton
+                        :loading="queryingGcpCatalog"
+                        :disabled="!gcpForm.service_account_json.trim()"
+                        @click="queryGcpCatalog"
+                      >
+                        验证凭据并加载资源
+                      </NButton>
+                      <NAlert
+                        v-if="gcpCatalogError"
+                        type="error"
+                        :title="gcpCatalogError"
+                        closable
+                        @close="gcpCatalogError = null"
+                      />
+                    </NSpace>
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>Compute Engine 配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="1">
+                  <NFormItem label="Zone" required>
+                    <NSelect
+                      v-model:value="gcpForm.zone"
+                      :options="gcpZones"
+                      @update:value="handleGcpZoneChange"
+                      filterable
+                      tag
+                      placeholder="asia-northeast1-a"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Machine Type" required>
+                    <NSelect
+                      v-model:value="gcpForm.machine_type"
+                      :options="gcpMachineTypes"
+                      filterable
+                      tag
+                      placeholder="e2-small"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="默认 vCPU">
+                    <NInputNumber
+                      v-model:value="gcpForm.default_vcpu"
+                      :min="1"
+                      :max="416"
+                      style="width: 100%"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="SSH 用户名" required>
+                    <NInput v-model:value="gcpForm.ssh_username" placeholder="ubuntu" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="Source Image" required>
+                    <NSelect
+                      v-model:value="gcpForm.source_image"
+                      :options="gcpImages"
+                      filterable
+                      tag
+                      placeholder="Ubuntu 24.04 LTS"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Network" required>
+                    <NSelect
+                      v-model:value="gcpForm.network"
+                      :options="gcpNetworks"
+                      filterable
+                      tag
+                      placeholder="default"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="Subnetwork">
+                    <NSelect
+                      v-model:value="gcpForm.subnetwork"
+                      :options="gcpSubnetworks"
+                      filterable
+                      tag
+                      clearable
+                      placeholder="自动网络可留空"
+                    />
+                  </NFormItem>
+                </NGi>
+                <NGi span="2">
+                  <NFormItem label="SSH 公钥" required>
+                    <NInput
+                      v-model:value="gcpForm.ssh_public_key"
+                      type="textarea"
+                      :rows="3"
+                      placeholder="ssh-ed25519 AAAA..."
+                    />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NDivider>协议与容量配置</NDivider>
+              <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                <NGi span="2">
+                  <NFormItem label="协议类型">
+                    <NCheckboxGroup v-model:value="gcpForm.protocol_types">
+                      <NSpace>
+                        <NCheckbox
+                          v-for="opt in awsProtocolOptions"
+                          :key="String(opt.value)"
+                          :value="opt.value"
+                          :label="String(opt.label)"
+                        />
+                      </NSpace>
+                    </NCheckboxGroup>
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="目标节点数">
+                    <NInputNumber v-model:value="gcpForm.target_count" :min="0" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="最大节点数">
+                    <NInputNumber v-model:value="gcpForm.max_count" :min="0" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="优先级">
+                    <NInputNumber v-model:value="gcpForm.priority" :min="1" style="width: 100%" />
+                  </NFormItem>
+                </NGi>
+                <NGi span="1">
+                  <NFormItem label="允许 CDN Proxy">
+                    <NSwitch v-model:value="gcpForm.allow_cdn_proxy" />
+                  </NFormItem>
+                </NGi>
+              </NGrid>
+
+              <NCollapse>
+                <NCollapseItem title="标签与备注（可选）" name="gcp-metadata">
+                  <NGrid :cols="2" :x-gap="12" :y-gap="10" responsive="screen" item-responsive>
+                    <NGi span="1">
+                      <NFormItem label="Labels">
+                        <NInput
+                          v-model:value="gcpForm.labels_raw"
+                          placeholder="environment=production, owner=platform"
+                        />
+                      </NFormItem>
+                    </NGi>
+                    <NGi span="2">
+                      <NFormItem label="备注">
+                        <NInput v-model:value="gcpForm.remarks" type="textarea" :rows="2" />
+                      </NFormItem>
+                    </NGi>
+                  </NGrid>
+                </NCollapseItem>
+              </NCollapse>
+            </NForm>
+
+            <div class="modal-footer">
+              <NSpace>
+                <NButton @click="closeModal">取消</NButton>
+                <NButton
+                  type="primary"
+                  :loading="submittingGcp"
+                  @click="submitGcpForm"
+                >
+                  注册 Google Cloud 资产
+                </NButton>
+              </NSpace>
+            </div>
+          </div>
+        </NTabPane>
+
         <!-- Oracle Cloud Infrastructure Tab -->
         <NTabPane name="oci" tab="Oracle Cloud 资产">
           <div class="modal-form">
@@ -2751,6 +3467,7 @@ onMounted(fetchAssets)
 .stat-aws .stat-value  { color: #f59e0b; }
 .stat-do .stat-value   { color: #0080ff; }
 .stat-vultr .stat-value { color: #007bfc; }
+.stat-gcp .stat-value { color: #4285f4; }
 .stat-kamatera .stat-value { color: #d6532f; }
 .stat-azure .stat-value { color: #0078d4; }
 .stat-oci .stat-value { color: #c74634; }
@@ -2826,6 +3543,7 @@ onMounted(fetchAssets)
 .tab-badge-aws  { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
 .tab-badge-do   { background: rgba(0, 128, 255, 0.1); color: #0080ff; }
 .tab-badge-vultr { background: rgba(0, 123, 252, 0.1); color: #007bfc; }
+.tab-badge-gcp { background: rgba(66, 133, 244, 0.1); color: #4285f4; }
 .tab-badge-kamatera { background: rgba(214, 83, 47, 0.1); color: #d6532f; }
 .tab-badge-azure { background: rgba(0, 120, 212, 0.1); color: #0078d4; }
 .tab-badge-oci { background: rgba(199, 70, 52, 0.1); color: #c74634; }

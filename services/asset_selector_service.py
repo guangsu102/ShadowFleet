@@ -143,7 +143,7 @@ class AssetSelectorService:
 
     @staticmethod
     def _validate_request(request: AssetSelectionRequest) -> None:
-        if request.asset_type in ("aws", "azure", "digitalocean", "kamatera", "oci", "vultr") and request.protocol_type == "Hysteria2":
+        if request.asset_type in ("aws", "azure", "digitalocean", "gcp", "kamatera", "oci", "vultr") and request.protocol_type == "Hysteria2":
             raise AssetSelectionError("Hysteria2 is not allowed on cloud assets")
         if request.require_cdn_proxy and request.protocol_type == "AnyTLS":
             raise AssetSelectionError("AnyTLS supports DNS linkage but must not use CDN proxy")

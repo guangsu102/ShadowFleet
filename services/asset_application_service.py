@@ -9,6 +9,7 @@ from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.aws.sts_client import StsClientError, resolve_aws_account_id
 from infrastructure.azure import AzureClient, AzureCredentials, resolve_azure_vnet_name
 from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.gcp import GCPClient, GCPCredentials
 from infrastructure.kamatera import KamateraClient
 from infrastructure.oci import OCIClient, OCICredentials
 from infrastructure.vultr import VultrClient
@@ -19,12 +20,20 @@ from services.asset_application_models import (
     AssetRegistrationResult,
     AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    GCPAssetRegistrationRequest,
     KamateraAssetRegistrationRequest,
     OCIAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
     VultrAssetRegistrationRequest,
 )
 from services.runtime_service import RuntimeContext
+
+
+def _gcp_firewall_rule_name(network: str) -> str:
+    network_name = network.rstrip("/").rsplit("/", 1)[-1].strip().lower()
+    if not network_name or network_name == "default":
+        return "shadowfleet-ingress"
+    return f"shadowfleet-ingress-{network_name}"[:63].rstrip("-")
 
 
 class AssetApplicationService:
@@ -343,6 +352,11 @@ class AssetApplicationService:
         client.validate_provisioning_target(
             datacenter=request.datacenter.strip(),
             image=request.image.strip(),
+            cpu=f"{request.cpu_cores}{request.cpu_type.strip().upper()}",
+            ram_mb=request.ram_mb,
+            disk_sizes_gb=request.disk_sizes_gb,
+            billing_cycle=request.billing_cycle.strip().lower(),
+            monthly_package=self._normalize_optional_text(request.monthly_package),
         )
         cpu_type = request.cpu_type.strip().upper()
         cpu = f"{request.cpu_cores}{cpu_type}"
@@ -517,6 +531,114 @@ class AssetApplicationService:
             request.asset_name,
             request.region,
             request.subscription_id,
+        )
+        return AssetRegistrationResult(
+            asset_id=asset_id,
+            asset_name=request.asset_name.strip(),
+            protocol_config_id=first_protocol_config_id,
+        )
+
+    def register_gcp_asset(
+        self,
+        request: GCPAssetRegistrationRequest,
+    ) -> AssetRegistrationResult:
+        self._validate_gcp_registration_request(request)
+        credentials = GCPCredentials.from_service_account_json(
+            request.service_account_json,
+            project_id=request.project_id.strip(),
+        )
+        client = self._build_gcp_client(credentials)
+        client.validate_project()
+        target = client.validate_provisioning_target(
+            zone=request.zone.strip(),
+            machine_type=request.machine_type.strip(),
+            source_image=request.source_image.strip(),
+            network=request.network.strip(),
+            subnetwork=self._normalize_optional_text(request.subnetwork),
+        )
+        labels: dict[str, str] = {}
+        for raw_label in request.labels:
+            key, separator, value = raw_label.strip().partition("=")
+            if key:
+                labels[key] = value if separator else "true"
+
+        firewall_rule_name = _gcp_firewall_rule_name(target.network)
+        provider_config: dict[str, object] = {
+            "project_id": credentials.project_id,
+            "private_key_id": credentials.private_key_id or "",
+            "client_id": credentials.client_id or "",
+            "token_uri": credentials.token_uri,
+            "zone": target.zone,
+            "region": target.region,
+            "machine_type": target.machine_type,
+            "source_image": target.source_image,
+            "network": target.network,
+            "subnetwork": target.subnetwork or "",
+            "ssh_username": request.ssh_username.strip(),
+            "ssh_public_key": request.ssh_public_key.strip(),
+            "labels": labels,
+            "firewall_rule_name": firewall_rule_name,
+        }
+        effective_vcpu = request.default_vcpu or target.guest_cpus
+        asset_id = self._asset_repo.create_asset(
+            AssetCreateRequest(
+                asset_type="gcp",
+                asset_name=request.asset_name.strip(),
+                region=target.zone,
+                aws_account_id=f"gcp:{credentials.project_id}",
+                aws_access_key=credentials.client_email,
+                aws_secret_key=credentials.private_key,
+                default_instance_type=target.machine_type,
+                default_vcpu=effective_vcpu,
+                default_architecture=target.architecture,
+                provider_config=provider_config,
+                remarks=self._normalize_optional_text(request.remarks),
+            )
+        )
+        protocol_types = [request.protocol_type, *request.additional_protocol_types]
+        first_protocol_config_id: int | None = None
+        for index, protocol_type in enumerate(
+            protocol for protocol in protocol_types if protocol
+        ):
+            protocol_config_id = self._asset_repo.upsert_asset_protocol_config(
+                AssetProtocolConfigRequest(
+                    asset_id=asset_id,
+                    protocol_type=protocol_type,
+                    target_count=request.target_count,
+                    max_count=request.max_count,
+                    priority=request.priority + index,
+                    allow_cdn_proxy=request.allow_cdn_proxy,
+                    instance_type=target.machine_type,
+                    vcpu=effective_vcpu,
+                    architecture=target.architecture,
+                    ami_id=target.source_image,
+                    subnet_id=target.subnetwork,
+                    security_group_id=firewall_rule_name,
+                )
+            )
+            if first_protocol_config_id is None:
+                first_protocol_config_id = protocol_config_id
+
+        self._asset_repo.create_asset_event(
+            AssetEventCreateRequest(
+                asset_id=asset_id,
+                event_type="asset_registered_from_dashboard",
+                correlation_id=self._runtime_context.correlation_id,
+                message="GCP asset registered from dashboard.",
+                payload={
+                    "asset_name": request.asset_name.strip(),
+                    "project_id": credentials.project_id,
+                    "zone": target.zone,
+                    "protocol_type": request.protocol_type,
+                },
+            )
+        )
+        self._logger.info(
+            "Registered GCP asset id=%s name=%s project=%s zone=%s",
+            asset_id,
+            request.asset_name,
+            credentials.project_id,
+            target.zone,
         )
         return AssetRegistrationResult(
             asset_id=asset_id,
@@ -813,6 +935,38 @@ class AssetApplicationService:
             "locations": client.list_locations(),
             "vm_sizes": client.list_vm_sizes(location.strip()) if location and location.strip() else [],
         }
+    def query_gcp_catalog(
+        self,
+        *,
+        service_account_json: str,
+        project_id: str | None = None,
+        zone: str | None = None,
+        image_project: str = "ubuntu-os-cloud",
+    ) -> dict[str, list[dict[str, object]]]:
+        credentials = GCPCredentials.from_service_account_json(
+            service_account_json,
+            project_id=self._normalize_optional_text(project_id),
+        )
+        client = self._build_gcp_client(credentials)
+        client.validate_project()
+        zones = client.list_zones()
+        normalized_zone = self._normalize_optional_text(zone)
+        machine_types: list[dict[str, object]] = []
+        subnetworks: list[dict[str, object]] = []
+        if normalized_zone:
+            zone_item = client.get_zone(normalized_zone)
+            region = str(zone_item.get("region") or "").rstrip("/").rsplit("/", 1)[-1]
+            machine_types = client.list_machine_types(normalized_zone)
+            if region:
+                subnetworks = client.list_subnetworks(region)
+        return {
+            "zones": zones,
+            "machine_types": machine_types,
+            "images": client.list_images(image_project=image_project),
+            "networks": client.list_networks(),
+            "subnetworks": subnetworks,
+        }
+
     def query_oci_catalog(
         self,
         *,
@@ -894,6 +1048,12 @@ class AssetApplicationService:
 
     def _build_azure_client(self, credentials: AzureCredentials) -> AzureClient:
         return AzureClient(runtime_context=self._runtime_context, credentials=credentials)
+
+    def _build_gcp_client(self, credentials: GCPCredentials) -> GCPClient:
+        return GCPClient(
+            runtime_context=self._runtime_context,
+            credentials=credentials,
+        )
 
     def _build_oci_client(
         self,
@@ -982,6 +1142,31 @@ class AssetApplicationService:
             request.monthly_package and request.monthly_package.strip()
         ):
             raise ValueError("Kamatera 月付模式必须指定 monthly_package")
+        if request.target_count < 0 or request.max_count < 0:
+            raise ValueError("target_count 和 max_count 不能小于 0")
+        if request.max_count > 0 and request.target_count > request.max_count:
+            raise ValueError("target_count 不能大于 max_count")
+
+    @staticmethod
+    def _validate_gcp_registration_request(
+        request: GCPAssetRegistrationRequest,
+    ) -> None:
+        required = {
+            "资产名称": request.asset_name,
+            "GCP Project ID": request.project_id,
+            "服务账号 JSON": request.service_account_json,
+            "GCP Zone": request.zone,
+            "Machine Type": request.machine_type,
+            "Source Image": request.source_image,
+            "Network": request.network,
+            "SSH 用户名": request.ssh_username,
+            "SSH 公钥": request.ssh_public_key,
+        }
+        for label, value in required.items():
+            if not value or not value.strip():
+                raise ValueError(f"{label}不能为空")
+        if request.default_vcpu is not None and request.default_vcpu <= 0:
+            raise ValueError("默认 vCPU 必须大于 0")
         if request.target_count < 0 or request.max_count < 0:
             raise ValueError("target_count 和 max_count 不能小于 0")
         if request.max_count > 0 and request.target_count > request.max_count:

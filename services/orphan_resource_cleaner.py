@@ -20,6 +20,7 @@ from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.cloudflare.cf_client import CFClient
 from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.gcp import GCPClient, GCPCredentials
 from infrastructure.kamatera import KamateraClient
 from infrastructure.vultr import VultrClient
 from infrastructure.oci import OCIClient, OCICredentials
@@ -32,6 +33,7 @@ from services.orphan_resource_detector import (
     OrphanDigitalOceanSnapshot,
     OrphanDnsRecord,
     OrphanEc2Instance,
+    OrphanGCPInstance,
     OrphanKamateraServer,
     OrphanResourceReport,
     OrphanOCIInstance,
@@ -88,6 +90,7 @@ class OrphanResourceCleaner:
         dry_run: bool = False,
         cleanup_digitalocean: bool = True,
         cleanup_vultr: bool = True,
+        cleanup_gcp: bool = True,
         cleanup_kamatera: bool = True,
         cleanup_azure: bool = True,
         cleanup_oci: bool = True,
@@ -135,6 +138,11 @@ class OrphanResourceCleaner:
 
             if cleanup_vultr:
                 results.extend(self._cleanup_vultr_instances(report.vultr_instances, dry_run))
+
+            if cleanup_gcp:
+                results.extend(
+                    self._cleanup_gcp_instances(report.gcp_instances, dry_run)
+                )
 
             if cleanup_kamatera:
                 results.extend(
@@ -436,6 +444,42 @@ class OrphanResourceCleaner:
                 )
         return results
 
+    def _cleanup_gcp_instances(
+        self,
+        instances: list[OrphanGCPInstance],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        results: list[CleanupResult] = []
+        for instance in instances:
+            try:
+                if not dry_run:
+                    self._build_gcp_client(instance.asset_id).delete_instance(
+                        instance.zone,
+                        instance.instance_name,
+                    )
+                results.append(
+                    CleanupResult(
+                        resource_type="gcp_instance",
+                        resource_id=instance.instance_name,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to cleanup GCP instance %s: %s",
+                    instance.instance_name,
+                    exc,
+                )
+                results.append(
+                    CleanupResult(
+                        resource_type="gcp_instance",
+                        resource_id=instance.instance_name,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
+
     def _cleanup_oci_instances(
         self,
         instances: list[OrphanOCIInstance],
@@ -551,6 +595,36 @@ class OrphanResourceCleaner:
                     )
                 )
         return results
+
+    def _build_gcp_client(self, asset_id: int) -> GCPClient:
+        asset = self._asset_repo.get_asset_by_id(asset_id)
+        config = asset.provider_config
+        if (
+            asset.asset_type != "gcp"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not isinstance(config, dict)
+        ):
+            raise OrphanResourceCleanerError(
+                f"GCP credentials missing for asset_id={asset_id}"
+            )
+        project_id = str(config.get("project_id") or "").strip()
+        if not project_id:
+            raise OrphanResourceCleanerError(
+                f"GCP project_id missing for asset_id={asset_id}"
+            )
+        return GCPClient(
+            self._runtime,
+            credentials=GCPCredentials(
+                project_id=project_id,
+                client_email=asset.aws_access_key,
+                private_key=asset.aws_secret_key,
+                private_key_id=str(config.get("private_key_id") or "").strip() or None,
+                client_id=str(config.get("client_id") or "").strip() or None,
+                token_uri=str(config.get("token_uri") or "").strip()
+                or "https://oauth2.googleapis.com/token",
+            ),
+        )
 
     def _build_oci_client(self, asset_id: int) -> OCIClient:
         asset = self._asset_repo.get_asset_by_id(asset_id)

@@ -25,6 +25,8 @@ def _get_table_indexes(cursor: sqlite3.Cursor, table_name: str) -> list[str]:
 # All tables expected to exist, in dependency order (no forward FK references).
 ALL_TABLES = [
     "schema_migrations",
+    "auth_users",
+    "sse_events",
     "fleet_nodes",
     "fleet_node_events",
     "fleet_operation_locks",
@@ -51,7 +53,7 @@ class TestSqliteSchemaCompleteness:
     """Verify all required tables exist in the test fixture."""
 
     def test_all_tables_exist_in_in_memory_fixture(self, in_memory_sqlite_db) -> None:
-        """All 15 tables should exist in the in_memory_sqlite_db fixture."""
+        """All production tables should exist in the in_memory_sqlite_db fixture."""
         cursor = in_memory_sqlite_db.cursor()
         cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
@@ -63,7 +65,7 @@ class TestSqliteSchemaCompleteness:
         )
 
     def test_all_tables_exist_in_full_schema_fixture(self, full_schema_sqlite_db) -> None:
-        """All 15 tables should exist in the full_schema_sqlite_db fixture."""
+        """All production tables should exist in the full_schema_sqlite_db fixture."""
         cursor = full_schema_sqlite_db.cursor()
         cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"

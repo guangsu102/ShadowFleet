@@ -9,6 +9,7 @@ from services.asset_application_models import (
     AssetRegistrationRequest,
     AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    GCPAssetRegistrationRequest,
     KamateraAssetRegistrationRequest,
     OCIAssetRegistrationRequest,
     SelfHostedAssetRegistrationRequest,
@@ -179,6 +180,31 @@ class AzureAssetCreateRequest(BaseModel):
     priority: int = 100
     allow_cdn_proxy: bool = False
     default_vcpu: int | None = None
+
+class GCPAssetCreateRequest(BaseModel):
+    asset_name: str = Field(..., min_length=1, max_length=128)
+    project_id: str = Field(..., min_length=1)
+    service_account_json: str = Field(..., min_length=1)
+    zone: str = Field(..., min_length=1)
+    machine_type: str = Field(default="e2-small", min_length=1)
+    source_image: str = Field(
+        default="projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64",
+        min_length=1,
+    )
+    network: str = Field(default="default", min_length=1)
+    subnetwork: str | None = None
+    ssh_username: str = Field(default="ubuntu", min_length=1)
+    ssh_public_key: str = Field(..., min_length=1)
+    labels: list[str] = Field(default_factory=list)
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: list[str] = Field(default_factory=list)
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = Field(default=None, gt=0)
+
 
 class OCIAssetCreateRequest(BaseModel):
     asset_name: str = Field(..., min_length=1, max_length=128)
@@ -466,6 +492,48 @@ async def register_azure_asset(
         aws_account_id=f"azure:{request.subscription_id.strip().lower()}",
     )
 
+@router.post("/gcp", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
+async def register_gcp_asset(
+    request: GCPAssetCreateRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> AssetResponse:
+    try:
+        result = AssetApplicationService(ctx).register_gcp_asset(
+            GCPAssetRegistrationRequest(
+                asset_name=request.asset_name,
+                project_id=request.project_id,
+                service_account_json=request.service_account_json,
+                zone=request.zone,
+                machine_type=request.machine_type,
+                source_image=request.source_image,
+                network=request.network,
+                subnetwork=request.subnetwork,
+                ssh_username=request.ssh_username,
+                ssh_public_key=request.ssh_public_key,
+                labels=tuple(request.labels),
+                remarks=request.remarks,
+                protocol_type=request.protocol_type,
+                additional_protocol_types=tuple(request.additional_protocol_types),
+                target_count=request.target_count,
+                max_count=request.max_count,
+                priority=request.priority,
+                allow_cdn_proxy=request.allow_cdn_proxy,
+                default_vcpu=request.default_vcpu,
+            )
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return AssetResponse(
+        asset_id=result.asset_id,
+        asset_name=result.asset_name,
+        asset_type="gcp",
+        region=request.zone,
+        status="active",
+        aws_account_id=f"gcp:{request.project_id.strip()}",
+    )
+
+
 @router.post("/oci", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
 async def register_oci_asset(
     request: OCIAssetCreateRequest,
@@ -679,6 +747,13 @@ class AzureCatalogRequest(BaseModel):
     location: str | None = None
 
 
+class GCPCatalogRequest(BaseModel):
+    service_account_json: str = Field(..., min_length=1)
+    project_id: str | None = None
+    zone: str | None = None
+    image_project: str = "ubuntu-os-cloud"
+
+
 class OCICatalogRequest(BaseModel):
     region: str = Field(..., min_length=1)
     tenancy_ocid: str = Field(..., min_length=1)
@@ -845,6 +920,26 @@ async def query_azure_catalog(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Azure catalog query failed: {e}",
         ) from e
+
+@router.post("/gcp/query-catalog")
+async def query_gcp_catalog(
+    request: GCPCatalogRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_operator),
+) -> dict[str, object]:
+    try:
+        return AssetApplicationService(ctx).query_gcp_catalog(
+            service_account_json=request.service_account_json,
+            project_id=request.project_id,
+            zone=request.zone,
+            image_project=request.image_project,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"GCP catalog query failed: {e}",
+        ) from e
+
 
 @router.post("/oci/query-catalog")
 async def query_oci_catalog(

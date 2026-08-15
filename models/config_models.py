@@ -463,8 +463,8 @@ class FleetSchedulerConfig(BaseModel):
     max_tasks_per_cycle: int = 5
     enabled_regions: list[str] = Field(default_factory=lambda: ["*"])
     enabled_protocols: list[str] = Field(default_factory=lambda: ["*"])
-    enabled_asset_types: list[Literal["digitalocean", "vultr", "azure", "oci", "kamatera", "aws"]] = Field(
-        default_factory=lambda: ["digitalocean", "vultr", "azure", "oci", "kamatera", "aws"]
+    enabled_asset_types: list[Literal["digitalocean", "vultr", "azure", "gcp", "oci", "kamatera", "aws"]] = Field(
+        default_factory=lambda: ["digitalocean", "vultr", "azure", "gcp", "oci", "kamatera", "aws"]
     )
     default_group_ids: list[int] = Field(default_factory=list)
 

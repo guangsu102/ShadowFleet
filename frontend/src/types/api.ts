@@ -374,6 +374,28 @@ export interface AzureAssetCreateRequest {
   allow_cdn_proxy?: boolean
   default_vcpu?: number | null
 }
+export interface GCPAssetCreateRequest {
+  asset_name: string
+  project_id: string
+  service_account_json: string
+  zone: string
+  machine_type?: string
+  source_image?: string
+  network?: string
+  subnetwork?: string | null
+  ssh_username?: string
+  ssh_public_key: string
+  labels?: string[]
+  remarks?: string | null
+  protocol_type?: string | null
+  additional_protocol_types?: string[]
+  target_count?: number
+  max_count?: number
+  priority?: number
+  allow_cdn_proxy?: boolean
+  default_vcpu?: number | null
+}
+
 export interface OCIAssetCreateRequest {
   asset_name: string
   region: string
@@ -454,6 +476,38 @@ export interface AzureCatalogResponse {
     resourceDiskSizeInMB?: number
   }>
 }
+export interface GCPCatalogResponse {
+  zones: Array<{ name?: string; status?: string; region?: string; description?: string }>
+  machine_types: Array<{
+    name?: string
+    guestCpus?: number
+    memoryMb?: number
+    isSharedCpu?: boolean
+    description?: string
+  }>
+  images: Array<{
+    name?: string
+    selfLink?: string
+    family?: string
+    architecture?: string
+    description?: string
+    status?: string
+  }>
+  networks: Array<{
+    name?: string
+    selfLink?: string
+    autoCreateSubnetworks?: boolean
+    description?: string
+  }>
+  subnetworks: Array<{
+    name?: string
+    selfLink?: string
+    network?: string
+    region?: string
+    ipCidrRange?: string
+  }>
+}
+
 export interface OCICatalogResponse {
   availability_domains: Array<{ name?: string; id?: string; compartmentId?: string }>
   images: Array<{

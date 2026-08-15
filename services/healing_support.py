@@ -13,6 +13,7 @@ from services.monitor_support import infer_node_asset_type
 AWS_HEALABLE_PROTOCOLS = {"AnyTLS", "Trojan", "vless", "vmess"}
 AZURE_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 DIGITALOCEAN_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
+GCP_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 KAMATERA_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 VULTR_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
 OCI_HEALABLE_PROTOCOLS = AWS_HEALABLE_PROTOCOLS
@@ -55,6 +56,7 @@ def determine_heal_strategy(node_record: FleetNodeRecord, request: HealRequest) 
             "aws": "aws_ipv6_rotate",
             "azure": "azure_ipv6_rotate",
             "digitalocean": "digitalocean_instance_replace",
+            "gcp": "gcp_ipv4_rotate",
             "kamatera": "kamatera_instance_replace",
             "oci": "oci_ipv6_rotate",
             "vultr": "vultr_instance_replace",
@@ -76,6 +78,8 @@ def determine_heal_strategy(node_record: FleetNodeRecord, request: HealRequest) 
         and node_record.node_type in DIGITALOCEAN_HEALABLE_PROTOCOLS
     ):
         return "digitalocean_instance_replace"
+    if asset_type == "gcp" and node_record.node_type in GCP_HEALABLE_PROTOCOLS:
+        return "gcp_ipv4_rotate"
     if asset_type == "kamatera" and node_record.node_type in KAMATERA_HEALABLE_PROTOCOLS:
         return "kamatera_instance_replace"
     if asset_type == "oci" and node_record.node_type in OCI_HEALABLE_PROTOCOLS:
@@ -117,6 +121,21 @@ def ensure_azure_healing_eligible(node_record: FleetNodeRecord) -> None:
         raise ManualReviewRequiredError("Azure node is missing VM resource ID")
     if node_record.domain_name is None or not node_record.domain_name.strip():
         raise ManualReviewRequiredError("Azure node is missing domain_name")
+
+
+def ensure_gcp_healing_eligible(node_record: FleetNodeRecord) -> None:
+    if infer_node_asset_type(node_record) != "gcp":
+        raise ManualReviewRequiredError("GCP healing received a non-GCP node")
+    if node_record.node_type not in GCP_HEALABLE_PROTOCOLS:
+        raise ManualReviewRequiredError(
+            f"GCP node type is not supported for IPv4 healing: {node_record.node_type}"
+        )
+    if not node_record.aws_instance_id:
+        raise ManualReviewRequiredError("GCP node is missing instance name")
+    if not node_record.aws_region:
+        raise ManualReviewRequiredError("GCP node is missing zone")
+    if node_record.domain_name is None or not node_record.domain_name.strip():
+        raise ManualReviewRequiredError("GCP node is missing domain_name")
 
 
 def ensure_oci_healing_eligible(node_record: FleetNodeRecord) -> None:
@@ -198,6 +217,7 @@ def build_heal_lock(
         expires_in_seconds = DIGITALOCEAN_HEAL_LOCK_EXPIRY_SECONDS
     elif strategy in {
         "azure_ipv6_rotate",
+        "gcp_ipv4_rotate",
         "oci_ipv6_rotate",
         "vultr_instance_replace",
         "kamatera_instance_replace",

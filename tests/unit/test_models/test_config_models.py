@@ -283,6 +283,7 @@ class TestFleetSchedulerConfig:
             "digitalocean",
             "vultr",
             "azure",
+            "gcp",
             "oci",
             "kamatera",
             "aws",
@@ -294,7 +295,7 @@ class TestFleetSchedulerConfig:
 
     def test_enabled_asset_types_rejects_unknown_provider(self) -> None:
         with pytest.raises(ValidationError, match="enabled_asset_types"):
-            FleetSchedulerConfig(enabled_asset_types=["aws", "gcp"])
+            FleetSchedulerConfig(enabled_asset_types=["aws", "unknown-cloud"])
 
 
 class TestAppConfig:

@@ -104,3 +104,68 @@ def test_http_200_embedded_errors_are_rejected() -> None:
     with patch.object(client._session, "request", return_value=response):
         with pytest.raises(KamateraClientError, match="invalid credentials"):
             client.list_datacenters()
+
+
+def test_validate_provisioning_target_enforces_capability_lists() -> None:
+    client = KamateraClient(_runtime(), client_id="client", secret="secret")
+    with patch.object(client, "list_datacenters", return_value=[{"id": "AS"}]), patch.object(
+        client,
+        "list_images",
+        return_value=[{"id": "ubuntu"}],
+    ), patch.object(
+        client,
+        "get_capabilities",
+        return_value={
+            "cpu": ["1B", "2B"],
+            "ram": [2048, 4096],
+            "disk": {"min": 20, "max": 100, "step": 10},
+            "billingCycles": ["hourly", "monthly"],
+            "monthlyPackages": ["t5000"],
+        },
+    ):
+        client.validate_provisioning_target(
+            datacenter="AS",
+            image="ubuntu",
+            cpu="2B",
+            ram_mb=4096,
+            disk_sizes_gb=(20, 40),
+            billing_cycle="monthly",
+            monthly_package="t5000",
+        )
+
+
+def test_validate_provisioning_target_ignores_unrecognized_capability_objects() -> None:
+    client = KamateraClient(_runtime(), client_id="client", secret="secret")
+    with patch.object(client, "list_datacenters", return_value=[{"id": "AS"}]), patch.object(
+        client,
+        "list_images",
+        return_value=[{"id": "ubuntu"}],
+    ), patch.object(
+        client,
+        "get_capabilities",
+        return_value={"cpu": [{"type": "B", "minimum": 1, "maximum": 8}]},
+    ):
+        client.validate_provisioning_target(
+            datacenter="AS",
+            image="ubuntu",
+            cpu="2B",
+        )
+
+
+def test_validate_provisioning_target_rejects_unavailable_capability() -> None:
+    client = KamateraClient(_runtime(), client_id="client", secret="secret")
+    with patch.object(client, "list_datacenters", return_value=[{"id": "AS"}]), patch.object(
+        client,
+        "list_images",
+        return_value=[{"id": "ubuntu"}],
+    ), patch.object(
+        client,
+        "get_capabilities",
+        return_value={"cpu": ["1B", "2B"]},
+    ):
+        with pytest.raises(KamateraClientError, match="CPU is not available"):
+            client.validate_provisioning_target(
+                datacenter="AS",
+                image="ubuntu",
+                cpu="4B",
+            )

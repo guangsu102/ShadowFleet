@@ -20,6 +20,7 @@ from database.xboard_repo import (
 from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.gcp import GCPClient, GCPCredentials
 from infrastructure.vultr import VultrClient
 from infrastructure.kamatera import KamateraClient
 from infrastructure.oci import OCIClient, OCICredentials
@@ -425,6 +426,7 @@ class NodeRegistryService:
             self._delete_digitalocean_instance(node_record)
             self._delete_vultr_instance(node_record)
             self._delete_azure_instance(node_record)
+            self._delete_gcp_instance(node_record)
             self._delete_kamatera_instance(node_record)
             self._delete_oci_instance(node_record)
             self._xboard_repo.delete_node(xboard_node_id)
@@ -789,6 +791,71 @@ class NodeRegistryService:
                 payload={
                     "asset_id": asset.id,
                     "server_id": node_record.aws_instance_id,
+                },
+            )
+        )
+
+    def _delete_gcp_instance(self, node_record: FleetNodeRecord) -> None:
+        if self._resolve_node_asset_type(node_record) != "gcp":
+            return
+        if not node_record.aws_instance_id:
+            raise NodeRegistryServiceError("GCP node is missing instance name")
+        zone = node_record.aws_region
+        if not zone:
+            raise NodeRegistryServiceError("GCP node is missing zone")
+        asset = self._asset_repo.get_asset_by_xboard_node_id(
+            node_record.xboard_node_id
+        )
+        if asset is None and node_record.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node_record.aws_account_id
+                    )
+                    if candidate.asset_type == "gcp"
+                ),
+                None,
+            )
+        config = asset.provider_config if asset is not None else None
+        if (
+            asset is None
+            or asset.asset_type != "gcp"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not isinstance(config, dict)
+        ):
+            raise NodeRegistryServiceError(
+                "GCP credentials not found for node allocation"
+            )
+        project_id = str(config.get("project_id") or "").strip()
+        if not project_id:
+            raise NodeRegistryServiceError("GCP project_id is missing")
+        GCPClient(
+            self._runtime_context,
+            credentials=GCPCredentials(
+                project_id=project_id,
+                client_email=asset.aws_access_key,
+                private_key=asset.aws_secret_key,
+                private_key_id=str(config.get("private_key_id") or "").strip() or None,
+                client_id=str(config.get("client_id") or "").strip() or None,
+                token_uri=str(config.get("token_uri") or "").strip()
+                or "https://oauth2.googleapis.com/token",
+            ),
+        ).delete_instance(zone, node_record.aws_instance_id)
+        self._state_repo.create_event(
+            FleetNodeEventCreateRequest(
+                node_id=node_record.id,
+                xboard_node_id=node_record.xboard_node_id,
+                event_type="gcp_instance_deleted",
+                correlation_id=self._runtime_context.correlation_id,
+                from_status="deleting",
+                to_status="deleting",
+                message="GCP instance deleted before Xboard node removal.",
+                payload={
+                    "asset_id": asset.id,
+                    "instance_name": node_record.aws_instance_id,
+                    "zone": zone,
                 },
             )
         )

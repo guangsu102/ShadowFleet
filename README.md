@@ -22,6 +22,7 @@ ShadowFleet/
 │   ├── azure/            # Microsoft Azure resources
 │   ├── cloudflare/       # Cloudflare resources
 │   ├── digitalocean/     # DigitalOcean resources
+│   ├── gcp/              # Google Cloud resources
 │   ├── kamatera/         # Kamatera resources
 │   ├── oci/              # Oracle Cloud resources
 │   ├── self_hosted/      # Self-hosted resources
@@ -121,6 +122,7 @@ docker-compose up
 - [Remote Testing Guide](docs/remote_testing_guide.md)
 - [Oracle Cloud Infrastructure Setup](docs/oci_setup_guide.md)
 - [Kamatera Setup](docs/kamatera_setup_guide.md)
+- [Google Cloud Platform Setup](docs/gcp_setup_guide.md)
 
 ### Feature Guides
 

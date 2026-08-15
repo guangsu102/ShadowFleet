@@ -240,6 +240,8 @@ class DashboardService:
                               OR lower(trim(n.aws_account_id)) LIKE 'vultr:%' THEN 'vultr'
                             WHEN lower(trim(n.aws_account_id)) = 'azure'
                               OR lower(trim(n.aws_account_id)) LIKE 'azure:%' THEN 'azure'
+                            WHEN lower(trim(n.aws_account_id)) = 'gcp'
+                              OR lower(trim(n.aws_account_id)) LIKE 'gcp:%' THEN 'gcp'
                             WHEN lower(trim(n.aws_account_id)) = 'kamatera'
                               OR lower(trim(n.aws_account_id)) LIKE 'kamatera:%' THEN 'kamatera'
                             WHEN lower(trim(n.aws_account_id)) = 'oci'

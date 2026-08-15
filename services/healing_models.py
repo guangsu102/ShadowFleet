@@ -8,6 +8,7 @@ HealStrategy = Literal[
     "aws_ipv6_rotate",
     "azure_ipv6_rotate",
     "digitalocean_instance_replace",
+    "gcp_ipv4_rotate",
     "kamatera_instance_replace",
     "vultr_instance_replace",
     "oci_ipv6_rotate",
@@ -43,6 +44,8 @@ class HealResult:
     duration_ms: int
     message: str
     correlation_id: str
+    old_ipv4_address: str | None = None
+    new_ipv4_address: str | None = None
 
 
 class HealerServiceError(RuntimeError):

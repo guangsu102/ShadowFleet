@@ -21,6 +21,12 @@ from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.azure import AzureClient, AzureCredentials
 from infrastructure.cloudflare.cf_client import CFClient
 from infrastructure.digitalocean import DigitalOceanClient
+from infrastructure.gcp import (
+    GCPClient,
+    GCPCredentials,
+    instance_created_at as gcp_instance_created_at,
+    instance_labels as gcp_instance_labels,
+)
 from infrastructure.kamatera import KamateraClient, server_created_at, server_tags
 from infrastructure.vultr import VultrClient
 from infrastructure.oci import OCIClient, OCICredentials
@@ -88,6 +94,17 @@ class OrphanVultrInstance:
     status: str
     tags: tuple[str, ...]
     firewall_group_id: str | None = None
+
+
+@dataclass(frozen=True)
+class OrphanGCPInstance:
+    instance_name: str
+    asset_id: int
+    project_id: str
+    zone: str
+    created_at: str
+    status: str
+    labels: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -182,6 +199,7 @@ class OrphanResourceReport:
         default_factory=list
     )
     vultr_instances: list[OrphanVultrInstance] = field(default_factory=list)
+    gcp_instances: list[OrphanGCPInstance] = field(default_factory=list)
     kamatera_servers: list[OrphanKamateraServer] = field(default_factory=list)
     azure_vms: list[OrphanAzureVm] = field(default_factory=list)
     oci_instances: list[OrphanOCIInstance] = field(default_factory=list)
@@ -212,6 +230,7 @@ class OrphanResourceDetector:
         scan_xboard: bool = True,
         scan_digitalocean: bool = True,
         scan_vultr: bool = True,
+        scan_gcp: bool = True,
         scan_kamatera: bool = True,
         scan_azure: bool = True,
         scan_oci: bool = True,
@@ -235,6 +254,7 @@ class OrphanResourceDetector:
         orphan_digitalocean_droplets: list[OrphanDigitalOceanDroplet] = []
         orphan_digitalocean_snapshots: list[OrphanDigitalOceanSnapshot] = []
         orphan_vultr_instances: list[OrphanVultrInstance] = []
+        orphan_gcp_instances: list[OrphanGCPInstance] = []
         orphan_kamatera_servers: list[OrphanKamateraServer] = []
         orphan_azure_vms: list[OrphanAzureVm] = []
         orphan_azure_network_resources: list[OrphanAzureNetworkResource] = []
@@ -267,6 +287,12 @@ class OrphanResourceDetector:
             if scan_vultr:
                 orphan_vultr_instances = self._scan_orphan_vultr_instances()
                 self._logger.info("Found %d orphan Vultr instances", len(orphan_vultr_instances))
+            if scan_gcp:
+                orphan_gcp_instances = self._scan_orphan_gcp_instances()
+                self._logger.info(
+                    "Found %d orphan GCP instances",
+                    len(orphan_gcp_instances),
+                )
             if scan_kamatera:
                 orphan_kamatera_servers = self._scan_orphan_kamatera_servers()
                 self._logger.info(
@@ -307,6 +333,7 @@ class OrphanResourceDetector:
                 + len(orphan_digitalocean_droplets)
                 + len(orphan_digitalocean_snapshots)
                 + len(orphan_vultr_instances)
+                + len(orphan_gcp_instances)
                 + len(orphan_kamatera_servers)
                 + len(orphan_azure_vms)
                 + len(orphan_azure_network_resources)
@@ -322,6 +349,7 @@ class OrphanResourceDetector:
                 digitalocean_droplets=orphan_digitalocean_droplets,
                 digitalocean_snapshots=orphan_digitalocean_snapshots,
                 vultr_instances=orphan_vultr_instances,
+                gcp_instances=orphan_gcp_instances,
                 kamatera_servers=orphan_kamatera_servers,
                 azure_vms=orphan_azure_vms,
                 azure_network_resources=orphan_azure_network_resources,
@@ -572,6 +600,78 @@ class OrphanResourceDetector:
                     exc,
                 )
         return orphan_instances
+
+    def _scan_orphan_gcp_instances(self) -> list[OrphanGCPInstance]:
+        orphans: list[OrphanGCPInstance] = []
+        active_assets = self._asset_repo.list_assets_by_status("active")
+        known_ids = {
+            str(node.aws_instance_id).casefold()
+            for node in self._state_repo.list_active_nodes()
+            if node.aws_instance_id
+        }
+        scanned_scopes: set[tuple[str, str]] = set()
+        for asset in active_assets:
+            config = asset.provider_config
+            if (
+                asset.asset_type != "gcp"
+                or not asset.aws_access_key
+                or not asset.aws_secret_key
+                or not asset.region
+                or not isinstance(config, dict)
+            ):
+                continue
+            project_id = str(config.get("project_id") or "").strip()
+            if not project_id:
+                continue
+            scope = (project_id.casefold(), asset.region.casefold())
+            if scope in scanned_scopes:
+                continue
+            try:
+                client = GCPClient(
+                    self._runtime,
+                    credentials=GCPCredentials(
+                        project_id=project_id,
+                        client_email=asset.aws_access_key,
+                        private_key=asset.aws_secret_key,
+                        private_key_id=str(config.get("private_key_id") or "").strip() or None,
+                        client_id=str(config.get("client_id") or "").strip() or None,
+                        token_uri=str(config.get("token_uri") or "").strip()
+                        or "https://oauth2.googleapis.com/token",
+                    ),
+                )
+                instances = client.list_instances(asset.region)
+                scanned_scopes.add(scope)
+                for instance in instances:
+                    name = str(instance.get("name") or "").strip()
+                    labels = gcp_instance_labels(instance)
+                    status = str(instance.get("status") or "unknown")
+                    created_at = gcp_instance_created_at(instance)
+                    if (
+                        not name
+                        or labels.get("managed-by", "").casefold() != "shadowfleet"
+                        or name.casefold() in known_ids
+                        or status.upper() in {"TERMINATED", "SUSPENDING"}
+                        or not _is_older_than(created_at, timedelta(hours=1))
+                    ):
+                        continue
+                    orphans.append(
+                        OrphanGCPInstance(
+                            instance_name=name,
+                            asset_id=asset.id,
+                            project_id=project_id,
+                            zone=asset.region,
+                            created_at=created_at,
+                            status=status,
+                            labels=labels,
+                        )
+                    )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan GCP instances for asset_id=%s: %s",
+                    asset.id,
+                    exc,
+                )
+        return orphans
 
     def _scan_orphan_kamatera_servers(self) -> list[OrphanKamateraServer]:
         orphan_servers: list[OrphanKamateraServer] = []

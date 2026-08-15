@@ -11,6 +11,7 @@ from services.asset_application_models import (
     AssetRegistrationResult,
     AzureAssetRegistrationRequest,
     DigitalOceanAssetRegistrationRequest,
+    KamateraAssetRegistrationRequest,
     VultrAssetRegistrationRequest,
 )
 
@@ -181,6 +182,80 @@ def test_register_vultr_asset_route_maps_request(assets_client: TestClient) -> N
     assert request.ssh_key_ids == ("ssh-key-1",)
     assert request.vpc_ids == ("vpc-id",)
     assert request.firewall_group_id == "firewall-id"
+
+
+def test_register_kamatera_asset_route_maps_request(assets_client: TestClient) -> None:
+    with patch("api.router.assets.AssetApplicationService") as service_cls:
+        service = service_cls.return_value
+        service.register_kamatera_asset.return_value = AssetRegistrationResult(
+            asset_id=15,
+            asset_name="kamatera-asia",
+            protocol_config_id=37,
+        )
+
+        response = assets_client.post(
+            "/api/v1/assets/kamatera",
+            json={
+                "asset_name": "kamatera-asia",
+                "datacenter": "AS",
+                "client_id": "kamatera-client",
+                "secret": "kamatera-secret",
+                "image": "ubuntu_server_24.04_64-bit",
+                "ssh_public_key": "ssh-ed25519 AAAA test",
+                "cpu_type": "B",
+                "cpu_cores": 2,
+                "ram_mb": 4096,
+                "disk_sizes_gb": [30, 40],
+                "billing_cycle": "hourly",
+                "tags": ["prod"],
+                "protocol_type": "Trojan",
+                "additional_protocol_types": ["AnyTLS"],
+                "target_count": 1,
+                "max_count": 2,
+                "priority": 80,
+                "allow_cdn_proxy": True,
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["asset_type"] == "kamatera"
+    assert response.json()["aws_access_key"] is None
+    assert response.json()["aws_secret_key"] is None
+    request = service.register_kamatera_asset.call_args.args[0]
+    assert isinstance(request, KamateraAssetRegistrationRequest)
+    assert request.client_id == "kamatera-client"
+    assert request.secret == "kamatera-secret"
+    assert request.disk_sizes_gb == (30, 40)
+    assert request.additional_protocol_types == ("AnyTLS",)
+
+
+def test_kamatera_catalog_route_maps_credentials_and_datacenter(
+    assets_client: TestClient,
+) -> None:
+    with patch("api.router.assets.AssetApplicationService") as service_cls:
+        service = service_cls.return_value
+        service.query_kamatera_catalog.return_value = {
+            "datacenters": [{"id": "AS"}],
+            "images": [{"id": "ubuntu"}],
+            "capabilities": {"cpu": ["1B", "2B"]},
+        }
+
+        response = assets_client.post(
+            "/api/v1/assets/kamatera/query-catalog",
+            json={
+                "client_id": "kamatera-client",
+                "secret": "kamatera-secret",
+                "datacenter": "AS",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["capabilities"]["cpu"] == ["1B", "2B"]
+    service.query_kamatera_catalog.assert_called_once_with(
+        client_id="kamatera-client",
+        secret="kamatera-secret",
+        datacenter="AS",
+    )
 
 
 def test_register_azure_asset_route_maps_request(assets_client: TestClient) -> None:

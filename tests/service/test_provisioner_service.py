@@ -213,6 +213,7 @@ class TestAssetTypeValidation:
             "digitalocean",
             "vultr",
             "azure",
+            "gcp",
             "oci",
             "kamatera",
             "self_hosted",

@@ -34,6 +34,7 @@ class OrphanResourceReportResponse(BaseModel):
     digitalocean_droplets: list[dict]
     digitalocean_snapshots: list[dict]
     vultr_instances: list[dict]
+    gcp_instances: list[dict]
     kamatera_servers: list[dict]
     oci_instances: list[dict]
     azure_vms: list[dict]
@@ -47,6 +48,7 @@ class CleanupRequest(BaseModel):
     cleanup_ec2: bool = True
     cleanup_digitalocean: bool = True
     cleanup_vultr: bool = True
+    cleanup_gcp: bool = True
     cleanup_kamatera: bool = True
     cleanup_oci: bool = True
     cleanup_azure: bool = True
@@ -154,6 +156,18 @@ async def scan_orphan_resources(
             }
             for inst in report.vultr_instances
         ],
+        gcp_instances=[
+            {
+                "instance_name": instance.instance_name,
+                "asset_id": instance.asset_id,
+                "project_id": instance.project_id,
+                "zone": instance.zone,
+                "created_at": instance.created_at,
+                "status": instance.status,
+                "labels": instance.labels,
+            }
+            for instance in report.gcp_instances
+        ],
         kamatera_servers=[
             {
                 "server_id": server.server_id,
@@ -256,6 +270,7 @@ async def cleanup_orphan_resources(
         cleanup_ec2=request.cleanup_ec2,
         cleanup_digitalocean=request.cleanup_digitalocean,
         cleanup_vultr=request.cleanup_vultr,
+        cleanup_gcp=request.cleanup_gcp,
         cleanup_kamatera=request.cleanup_kamatera,
         cleanup_oci=request.cleanup_oci,
         cleanup_azure=request.cleanup_azure,
@@ -341,16 +356,14 @@ async def repair_sync_inconsistencies(
 
 @router.get("/system", response_model=SystemHealthReportResponse)
 async def check_system_health(
-    auto_cleanup: bool = False,
-    auto_repair: bool = False,
     ctx: RuntimeContext = Depends(get_runtime_context),
     _current_user: None = Depends(get_current_user),
 ) -> SystemHealthReportResponse:
-    """系统整体健康检查"""
+    """系统整体健康检查（只读）。"""
     monitor = SystemHealthMonitor(ctx)
     report = monitor.run_health_check(
-        auto_cleanup_orphans=auto_cleanup,
-        auto_repair_sync=auto_repair,
+        auto_cleanup_orphans=False,
+        auto_repair_sync=False,
     )
 
     return SystemHealthReportResponse(
@@ -367,6 +380,7 @@ async def check_system_health(
                 report.orphan_resource_report.digitalocean_snapshots
             ),
             "vultr_instances": len(report.orphan_resource_report.vultr_instances),
+            "gcp_instances": len(getattr(report.orphan_resource_report, "gcp_instances", [])),
             "kamatera_servers": len(report.orphan_resource_report.kamatera_servers),
             "oci_instances": len(report.orphan_resource_report.oci_instances),
             "azure_vms": len(report.orphan_resource_report.azure_vms),

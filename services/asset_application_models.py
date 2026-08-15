@@ -121,6 +121,29 @@ class AzureAssetRegistrationRequest:
 
 
 @dataclass(frozen=True)
+class GCPAssetRegistrationRequest:
+    asset_name: str
+    project_id: str
+    service_account_json: str
+    zone: str
+    machine_type: str = "e2-small"
+    source_image: str = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64"
+    network: str = "default"
+    subnetwork: str | None = None
+    ssh_username: str = "ubuntu"
+    ssh_public_key: str = ""
+    labels: tuple[str, ...] = ()
+    remarks: str | None = None
+    protocol_type: str | None = None
+    additional_protocol_types: tuple[str, ...] = ()
+    target_count: int = 0
+    max_count: int = 0
+    priority: int = 100
+    allow_cdn_proxy: bool = False
+    default_vcpu: int | None = None
+
+
+@dataclass(frozen=True)
 class OCIAssetRegistrationRequest:
     asset_name: str
     region: str

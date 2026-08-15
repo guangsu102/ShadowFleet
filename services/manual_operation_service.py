@@ -15,6 +15,7 @@ from services.healing_support import (
     AWS_HEALABLE_PROTOCOLS,
     AZURE_HEALABLE_PROTOCOLS,
     DIGITALOCEAN_HEALABLE_PROTOCOLS,
+    GCP_HEALABLE_PROTOCOLS,
     KAMATERA_HEALABLE_PROTOCOLS,
     OCI_HEALABLE_PROTOCOLS,
     SELF_HOSTED_PROXY_PROTOCOLS,
@@ -175,7 +176,7 @@ class ManualOperationService:
             "status": result.status,
             "local_node_id": result.local_node_id,
             "cloud_instance_deleted": infer_node_asset_type(node_record)
-            in {"aws", "digitalocean", "kamatera", "vultr", "azure", "oci"},
+            in {"aws", "digitalocean", "gcp", "kamatera", "vultr", "azure", "oci"},
         }
 
     def _execute_reprobe(self, task_record: ManualOperationTaskRecord) -> dict[str, object]:
@@ -267,6 +268,8 @@ class ManualOperationService:
             raise ValueError(
                 f"DigitalOcean 节点协议不支持实例替换自愈: {node_type}"
             )
+        if resolved_asset_type == "gcp" and node_type not in GCP_HEALABLE_PROTOCOLS:
+            raise ValueError(f"GCP 节点协议不支持原生 IPv4 轮换: {node_type}")
         if resolved_asset_type == "kamatera" and node_type not in KAMATERA_HEALABLE_PROTOCOLS:
             raise ValueError(f"Kamatera 节点协议不支持实例替换自愈: {node_type}")
         if resolved_asset_type == "vultr" and node_type not in VULTR_HEALABLE_PROTOCOLS:
@@ -281,6 +284,7 @@ class ManualOperationService:
             "aws",
             "azure",
             "digitalocean",
+            "gcp",
             "kamatera",
             "oci",
             "vultr",
@@ -291,6 +295,7 @@ class ManualOperationService:
             "aws": "aws_ipv6_rotate",
             "azure": "azure_ipv6_rotate",
             "digitalocean": "digitalocean_instance_replace",
+            "gcp": "gcp_ipv4_rotate",
             "kamatera": "kamatera_instance_replace",
             "oci": "oci_ipv6_rotate",
             "vultr": "vultr_instance_replace",
@@ -324,6 +329,7 @@ class ManualOperationService:
             "aws_ipv6_rotate",
             "azure_ipv6_rotate",
             "digitalocean_instance_replace",
+            "gcp_ipv4_rotate",
             "kamatera_instance_replace",
             "vultr_instance_replace",
             "oci_ipv6_rotate",

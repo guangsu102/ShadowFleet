@@ -190,6 +190,11 @@ class KamateraClient:
         *,
         datacenter: str,
         image: str,
+        cpu: str | None = None,
+        ram_mb: int | None = None,
+        disk_sizes_gb: tuple[int, ...] = (),
+        billing_cycle: str | None = None,
+        monthly_package: str | None = None,
     ) -> None:
         datacenter_id = _required_text(datacenter, "datacenter")
         image_id = _required_text(image, "image")
@@ -200,6 +205,69 @@ class KamateraClient:
         if not any(str(item.get("id") or "") == image_id for item in images):
             raise KamateraClientError(
                 f"Kamatera image is not available in {datacenter_id}: {image_id}"
+            )
+        capabilities = self.get_capabilities(datacenter_id)
+        self._validate_provisioning_capabilities(
+            capabilities,
+            cpu=_optional_text(cpu),
+            ram_mb=ram_mb,
+            disk_sizes_gb=disk_sizes_gb,
+            billing_cycle=_optional_text(billing_cycle),
+            monthly_package=_optional_text(monthly_package),
+        )
+
+    @staticmethod
+    def _validate_provisioning_capabilities(
+        capabilities: dict[str, Any],
+        *,
+        cpu: str | None,
+        ram_mb: int | None,
+        disk_sizes_gb: tuple[int, ...],
+        billing_cycle: str | None,
+        monthly_package: str | None,
+    ) -> None:
+        cpu_capability = _find_capability(capabilities, "cpu", "cpus")
+        if cpu is not None:
+            _validate_capability_value(cpu_capability, cpu, "CPU")
+
+        ram_capability = _find_capability(capabilities, "ram", "memory", "ram_mb")
+        if ram_mb is not None:
+            _validate_capability_value(ram_capability, ram_mb, "RAM")
+
+        disk_capability = _find_capability(
+            capabilities,
+            "disk",
+            "disk_size",
+            "disk_sizes",
+        )
+        for disk_size in disk_sizes_gb:
+            _validate_capability_value(disk_capability, disk_size, "disk size")
+
+
+        billing_capability = _find_capability(
+            capabilities,
+            "billingcycle",
+            "billing_cycle",
+            "billing_cycles",
+        )
+        if billing_cycle is not None:
+            _validate_capability_value(
+                billing_capability,
+                billing_cycle,
+                "billing cycle",
+            )
+
+        package_capability = _find_capability(
+            capabilities,
+            "monthlypackage",
+            "monthly_package",
+            "monthly_packages",
+        )
+        if monthly_package is not None:
+            _validate_capability_value(
+                package_capability,
+                monthly_package,
+                "monthly package",
             )
 
     def launch_server(
@@ -527,6 +595,125 @@ def _public_ip_addresses(
             elif parsed.version == 6 and ipv6 is None:
                 ipv6 = str(parsed)
     return ipv4, ipv6
+
+
+def _find_capability(capabilities: dict[str, Any], *aliases: str) -> Any:
+    normalized_aliases = {_normalize_capability_key(alias) for alias in aliases}
+    pending: list[tuple[dict[str, Any], int]] = [(capabilities, 0)]
+    while pending:
+        current, depth = pending.pop(0)
+        for key, value in current.items():
+            if _normalize_capability_key(str(key)) in normalized_aliases:
+                return value
+        if depth >= 2:
+            continue
+        for value in current.values():
+            if isinstance(value, dict):
+                pending.append((value, depth + 1))
+    return None
+
+
+def _normalize_capability_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _validate_capability_value(capability: Any, value: object, label: str) -> None:
+    if capability is None:
+        return
+
+    allowed_values = _capability_allowed_values(capability)
+    if allowed_values is not None:
+        normalized_value = _normalize_capability_value_text(value)
+        normalized_allowed = {
+            _normalize_capability_value_text(allowed) for allowed in allowed_values
+        }
+        if normalized_allowed and normalized_value not in normalized_allowed:
+            allowed_text = ", ".join(str(allowed) for allowed in allowed_values)
+            raise KamateraClientError(
+                f"Kamatera {label} is not available: {value}; allowed values: {allowed_text}"
+            )
+        return
+
+    if not isinstance(capability, dict):
+        return
+    numeric_value = _as_float(value)
+    if numeric_value is None:
+        return
+    minimum = _first_numeric(capability, "min", "minimum")
+    maximum = _first_numeric(capability, "max", "maximum")
+    step = _first_numeric(capability, "step", "increment")
+    if minimum is not None and numeric_value < minimum:
+        raise KamateraClientError(
+            f"Kamatera {label} must be at least {_format_number(minimum)}"
+        )
+    if maximum is not None and numeric_value > maximum:
+        raise KamateraClientError(
+            f"Kamatera {label} must be at most {_format_number(maximum)}"
+        )
+    if step is not None and step > 0:
+        base = minimum or 0
+        remainder = (numeric_value - base) / step
+        if abs(remainder - round(remainder)) > 1e-9:
+            raise KamateraClientError(
+                f"Kamatera {label} must use increments of {_format_number(step)}"
+            )
+
+
+def _capability_allowed_values(capability: Any) -> list[object] | None:
+    if isinstance(capability, (list, tuple, set)):
+        values = [
+            value
+            for item in capability
+            if (value := _capability_item_value(item)) is not None
+        ]
+        return values
+    if not isinstance(capability, dict):
+        return None
+    normalized_keys = {
+        _normalize_capability_key(str(key)): value
+        for key, value in capability.items()
+    }
+    for key in ("values", "options", "allowed", "items"):
+        raw = normalized_keys.get(key)
+        if isinstance(raw, (list, tuple, set)):
+            return [
+                value
+                for item in raw
+                if (value := _capability_item_value(item)) is not None
+            ]
+    return None
+
+
+def _capability_item_value(item: object) -> object | None:
+    if not isinstance(item, dict):
+        return item
+    for key in ("id", "value", "name", "code"):
+        if key in item:
+            return item[key]
+    return None
+
+
+def _normalize_capability_value_text(value: object) -> str:
+    return str(value).strip().lower()
+
+
+def _first_numeric(capability: dict[str, Any], *keys: str) -> float | None:
+    normalized_keys = {_normalize_capability_key(key) for key in keys}
+    for key, value in capability.items():
+        if _normalize_capability_key(str(key)) in normalized_keys:
+            return _as_float(value)
+    return None
+
+
+def _as_float(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_number(value: float) -> str:
+    return str(int(value)) if value.is_integer() else str(value)
 
 
 def server_created_at(server: dict[str, Any]) -> str:

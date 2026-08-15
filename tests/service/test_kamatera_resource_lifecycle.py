@@ -90,6 +90,11 @@ def test_register_kamatera_asset_validates_target_and_persists_provider_config()
     client.validate_provisioning_target.assert_called_once_with(
         datacenter="AS",
         image="ubuntu_server_24.04_64-bit",
+        cpu="2B",
+        ram_mb=4096,
+        disk_sizes_gb=(30, 40),
+        billing_cycle="hourly",
+        monthly_package=None,
     )
     create_request = repo.create_asset.call_args.args[0]
     expected_digest = hashlib.sha256(b"client-id").hexdigest()[:24]
@@ -273,6 +278,19 @@ def test_kamatera_provider_inference_healing_and_scheduler_support() -> None:
     scheduler._runtime.config_holder = None
     scheduler._runtime.config.fleet_scheduler.enabled_asset_types = ["kamatera"]
     assert scheduler._enabled_cloud_asset_types() == ("kamatera",)
+
+
+def test_default_sqlite_fixture_accepts_kamatera(in_memory_sqlite_db) -> None:
+    in_memory_sqlite_db.execute(
+        """
+        INSERT INTO fleet_assets (
+            asset_type, asset_name, status, created_at, updated_at
+        ) VALUES ('kamatera', 'kamatera-default-fixture', 'active', 'now', 'now')
+        """
+    )
+    assert in_memory_sqlite_db.execute(
+        "SELECT COUNT(*) FROM fleet_assets WHERE asset_type = 'kamatera'"
+    ).fetchone()[0] == 1
 
 
 def test_sqlite_asset_constraint_accepts_kamatera(full_schema_sqlite_db) -> None:

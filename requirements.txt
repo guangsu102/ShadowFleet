@@ -7,6 +7,7 @@ streamlit>=1.32.0
 
 # 2. 云资源调度引擎 (infrastructure/aws/ 模块)
 boto3>=1.34.0
+google-auth>=2.29.0
 
 # 3. PostgreSQL 数据库交互 (database/ 模块)
 # 必须使用二进制版本以避免在精简版 Linux 上编译 C 扩展报错

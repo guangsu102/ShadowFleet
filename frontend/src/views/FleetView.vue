@@ -145,7 +145,7 @@ const manualOpOptions = computed<SelectOption[]>(() => {
     { label: t('fleet.reprobeNode'), value: 'reprobe_node' },
     { label: t('fleet.markManualReview'), value: 'mark_manual_review' },
   ]
-  if (['aws', 'azure', 'digitalocean', 'kamatera', 'oci', 'vultr', 'self_hosted'].includes(selectedNode.value.asset_type)) {
+  if (['aws', 'azure', 'digitalocean', 'gcp', 'kamatera', 'oci', 'vultr', 'self_hosted'].includes(selectedNode.value.asset_type)) {
     options.unshift({ label: t('fleet.forceHeal'), value: 'force_heal' })
   }
   return options

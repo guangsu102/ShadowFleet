@@ -42,6 +42,15 @@ def infer_node_asset_type(node_record: FleetNodeRecord) -> str:
         ):
             return "azure"
         if (
+            normalized_account_id == "gcp"
+            or normalized_account_id.startswith("gcp:")
+        ) and (
+            not isinstance(asset_type, str)
+            or not asset_type.strip()
+            or asset_type.strip() == "aws"
+        ):
+            return "gcp"
+        if (
             normalized_account_id == "kamatera"
             or normalized_account_id.startswith("kamatera:")
         ) and (

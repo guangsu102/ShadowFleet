@@ -15,6 +15,7 @@ from database.state_repo import StateRepo
 from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.azure import AzureClient, AzureClientError, AzureCredentials
 from infrastructure.digitalocean import DigitalOceanClient, DigitalOceanClientError
+from infrastructure.gcp import GCPClient, GCPClientError, GCPCredentials
 from infrastructure.kamatera import (
     KamateraClient,
     KamateraClientError,
@@ -150,6 +151,9 @@ class OrphanResourceScanService:
 
             kamatera_orphans = self._scan_kamatera_orphans()
             orphans.extend(kamatera_orphans)
+
+            gcp_orphans = self._scan_gcp_orphans()
+            orphans.extend(gcp_orphans)
 
             azure_orphans = self._scan_azure_orphans()
             orphans.extend(azure_orphans)
@@ -606,6 +610,78 @@ class OrphanResourceScanService:
             self._logger.exception("Failed to scan Kamatera orphans: %s", exc)
         return orphans
 
+    def _scan_gcp_orphans(self) -> list[OrphanResourceInfo]:
+        orphans: list[OrphanResourceInfo] = []
+        try:
+            assets = self._asset_repo.list_assets_by_status("active")
+            known_ids = {
+                str(node.aws_instance_id).casefold()
+                for node in self._state_repo.list_active_nodes()
+                if node.aws_instance_id
+            }
+            scanned_scopes: set[tuple[str, str]] = set()
+            for asset in assets:
+                config = asset.provider_config
+                if (
+                    asset.asset_type != "gcp"
+                    or not asset.aws_access_key
+                    or not asset.aws_secret_key
+                    or not asset.region
+                    or not isinstance(config, dict)
+                ):
+                    continue
+                project_id = str(config.get("project_id") or "").strip()
+                if not project_id:
+                    continue
+                scope = (project_id.casefold(), asset.region.casefold())
+                if scope in scanned_scopes:
+                    continue
+                try:
+                    client = self._build_gcp_client(asset)
+                    instances = client.list_instances(asset.region)
+                    scanned_scopes.add(scope)
+                    for instance in instances:
+                        name = str(instance.get("name") or "").strip()
+                        labels = instance.get("labels")
+                        managed = (
+                            isinstance(labels, dict)
+                            and str(labels.get("managed-by") or "").casefold()
+                            == "shadowfleet"
+                        )
+                        status = str(instance.get("status") or "unknown")
+                        if (
+                            not name
+                            or not managed
+                            or name.casefold() in known_ids
+                            or status.upper() in {"TERMINATED", "SUSPENDING"}
+                        ):
+                            continue
+                        created_at = str(
+                            instance.get("creationTimestamp") or ""
+                        ).strip()
+                        if not self._resource_age_exceeded(created_at):
+                            continue
+                        orphans.append(
+                            OrphanResourceInfo(
+                                resource_type="gcp_instance",
+                                resource_id=name,
+                                region=asset.region,
+                                aws_account_id=asset.aws_account_id,
+                                asset_id=asset.id,
+                                reason="Instance exists in GCP but not in SQLite",
+                                discovered_at=datetime.utcnow().isoformat(),
+                            )
+                        )
+                except Exception as exc:
+                    self._logger.warning(
+                        "Failed to scan GCP orphans for asset %s: %s",
+                        asset.asset_name,
+                        exc,
+                    )
+        except Exception as exc:
+            self._logger.exception("Failed to scan GCP orphans: %s", exc)
+        return orphans
+
     def _scan_oci_orphans(self) -> list[OrphanResourceInfo]:
         orphans: list[OrphanResourceInfo] = []
         try:
@@ -866,6 +942,19 @@ class OrphanResourceScanService:
                     except Exception as exc:
                         self._logger.warning(
                             "Vultr node scan is indeterminate for node %s instance %s: %s",
+                            node.xboard_node_id,
+                            node.aws_instance_id,
+                            exc,
+                        )
+                    continue
+                if asset_type == "gcp":
+                    try:
+                        orphan = self._scan_gcp_node_orphan(node)
+                        if orphan is not None:
+                            orphans.append(orphan)
+                    except Exception as exc:
+                        self._logger.warning(
+                            "GCP node scan is indeterminate for node %s instance %s: %s",
                             node.xboard_node_id,
                             node.aws_instance_id,
                             exc,
@@ -1158,6 +1247,55 @@ class OrphanResourceScanService:
             )
         return None
 
+    def _scan_gcp_node_orphan(
+        self,
+        node: FleetNodeRecord,
+    ) -> OrphanResourceInfo | None:
+        asset = self._asset_repo.get_asset_by_xboard_node_id(
+            node.xboard_node_id
+        )
+        if asset is None and node.aws_account_id:
+            asset = next(
+                (
+                    candidate
+                    for candidate in self._asset_repo.list_assets_by_aws_account_id(
+                        node.aws_account_id
+                    )
+                    if candidate.asset_type == "gcp"
+                ),
+                None,
+            )
+        if asset is None or asset.asset_type != "gcp":
+            raise ValueError("GCP asset credentials are unavailable")
+        zone = node.aws_region or asset.region
+        if not zone or not node.aws_instance_id:
+            raise ValueError("GCP node zone or instance name is missing")
+        try:
+            instance = self._build_gcp_client(asset).get_instance(
+                zone,
+                node.aws_instance_id,
+            )
+        except GCPClientError as exc:
+            if exc.status_code != 404:
+                raise
+            instance = None
+        state = (
+            str(instance.get("status") or "").upper()
+            if isinstance(instance, dict)
+            else "NOT_FOUND"
+        )
+        if state not in {"NOT_FOUND", "TERMINATED", "SUSPENDED"}:
+            return None
+        return OrphanResourceInfo(
+            resource_type="xboard_node",
+            resource_id=str(node.xboard_node_id),
+            region=zone,
+            aws_account_id=node.aws_account_id,
+            xboard_node_id=node.xboard_node_id,
+            reason=f"GCP instance state is {state}",
+            discovered_at=datetime.utcnow().isoformat(),
+        )
+
     def _scan_oci_node_orphan(
         self,
         node: FleetNodeRecord,
@@ -1287,6 +1425,8 @@ class OrphanResourceScanService:
                 return self._cleanup_vultr_orphan(orphan)
             elif orphan.resource_type == "kamatera_server":
                 return self._cleanup_kamatera_orphan(orphan)
+            elif orphan.resource_type == "gcp_instance":
+                return self._cleanup_gcp_orphan(orphan)
             elif orphan.resource_type == "oci_instance":
                 return self._cleanup_oci_orphan(orphan)
             elif orphan.resource_type == "azure_vm":
@@ -1414,6 +1554,30 @@ class OrphanResourceScanService:
             )
             return False
 
+    def _cleanup_gcp_orphan(self, orphan: OrphanResourceInfo) -> bool:
+        if orphan.asset_id is None or not orphan.region:
+            self._logger.warning(
+                "Cannot cleanup GCP orphan: asset_id or zone missing"
+            )
+            return False
+        try:
+            asset = self._asset_repo.get_asset_by_id(orphan.asset_id)
+            if asset.asset_type != "gcp":
+                return False
+            self._build_gcp_client(asset).delete_instance(
+                orphan.region,
+                orphan.resource_id,
+            )
+            set_event_type("orphan_gcp_instance_deleted")
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to delete orphan GCP instance %s: %s",
+                orphan.resource_id,
+                exc,
+            )
+            return False
+
     def _cleanup_oci_orphan(self, orphan: OrphanResourceInfo) -> bool:
         if orphan.asset_id is None:
             self._logger.warning("Cannot cleanup OCI orphan: no asset_id")
@@ -1476,6 +1640,31 @@ class OrphanResourceScanService:
                 exc,
             )
             return False
+
+    def _build_gcp_client(self, asset) -> GCPClient:
+        config = asset.provider_config
+        if (
+            asset.asset_type != "gcp"
+            or not asset.aws_access_key
+            or not asset.aws_secret_key
+            or not isinstance(config, dict)
+        ):
+            raise ValueError("GCP credentials are incomplete")
+        project_id = str(config.get("project_id") or "").strip()
+        if not project_id:
+            raise ValueError("GCP project_id is missing")
+        return GCPClient(
+            self._runtime_context,
+            credentials=GCPCredentials(
+                project_id=project_id,
+                client_email=asset.aws_access_key,
+                private_key=asset.aws_secret_key,
+                private_key_id=str(config.get("private_key_id") or "").strip() or None,
+                client_id=str(config.get("client_id") or "").strip() or None,
+                token_uri=str(config.get("token_uri") or "").strip()
+                or "https://oauth2.googleapis.com/token",
+            ),
+        )
 
     def _build_oci_client(self, asset) -> OCIClient:
         config = asset.provider_config
