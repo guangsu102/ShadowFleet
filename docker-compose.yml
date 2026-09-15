@@ -15,10 +15,16 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
       SHADOWFLEET_ENVIRONMENT: ${SHADOWFLEET_ENVIRONMENT:-production}
+      SHADOWFLEET_SQLITE_PATH: /data/shadowfleet.db
+      SHADOWFLEET_JWT_SECRET: ${SHADOWFLEET_JWT_SECRET:?SHADOWFLEET_JWT_SECRET is required}
+      SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY: ${SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY:?SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY is required}
+      SHADOWFLEET_BOOTSTRAP_ADMIN_PASSWORD: ${SHADOWFLEET_BOOTSTRAP_ADMIN_PASSWORD:?SHADOWFLEET_BOOTSTRAP_ADMIN_PASSWORD is required}
+      SHADOWFLEET_CORS_ALLOWED_ORIGINS: ${SHADOWFLEET_CORS_ALLOWED_ORIGINS:-}
+      SHADOWFLEET_XBOARD_V2BX_API_HOST: ${SHADOWFLEET_XBOARD_V2BX_API_HOST:-}
+      SHADOWFLEET_XBOARD_V2BX_API_KEY: ${SHADOWFLEET_XBOARD_V2BX_API_KEY:-}
     volumes:
-      - ./data/shadowfleet.db:/data/shadowfleet.db
+      - ./data:/data
       - ./data/logs:/app/logs
-      - ./data/config:/data/config:rw
     ports:
       - "${API_PORT:-8000}:8000"
     restart: unless-stopped
@@ -50,12 +56,16 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
       SHADOWFLEET_ENVIRONMENT: ${SHADOWFLEET_ENVIRONMENT:-production}
+      SHADOWFLEET_SQLITE_PATH: /data/shadowfleet.db
+      SHADOWFLEET_JWT_SECRET: ${SHADOWFLEET_JWT_SECRET:?SHADOWFLEET_JWT_SECRET is required}
+      SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY: ${SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY:?SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY is required}
+      SHADOWFLEET_XBOARD_V2BX_API_HOST: ${SHADOWFLEET_XBOARD_V2BX_API_HOST:-}
+      SHADOWFLEET_XBOARD_V2BX_API_KEY: ${SHADOWFLEET_XBOARD_V2BX_API_KEY:-}
     volumes:
-      - ./data/shadowfleet.db:/data/shadowfleet.db
+      - ./data:/data
       - ./data/logs:/app/logs
       - ./data/key_pairs:/app/key_pairs
       - shadowfleet-artifacts:/var/www/shadowfleet-artifacts
-      - ./data/config:/data/config:rw
     ports:
       - "${PHONE_HOME_PORT:-8787}:8787"
       - "${ARTIFACT_CACHE_PORT:-8080}:8080"

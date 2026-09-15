@@ -23,6 +23,9 @@ from services.provisioning_models import (
     ProvisionResult,
 )
 from services.provisioning_notifier import notify_failure, notify_success
+from services.provider_account_health_service import (
+    quarantine_terminal_provider_error,
+)
 from services.provisioning_support import (
     ProvisioningDependencies,
     build_register_node_request,
@@ -305,6 +308,19 @@ def _handle_gcp_provision_failure(
         selection_result.asset_id,
         runtime_context.config.app.skip_rollback_on_failure,
     )
+    try:
+        quarantine_terminal_provider_error(
+            runtime_context=runtime_context,
+            asset_repo=asset_repo,
+            provider="gcp",
+            account_id=selection_result.aws_account_id,
+            source_asset_id=selection_result.asset_id,
+            error=error,
+        )
+    except Exception:
+        dependencies.logger.exception(
+            "Failed to quarantine GCP account after terminal provider error"
+        )
     asset_repo.create_asset_event(
         AssetEventCreateRequest(
             asset_id=selection_result.asset_id,

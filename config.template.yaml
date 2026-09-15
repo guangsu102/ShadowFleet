@@ -8,6 +8,7 @@
 # 应用程序核心配置
 # -----------------------------------------------------------------------------
 app:
+  # Docker deployment overrides this with /data/shadowfleet.db.
   environment: development
   sqlite_path: shadowfleet.db
   request_timeout_seconds: 10
@@ -64,6 +65,10 @@ app:
   # 设为 true 时，部署失败后不执行回滚（terminate 实例、删除节点等），方便调试
   # JWT 签名密钥（生产环境必须设置，建议使用 32+ 字符随机字符串）
   # 可通过环境变量 SHADOWFLEET_JWT_SECRET 注入
+  jwt_secret: null
+  # Fernet 密钥，用于加密 SQLite 中的云凭据。建议只通过环境变量注入：
+  # SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY
+  asset_credential_encryption_key: null
   skip_rollback_on_failure: false
 
 # -----------------------------------------------------------------------------
@@ -168,3 +173,43 @@ fleet_scheduler:
   enabled_protocols: ["*"]
   # 自动调度使用的云厂商顺序（支持 digitalocean、vultr、azure、gcp、oci、kamatera、aws）
   enabled_asset_types: ["digitalocean", "vultr", "azure", "gcp", "oci", "kamatera", "aws"]
+  # fleet_matrix 使用逻辑区域；调度时映射为各云实际区域/可用区
+  provider_region_mappings:
+    ap-northeast-1:
+      aws: ap-northeast-1
+      vultr: nrt
+      azure: japaneast
+      gcp: asia-northeast1-a
+      oci: ap-tokyo-1
+    ap-southeast-1:
+      aws: ap-southeast-1
+      digitalocean: sgp1
+      vultr: sgp
+      azure: southeastasia
+      gcp: asia-southeast1-a
+      oci: ap-singapore-1
+      kamatera: AS
+    us-east-1:
+      aws: us-east-1
+      digitalocean: nyc3
+      vultr: ewr
+      azure: eastus
+      gcp: us-east1-b
+      oci: us-ashburn-1
+      kamatera: NY
+    us-west-2:
+      aws: us-west-2
+      digitalocean: sfo3
+      vultr: sea
+      azure: westus2
+      gcp: us-west1-a
+      oci: us-sanjose-1
+      kamatera: LA
+    eu-west-1:
+      aws: eu-west-1
+      digitalocean: lon1
+      vultr: lhr
+      azure: northeurope
+      gcp: europe-west1-b
+      oci: uk-london-1
+      kamatera: EU

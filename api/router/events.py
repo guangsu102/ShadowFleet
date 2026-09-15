@@ -26,7 +26,7 @@ def _build_sse(event_type: str, data: dict) -> bytes:
     return f"event: {event_type}\ndata: {payload}\n\n".encode("utf-8")
 
 
-def _validate_token(request: Request) -> int:
+def _validate_token(request: Request, ctx: RuntimeContext) -> int:
     """
     Validate the JWT token from the `token` query parameter.
     EventSource cannot send custom HTTP headers, so the token is passed via query string.
@@ -51,11 +51,24 @@ def _validate_token(request: Request) -> int:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing subject")
 
     from api.auth.db import AuthUserRepo
-    user = AuthUserRepo().get_by_id(int(user_id))
+    try:
+        parsed_user_id = int(str(user_id))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject",
+        ) from None
+    if parsed_user_id < 1:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject",
+        )
+
+    user = AuthUserRepo.from_runtime_context(ctx).get_by_id(parsed_user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    return int(user_id)
+    return parsed_user_id
 
 
 @router.get("/stream")
@@ -76,7 +89,7 @@ async def sse_stream(
     """
     # Authenticate before starting the stream; on failure, send SSE error then close.
     try:
-        user_id = _validate_token(request)
+        user_id = _validate_token(request, ctx)
     except Exception as e:
         # Return a streaming response that yields an auth error then closes.
         async def auth_error_generator():

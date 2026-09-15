@@ -11,10 +11,11 @@ API 路由：系统健康监控
 
 from __future__ import annotations
 
+import asyncio
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from api.auth.dependencies import get_current_user, require_operator
+from api.auth.dependencies import get_current_user, require_admin
 from api.deps import get_runtime_context
 from services.database_sync_monitor import DatabaseSyncMonitor
 from services.health_check_service import HealthCheckService
@@ -35,6 +36,7 @@ class OrphanResourceReportResponse(BaseModel):
     digitalocean_snapshots: list[dict]
     vultr_instances: list[dict]
     gcp_instances: list[dict]
+    gcp_firewall_rules: list[dict]
     kamatera_servers: list[dict]
     oci_instances: list[dict]
     azure_vms: list[dict]
@@ -45,17 +47,18 @@ class OrphanResourceReportResponse(BaseModel):
 
 
 class CleanupRequest(BaseModel):
-    cleanup_ec2: bool = True
-    cleanup_digitalocean: bool = True
-    cleanup_vultr: bool = True
-    cleanup_gcp: bool = True
-    cleanup_kamatera: bool = True
-    cleanup_oci: bool = True
-    cleanup_azure: bool = True
-    cleanup_dns: bool = True
-    cleanup_allocations: bool = True
-    cleanup_xboard: bool = True
-    dry_run: bool = False
+    cleanup_ec2: bool = False
+    cleanup_digitalocean: bool = False
+    cleanup_vultr: bool = False
+    cleanup_gcp: bool = False
+    cleanup_gcp_firewalls: bool = False
+    cleanup_kamatera: bool = False
+    cleanup_oci: bool = False
+    cleanup_azure: bool = False
+    cleanup_dns: bool = False
+    cleanup_allocations: bool = False
+    cleanup_xboard: bool = False
+    dry_run: bool = True
 
 
 class CleanupReportResponse(BaseModel):
@@ -76,11 +79,11 @@ class SyncHealthReportResponse(BaseModel):
 
 
 class RepairRequest(BaseModel):
-    repair_missing_in_sqlite: bool = True
+    repair_missing_in_sqlite: bool = False
     repair_missing_in_xboard: bool = False
-    repair_status_mismatch: bool = True
-    repair_host_mismatch: bool = True
-    dry_run: bool = False
+    repair_status_mismatch: bool = False
+    repair_host_mismatch: bool = False
+    dry_run: bool = True
 
 
 class RepairStatsResponse(BaseModel):
@@ -104,7 +107,7 @@ async def scan_orphan_resources(
 ) -> OrphanResourceReportResponse:
     """扫描孤儿资源"""
     detector = OrphanResourceDetector(ctx)
-    report = detector.scan_all_orphan_resources()
+    report = await asyncio.to_thread(detector.scan_all_orphan_resources)
 
     return OrphanResourceReportResponse(
         scan_time=report.scan_time,
@@ -167,6 +170,16 @@ async def scan_orphan_resources(
                 "labels": instance.labels,
             }
             for instance in report.gcp_instances
+        ],
+        gcp_firewall_rules=[
+            {
+                "rule_name": firewall.rule_name,
+                "asset_id": firewall.asset_id,
+                "project_id": firewall.project_id,
+                "network": firewall.network,
+                "created_at": firewall.created_at,
+            }
+            for firewall in report.gcp_firewall_rules
         ],
         kamatera_servers=[
             {
@@ -255,22 +268,24 @@ async def scan_orphan_resources(
 async def cleanup_orphan_resources(
     request: CleanupRequest,
     ctx: RuntimeContext = Depends(get_runtime_context),
-    _current_user: None = Depends(require_operator),
+    _current_user: None = Depends(require_admin),
 ) -> CleanupReportResponse:
     """清理孤儿资源"""
     detector = OrphanResourceDetector(ctx)
     cleaner = OrphanResourceCleaner(ctx)
 
     # 先扫描
-    orphan_report = detector.scan_all_orphan_resources()
+    orphan_report = await asyncio.to_thread(detector.scan_all_orphan_resources)
 
     # 再清理
-    cleanup_report = cleaner.cleanup_orphan_resources(
+    cleanup_report = await asyncio.to_thread(
+        cleaner.cleanup_orphan_resources,
         orphan_report,
         cleanup_ec2=request.cleanup_ec2,
         cleanup_digitalocean=request.cleanup_digitalocean,
         cleanup_vultr=request.cleanup_vultr,
         cleanup_gcp=request.cleanup_gcp,
+        cleanup_gcp_firewalls=request.cleanup_gcp_firewalls,
         cleanup_kamatera=request.cleanup_kamatera,
         cleanup_oci=request.cleanup_oci,
         cleanup_azure=request.cleanup_azure,
@@ -304,7 +319,7 @@ async def check_sync_status(
 ) -> SyncHealthReportResponse:
     """检查数据库同步状态"""
     monitor = DatabaseSyncMonitor(ctx)
-    report = monitor.check_sync_health()
+    report = await asyncio.to_thread(monitor.check_sync_health)
 
     return SyncHealthReportResponse(
         check_time=report.check_time,
@@ -329,16 +344,17 @@ async def check_sync_status(
 async def repair_sync_inconsistencies(
     request: RepairRequest,
     ctx: RuntimeContext = Depends(get_runtime_context),
-    _current_user: None = Depends(require_operator),
+    _current_user: None = Depends(require_admin),
 ) -> RepairStatsResponse:
     """修复数据库同步问题"""
     monitor = DatabaseSyncMonitor(ctx)
 
     # 先检查
-    sync_report = monitor.check_sync_health()
+    sync_report = await asyncio.to_thread(monitor.check_sync_health)
 
     # 再修复
-    stats = monitor.auto_repair_inconsistencies(
+    stats = await asyncio.to_thread(
+        monitor.auto_repair_inconsistencies,
         sync_report,
         repair_missing_in_sqlite=request.repair_missing_in_sqlite,
         repair_missing_in_xboard=request.repair_missing_in_xboard,
@@ -361,7 +377,8 @@ async def check_system_health(
 ) -> SystemHealthReportResponse:
     """系统整体健康检查（只读）。"""
     monitor = SystemHealthMonitor(ctx)
-    report = monitor.run_health_check(
+    report = await asyncio.to_thread(
+        monitor.run_health_check,
         auto_cleanup_orphans=False,
         auto_repair_sync=False,
     )
@@ -380,7 +397,12 @@ async def check_system_health(
                 report.orphan_resource_report.digitalocean_snapshots
             ),
             "vultr_instances": len(report.orphan_resource_report.vultr_instances),
-            "gcp_instances": len(getattr(report.orphan_resource_report, "gcp_instances", [])),
+            "gcp_instances": len(
+                getattr(report.orphan_resource_report, "gcp_instances", [])
+            ),
+            "gcp_firewall_rules": len(
+                getattr(report.orphan_resource_report, "gcp_firewall_rules", [])
+            ),
             "kamatera_servers": len(report.orphan_resource_report.kamatera_servers),
             "oci_instances": len(report.orphan_resource_report.oci_instances),
             "azure_vms": len(report.orphan_resource_report.azure_vms),

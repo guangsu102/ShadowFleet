@@ -84,6 +84,7 @@ class SystemHealthMonitor:
                     f"DigitalOceanSnapshots={len(orphan_report.digitalocean_snapshots)}, "
                     f"Vultr={len(orphan_report.vultr_instances)}, "
                     f"GCP={len(orphan_report.gcp_instances)}, "
+                    f"GCPFirewall={len(orphan_report.gcp_firewall_rules)}, "
                     f"Kamatera={len(orphan_report.kamatera_servers)}, "
                     f"OCI={len(orphan_report.oci_instances)}, "
                     f"Azure={len(orphan_report.azure_vms)}, "
@@ -113,6 +114,17 @@ class SystemHealthMonitor:
                 self._logger.info("Auto-cleanup enabled, cleaning up orphan resources")
                 cleanup_report = self._orphan_cleaner.cleanup_orphan_resources(
                     orphan_report,
+                    cleanup_ec2=True,
+                    cleanup_digitalocean=True,
+                    cleanup_vultr=True,
+                    cleanup_gcp=True,
+                    cleanup_gcp_firewalls=False,
+                    cleanup_kamatera=True,
+                    cleanup_oci=True,
+                    cleanup_azure=True,
+                    cleanup_dns=True,
+                    cleanup_allocations=True,
+                    cleanup_xboard=True,
                     dry_run=False,
                 )
                 alerts.append(
@@ -124,6 +136,10 @@ class SystemHealthMonitor:
                 self._logger.info("Auto-repair enabled, repairing sync inconsistencies")
                 repair_stats = self._sync_monitor.auto_repair_inconsistencies(
                     sync_report,
+                    repair_missing_in_sqlite=True,
+                    repair_missing_in_xboard=False,
+                    repair_status_mismatch=True,
+                    repair_host_mismatch=True,
                     dry_run=False,
                 )
                 alerts.append(
@@ -194,6 +210,10 @@ class SystemHealthMonitor:
                 ),
                 f"- Vultr 实例: {len(report.orphan_resource_report.vultr_instances)}",
                 f"- GCP 实例: {len(report.orphan_resource_report.gcp_instances)}",
+                (
+                    "- GCP 防火墙规则: "
+                    f"{len(report.orphan_resource_report.gcp_firewall_rules)}"
+                ),
                 f"- Kamatera 服务器: {len(report.orphan_resource_report.kamatera_servers)}",
                 f"- OCI 实例: {len(report.orphan_resource_report.oci_instances)}",
                 f"- Azure VM: {len(report.orphan_resource_report.azure_vms)}",

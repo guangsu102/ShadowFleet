@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 from models.config_models import (
@@ -36,6 +37,8 @@ class TestAppRuntimeConfig:
             sentinel_enabled=True,
             xboard_sentinel_api_base_url="https://xboard.example.com/sentinel/api",
             xboard_sentinel_api_key="sentinel_api_key",
+            jwt_secret="x" * 32,
+            asset_credential_encryption_key=Fernet.generate_key().decode("ascii"),
         )
         assert config.environment == "production"
         assert config.sqlite_path == "/data/fleet.db"
@@ -312,7 +315,11 @@ class TestAppConfig:
     def test_full_config(self) -> None:
         """Full config should work."""
         config = AppConfig(
-            app=AppRuntimeConfig(environment="production"),
+            app=AppRuntimeConfig(
+                environment="production",
+                jwt_secret="x" * 32,
+                asset_credential_encryption_key=Fernet.generate_key().decode("ascii"),
+            ),
             telegram=TelegramConfig(enabled=True, bot_token="t", chat_id="c"),
             cloudflare=CloudflareConfig(
                 enabled=True,

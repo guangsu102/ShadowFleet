@@ -16,7 +16,7 @@ def _client() -> TestClient:
     runtime = MagicMock()
     app.dependency_overrides[health_router.get_runtime_context] = lambda: runtime
     app.dependency_overrides[health_router.get_current_user] = lambda: None
-    app.dependency_overrides[health_router.require_operator] = lambda: None
+    app.dependency_overrides[health_router.require_admin] = lambda: None
     return TestClient(app)
 
 

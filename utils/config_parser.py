@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,8 @@ from models.config_models import AppConfig
 
 
 ENVIRONMENT_OVERRIDE_MAP: dict[str, tuple[str, ...]] = {
+    "SHADOWFLEET_ENVIRONMENT": ("app", "environment"),
+    "SHADOWFLEET_SQLITE_PATH": ("app", "sqlite_path"),
     "SHADOWFLEET_TELEGRAM_BOT_TOKEN": ("telegram", "bot_token"),
     "SHADOWFLEET_TELEGRAM_CHAT_ID": ("telegram", "chat_id"),
     "SHADOWFLEET_CLOUDFLARE_API_TOKEN": ("cloudflare", "api_token"),
@@ -21,11 +24,18 @@ ENVIRONMENT_OVERRIDE_MAP: dict[str, tuple[str, ...]] = {
     "SHADOWFLEET_AWS_PROXY_PASSWORD": ("aws_proxy", "password"),
     "SHADOWFLEET_AWS_PROXY_API_KEY": ("aws_proxy", "api_key"),
     "SHADOWFLEET_XBOARD_PASSWORD": ("xboard", "password"),
+    "SHADOWFLEET_XBOARD_V2BX_API_HOST": ("xboard", "v2bx_api_host"),
+    "SHADOWFLEET_XBOARD_V2BX_API_KEY": ("xboard", "v2bx_api_key"),
     "SHADOWFLEET_SENTINEL_PROBE_API_BASE_URL": ("app", "sentinel_probe_api_base_url"),
     "SHADOWFLEET_SENTINEL_PROBE_API_TOKEN": ("app", "sentinel_probe_api_token"),
     "SHADOWFLEET_XBOARD_SENTINEL_API_BASE_URL": ("app", "xboard_sentinel_api_base_url"),
     "SHADOWFLEET_XBOARD_SENTINEL_API_KEY": ("app", "xboard_sentinel_api_key"),
     "SHADOWFLEET_PROBE_BOOTSTRAP_TOKENS": ("app", "probe_bootstrap_tokens"),
+    "SHADOWFLEET_JWT_SECRET": ("app", "jwt_secret"),
+    "SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY": (
+        "app",
+        "asset_credential_encryption_key",
+    ),
 }
 
 
@@ -42,6 +52,12 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         return AppConfig.model_validate(hydrated_config)
     except ValidationError as exc:
         raise ConfigLoadError(f"Invalid configuration in {resolved_path}") from exc
+
+
+def validate_raw_config(config_dict: dict[str, Any]) -> AppConfig:
+    """Validate a raw configuration using the same environment overrides as startup."""
+    hydrated_config = _apply_environment_overrides(config_dict)
+    return AppConfig.model_validate(hydrated_config)
 
 
 def _resolve_config_path(config_path: str | Path | None) -> Path:
@@ -72,8 +88,31 @@ def load_raw_config(config_path: str | Path | None = None) -> dict[str, Any]:
 def save_raw_config(config_path: str | Path | None, config_dict: dict[str, Any]) -> None:
     """Save raw dict as YAML (for UI editors)."""
     resolved_path = _resolve_config_path(config_path)
-    with resolved_path.open("w", encoding="utf-8") as f:
-        yaml.dump(config_dict, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    serialized = yaml.safe_dump(
+        config_dict,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+    )
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=resolved_path.parent,
+            prefix=f".{resolved_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            temporary_file.write(serialized)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, resolved_path)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def sanitize_config_for_logging(config: AppConfig) -> dict[str, Any]:
@@ -96,9 +135,16 @@ def sanitize_config_for_logging(config: AppConfig) -> dict[str, Any]:
     xboard_config = sanitized_config.get("xboard")
     if isinstance(xboard_config, dict):
         xboard_config["password"] = _mask_secret(xboard_config.get("password"))
+        xboard_config["v2bx_api_key"] = _mask_secret(
+            xboard_config.get("v2bx_api_key")
+        )
 
     app_config = sanitized_config.get("app")
     if isinstance(app_config, dict):
+        app_config["jwt_secret"] = _mask_secret(app_config.get("jwt_secret"))
+        app_config["asset_credential_encryption_key"] = _mask_secret(
+            app_config.get("asset_credential_encryption_key")
+        )
         app_config["sentinel_probe_api_token"] = _mask_secret(
             app_config.get("sentinel_probe_api_token")
         )
@@ -127,12 +173,18 @@ def _read_yaml_config(config_path: Path) -> dict[str, Any]:
     return loaded_config
 
 
+
 def _apply_environment_overrides(raw_config: dict[str, Any]) -> dict[str, Any]:
     merged_config = deepcopy(raw_config)
 
     for env_key, path_parts in ENVIRONMENT_OVERRIDE_MAP.items():
         env_value = os.getenv(env_key)
         if env_value is None:
+            continue
+        if env_value == "" and env_key in {
+            "SHADOWFLEET_XBOARD_V2BX_API_HOST",
+            "SHADOWFLEET_XBOARD_V2BX_API_KEY",
+        }:
             continue
         if env_key == "SHADOWFLEET_PROBE_BOOTSTRAP_TOKENS":
             parsed_value = [item.strip() for item in env_value.split(",") if item.strip()]
@@ -168,6 +220,6 @@ def _set_nested_value(target: dict[str, Any], path_parts: tuple[str, ...], value
 def _mask_secret(value: str | None) -> str | None:
     if value is None:
         return None
-    if len(value) <= 4:
-        return "*" * len(value)
-    return f"{value[:2]}***{value[-2:]}"
+    if value == "":
+        return ""
+    return "***"

@@ -1,27 +1,40 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ValidationError
 
 from api.auth.dependencies import require_admin
 from api.deps import get_runtime_context
-from services.runtime_service import RuntimeContext, ConfigHolder
-from utils.config_parser import load_raw_config, save_raw_config, load_config
+from services.runtime_service import RuntimeContext
+from utils.config_parser import (
+    load_raw_config,
+    sanitize_config_for_logging,
+    save_raw_config,
+    validate_raw_config,
+)
 
 
 router = APIRouter(prefix="/api/v1/config")
 
 
-def _reload_config_in_holder(ctx: RuntimeContext) -> bool:
-    """Reload config from disk and update the ConfigHolder. Returns True on success."""
+def _validate_save_and_reload_config(
+    ctx: RuntimeContext,
+    raw_config: dict,
+) -> bool:
+    """Validate before atomically persisting and updating the live configuration."""
+    try:
+        new_config = validate_raw_config(raw_config)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_url=False, include_context=False),
+        ) from exc
+
+    save_raw_config(None, raw_config)
     if ctx.config_holder is None:
         return False
-    try:
-        new_config = load_config()
-        ctx.config_holder.update_config(new_config)
-        return True
-    except Exception:
-        return False
+    ctx.config_holder.update_config(new_config)
+    return True
 
 
 class ConfigResponse(BaseModel):
@@ -103,7 +116,12 @@ async def get_config(
     ctx: RuntimeContext = Depends(get_runtime_context),
     _current_user: None = Depends(require_admin),
 ) -> ConfigResponse:
-    raw = load_raw_config()
+    effective_config = (
+        ctx.config_holder.config
+        if ctx.config_holder is not None
+        else ctx.config
+    )
+    raw = sanitize_config_for_logging(effective_config)
     return ConfigResponse(
         app=raw.get("app", {}),
         logging=raw.get("logging", {}),
@@ -124,8 +142,7 @@ async def update_fleet_matrix(
 ) -> dict:
     raw = load_raw_config()
     raw["fleet_matrix"] = request.fleet_matrix
-    save_raw_config(None, raw)
-    reloaded = _reload_config_in_holder(ctx)
+    reloaded = _validate_save_and_reload_config(ctx, raw)
     if reloaded:
         return {"status": "ok", "message": "Fleet matrix updated and hot-reloaded."}
     return {"status": "ok", "message": "Fleet matrix updated. Restart the daemon to apply changes."}
@@ -157,8 +174,7 @@ async def update_sentinel(
     for key, value in sentinel_fields.items():
         if value is not None:
             app[key] = value
-    save_raw_config(None, raw)
-    reloaded = _reload_config_in_holder(ctx)
+    reloaded = _validate_save_and_reload_config(ctx, raw)
     if reloaded:
         return {"status": "ok", "message": "Sentinel settings updated and hot-reloaded."}
     return {"status": "ok", "message": "Sentinel settings updated. Restart the daemon to apply."}
@@ -184,8 +200,7 @@ async def update_fleet_scheduler(
     for key, value in fields.items():
         if value is not None:
             scheduler[key] = value
-    save_raw_config(None, raw)
-    reloaded = _reload_config_in_holder(ctx)
+    reloaded = _validate_save_and_reload_config(ctx, raw)
     if reloaded:
         return {"status": "ok", "message": "Fleet scheduler settings updated and hot-reloaded."}
     return {"status": "ok", "message": "Fleet scheduler settings updated. Restart the daemon to apply."}
@@ -225,8 +240,7 @@ async def update_app(
     for key, value in fields.items():
         if value is not None:
             app[key] = value
-    save_raw_config(None, raw)
-    reloaded = _reload_config_in_holder(ctx)
+    reloaded = _validate_save_and_reload_config(ctx, raw)
     if reloaded:
         return {"status": "ok", "message": "Application settings updated and hot-reloaded."}
     return {"status": "ok", "message": "Application settings updated. Restart the daemon to apply."}
@@ -244,8 +258,7 @@ async def update_logging(
         logging_cfg["level"] = request.level
     if request.log_retention_days is not None:
         logging_cfg["log_retention_days"] = request.log_retention_days
-    save_raw_config(None, raw)
-    reloaded = _reload_config_in_holder(ctx)
+    reloaded = _validate_save_and_reload_config(ctx, raw)
     if reloaded:
         return {"status": "ok", "message": "Logging settings updated and hot-reloaded."}
     return {"status": "ok", "message": "Logging settings updated. Restart the daemon to apply."}
@@ -257,10 +270,8 @@ async def validate_config(
     ctx: RuntimeContext = Depends(get_runtime_context),
     _current_user: None = Depends(require_admin),
 ) -> dict:
-    from models.config_models import AppConfig
-    from pydantic import ValidationError
     try:
-        AppConfig.model_validate(request.config)
+        validate_raw_config(request.config)
         return {"valid": True, "message": "Configuration is valid"}
     except ValidationError as e:
         return {"valid": False, "errors": e.errors()}

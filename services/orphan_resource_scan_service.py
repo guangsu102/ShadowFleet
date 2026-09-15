@@ -39,6 +39,7 @@ from services.orphan_azure_support import (
 from services.asset_selector_service import AssetSelectorService
 from services.node_registry_service import NodeRegistryService
 from services.orphan_node_cleanup_service import OrphanNodeCleanupService
+from services.orphan_resource_detector import _known_gcp_instance_names
 from services.runtime_service import RuntimeContext
 from utils.logger import generate_correlation_id, set_correlation_id, set_event_type
 
@@ -614,11 +615,7 @@ class OrphanResourceScanService:
         orphans: list[OrphanResourceInfo] = []
         try:
             assets = self._asset_repo.list_assets_by_status("active")
-            known_ids = {
-                str(node.aws_instance_id).casefold()
-                for node in self._state_repo.list_active_nodes()
-                if node.aws_instance_id
-            }
+            active_nodes = self._state_repo.list_active_nodes()
             scanned_scopes: set[tuple[str, str]] = set()
             for asset in assets:
                 config = asset.provider_config
@@ -640,6 +637,11 @@ class OrphanResourceScanService:
                     client = self._build_gcp_client(asset)
                     instances = client.list_instances(asset.region)
                     scanned_scopes.add(scope)
+                    known_ids = _known_gcp_instance_names(
+                        active_nodes,
+                        project_id=project_id,
+                        zone=asset.region,
+                    )
                     for instance in instances:
                         name = str(instance.get("name") or "").strip()
                         labels = instance.get("labels")
@@ -653,7 +655,7 @@ class OrphanResourceScanService:
                             not name
                             or not managed
                             or name.casefold() in known_ids
-                            or status.upper() in {"TERMINATED", "SUSPENDING"}
+
                         ):
                             continue
                         created_at = str(

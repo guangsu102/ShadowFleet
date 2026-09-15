@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from api.auth.dependencies import get_current_user, require_operator
+from api.auth.dependencies import get_current_user, require_admin, require_operator
 from api.deps import get_runtime_context
 from services.asset_application_models import (
     AssetRegistrationRequest,
@@ -43,6 +43,11 @@ class AssetResponse(BaseModel):
     updated_at: str = ""
 
     model_config = {"from_attributes": True}
+
+
+class AssetCredentialRotationRequest(BaseModel):
+    credentials: dict[str, str] = Field(..., min_length=1)
+    reactivate: bool = True
 
 
 class AWSAssetCreateRequest(BaseModel):
@@ -579,6 +584,42 @@ async def register_oci_asset(
         region=request.region,
         status="active",
         aws_account_id=f"oci:{request.tenancy_ocid.strip()}",
+    )
+
+
+@router.patch("/{asset_id}/credentials", response_model=AssetResponse)
+async def rotate_asset_credentials(
+    asset_id: int,
+    request: AssetCredentialRotationRequest,
+    ctx: RuntimeContext = Depends(get_runtime_context),
+    _current_user: None = Depends(require_admin),
+) -> AssetResponse:
+    try:
+        asset = AssetApplicationService(ctx).rotate_asset_credentials(
+            asset_id=asset_id,
+            credentials=request.credentials,
+            reactivate=request.reactivate,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return AssetResponse(
+        asset_id=asset.id,
+        asset_name=asset.asset_name,
+        asset_type=asset.asset_type,
+        region=asset.region,
+        status=asset.status,
+        aws_account_id=asset.aws_account_id,
+        aws_access_key=None,
+        aws_secret_key=None,
+        account_total_vcpu=asset.account_total_vcpu,
+        cpu_cores=asset.cpu_cores,
+        memory_gb=asset.memory_gb,
+        remarks=asset.remarks,
+        updated_at=asset.updated_at or "",
     )
 
 

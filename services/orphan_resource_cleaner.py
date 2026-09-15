@@ -33,6 +33,7 @@ from services.orphan_resource_detector import (
     OrphanDigitalOceanSnapshot,
     OrphanDnsRecord,
     OrphanEc2Instance,
+    OrphanGCPFirewallRule,
     OrphanGCPInstance,
     OrphanKamateraServer,
     OrphanResourceReport,
@@ -83,17 +84,18 @@ class OrphanResourceCleaner:
     def cleanup_orphan_resources(
         self,
         report: OrphanResourceReport,
-        cleanup_ec2: bool = True,
-        cleanup_dns: bool = True,
-        cleanup_allocations: bool = True,
-        cleanup_xboard: bool = True,
-        dry_run: bool = False,
-        cleanup_digitalocean: bool = True,
-        cleanup_vultr: bool = True,
-        cleanup_gcp: bool = True,
-        cleanup_kamatera: bool = True,
-        cleanup_azure: bool = True,
-        cleanup_oci: bool = True,
+        cleanup_ec2: bool = False,
+        cleanup_dns: bool = False,
+        cleanup_allocations: bool = False,
+        cleanup_xboard: bool = False,
+        dry_run: bool = True,
+        cleanup_digitalocean: bool = False,
+        cleanup_vultr: bool = False,
+        cleanup_gcp: bool = False,
+        cleanup_gcp_firewalls: bool = False,
+        cleanup_kamatera: bool = False,
+        cleanup_azure: bool = False,
+        cleanup_oci: bool = False,
     ) -> CleanupReport:
         """
         清理孤儿资源
@@ -142,6 +144,14 @@ class OrphanResourceCleaner:
             if cleanup_gcp:
                 results.extend(
                     self._cleanup_gcp_instances(report.gcp_instances, dry_run)
+                )
+
+            if cleanup_gcp_firewalls:
+                results.extend(
+                    self._cleanup_gcp_firewall_rules(
+                        report.gcp_firewall_rules,
+                        dry_run,
+                    )
                 )
 
             if cleanup_kamatera:
@@ -474,6 +484,48 @@ class OrphanResourceCleaner:
                     CleanupResult(
                         resource_type="gcp_instance",
                         resource_id=instance.instance_name,
+                        success=False,
+                        error_message=str(exc),
+                    )
+                )
+        return results
+
+    def _cleanup_gcp_firewall_rules(
+        self,
+        firewall_rules: list[OrphanGCPFirewallRule],
+        dry_run: bool,
+    ) -> list[CleanupResult]:
+        results: list[CleanupResult] = []
+        for firewall in firewall_rules:
+            try:
+                if not dry_run:
+                    deleted = self._build_gcp_client(
+                        firewall.asset_id
+                    ).delete_managed_firewall_rule(
+                        firewall.rule_name,
+                        expected_network=firewall.network,
+                    )
+                    if not deleted:
+                        raise OrphanResourceCleanerError(
+                            "GCP firewall ownership or network validation failed"
+                        )
+                results.append(
+                    CleanupResult(
+                        resource_type="gcp_firewall_rule",
+                        resource_id=firewall.rule_name,
+                        success=True,
+                    )
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to cleanup GCP firewall rule %s: %s",
+                    firewall.rule_name,
+                    exc,
+                )
+                results.append(
+                    CleanupResult(
+                        resource_type="gcp_firewall_rule",
+                        resource_id=firewall.rule_name,
                         success=False,
                         error_message=str(exc),
                     )

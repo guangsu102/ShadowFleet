@@ -293,6 +293,7 @@ class TestAssetApplicationService:
         service._asset_repo.upsert_asset_protocol_config.return_value = 8
 
         with patch("services.asset_application_service.VultrClient") as mock_client_cls:
+            mock_client_cls.return_value.validate_account.return_value = {"id": "account-1"}
             result = service.register_vultr_asset(request)
 
         assert result.asset_id == 43
@@ -311,6 +312,7 @@ class TestAssetApplicationService:
         assert created_asset.aws_account_id.startswith("vultr:")
         assert created_asset.aws_account_id != "vultr"
         assert created_asset.provider_config == {
+            "account_identity": created_asset.aws_account_id,
             "ssh_key_ids": ["ssh-key-1"],
             "tags": ["shadowfleet", "prod"],
             "vpc_ids": ["vpc-id"],
@@ -427,6 +429,11 @@ class TestAssetApplicationService:
         assert result.asset_name == "self-hosted-asset"
         assert result.protocol_config_id == 20
         service._asset_repo.create_asset.assert_called_once()
+        protocol_config = (
+            service._asset_repo.upsert_asset_protocol_config.call_args.args[0]
+        )
+        assert protocol_config.requires_domain is True
+        assert protocol_config.requires_dns_record is True
 
     def test_delete_asset_success(self, service):
         """Test delete_asset successfully deletes asset"""

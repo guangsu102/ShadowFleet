@@ -194,6 +194,11 @@ export interface AssetResponse {
   updated_at: string
 }
 
+export interface AssetCredentialRotationRequest {
+  credentials: Record<string, string>
+  reactivate: boolean
+}
+
 export interface AmiInfo {
   ami_id: string
   name: string

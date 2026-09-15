@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -62,13 +61,13 @@ def _get_secret() -> str:
         os.environ.get("SHADOWFLEET_JWT_SECRET")
         or _load_jwt_secret_from_config()
     )
-    if not secret:
-        logging.getLogger("shadowfleet.auth").warning(
-            "JWT secret not configured — using insecure default. "
-            "Set app.jwt_secret in config.yaml or SHADOWFLEET_JWT_SECRET env var."
+    normalized = str(secret or "").strip()
+    if not normalized:
+        raise RuntimeError(
+            "JWT secret is not configured. Set app.jwt_secret in config.yaml "
+            "or SHADOWFLEET_JWT_SECRET."
         )
-        secret = "shadowfleet-insecure-dev-secret-change-in-production"
-    return secret
+    return normalized
 
 
 def _load_jwt_secret_from_config() -> str | None:

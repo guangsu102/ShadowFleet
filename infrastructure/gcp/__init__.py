@@ -7,6 +7,7 @@ from infrastructure.gcp.client import (
     GCPInstanceLaunchRequest,
     GCPInstanceLaunchResult,
     GCPProvisioningTarget,
+    firewall_is_shadowfleet_managed,
     instance_created_at,
     instance_labels,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "GCPInstanceLaunchRequest",
     "GCPInstanceLaunchResult",
     "GCPProvisioningTarget",
+    "firewall_is_shadowfleet_managed",
     "instance_created_at",
     "instance_labels",
 ]

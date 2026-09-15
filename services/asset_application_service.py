@@ -3,7 +3,13 @@ from __future__ import annotations
 import hashlib
 
 
-from database.asset_models import AssetCreateRequest, AssetEventCreateRequest, AssetProtocolConfigRequest
+from database.asset_models import (
+    DNS_REQUIRED_PROTOCOLS,
+    AssetCreateRequest,
+    AssetEventCreateRequest,
+    AssetProtocolConfigRequest,
+    AssetRecord,
+)
 from database.asset_repo import AssetRepo
 from infrastructure.aws.ec2_client import EC2Client
 from infrastructure.aws.sts_client import StsClientError, resolve_aws_account_id
@@ -250,13 +256,14 @@ class AssetApplicationService:
     ) -> AssetRegistrationResult:
         self._validate_vultr_registration_request(request)
         vultr_client = self._build_vultr_client(request.vultr_token)
-        vultr_client.validate_account()
-        provider_account_id = self._vultr_provider_account_id(request.vultr_token)
+        vultr_account = vultr_client.validate_account()
+        provider_account_id = self._vultr_provider_account_id(vultr_account)
 
         tags = tuple(tag.strip() for tag in request.tags if tag and tag.strip())
         provider_config: dict[str, object] = {
             "ssh_key_ids": [key.strip() for key in request.ssh_key_ids if key and key.strip()],
             "tags": list(dict.fromkeys(("shadowfleet", *tags))),
+            "account_identity": provider_account_id,
         }
         vpc_ids = tuple(
             dict.fromkeys(vpc_id.strip() for vpc_id in request.vpc_ids if vpc_id and vpc_id.strip())
@@ -768,10 +775,231 @@ class AssetApplicationService:
 
 
 
+    def rotate_asset_credentials(
+        self,
+        *,
+        asset_id: int,
+        credentials: dict[str, str],
+        reactivate: bool = True,
+    ) -> AssetRecord:
+        asset = self._asset_repo.get_asset_by_id(asset_id)
+        normalized = {
+            str(key).strip(): str(value).strip()
+            for key, value in credentials.items()
+            if str(key).strip() and str(value).strip()
+        }
+        if not normalized:
+            raise ValueError("credentials must contain at least one non-empty value")
+
+        provider_config = dict(asset.provider_config or {})
+        access_key: str | None = None
+        secret_key: str | None = None
+        ssh_password: str | None = None
+        ssh_private_key: str | None = None
+        account_id = asset.aws_account_id
+
+        def credential(name: str, current: object = None) -> str:
+            value = normalized.get(name)
+            if value is None and current is not None:
+                value = str(current).strip()
+            if not value:
+                raise ValueError(f"{name} is required for {asset.asset_type} credential rotation")
+            return value
+
+        if asset.asset_type == "aws":
+            access_key = credential("aws_access_key", asset.aws_access_key)
+            secret_key = credential("aws_secret_key", asset.aws_secret_key)
+            resolved_account_id = self.resolve_account_id(
+                access_key,
+                secret_key,
+                credential("region", asset.region),
+            )
+            if account_id and resolved_account_id != account_id:
+                raise ValueError("new AWS credentials belong to a different account")
+            account_id = resolved_account_id
+        elif asset.asset_type == "digitalocean":
+            access_key = credential("api_token", asset.aws_access_key)
+            account = self._build_digitalocean_client(access_key).validate_account()
+            raw_account_id = self._normalize_optional_text(str(account.get("uuid") or "")) or "unknown"
+            resolved_account_id = f"digitalocean:{raw_account_id}"
+            if account_id and not account_id.endswith(":unknown") and resolved_account_id != account_id:
+                raise ValueError("new DigitalOcean token belongs to a different account")
+            account_id = resolved_account_id
+        elif asset.asset_type == "vultr":
+            access_key = credential("api_token", asset.aws_access_key)
+            new_account = self._build_vultr_client(access_key).validate_account()
+            resolved_account_id = self._vultr_provider_account_id(new_account)
+            existing_identity = self._normalize_optional_text(
+                provider_config.get("account_identity")
+            )
+            if existing_identity is None and account_id == resolved_account_id:
+                existing_identity = resolved_account_id
+            if existing_identity is None and asset.aws_access_key:
+                if access_key == asset.aws_access_key:
+                    existing_identity = resolved_account_id
+                else:
+                    try:
+                        old_account = self._build_vultr_client(
+                            asset.aws_access_key
+                        ).validate_account()
+                    except Exception as exc:
+                        raise ValueError(
+                            "cannot verify the existing Vultr account identity"
+                        ) from exc
+                    existing_identity = self._vultr_provider_account_id(old_account)
+            if existing_identity is None:
+                raise ValueError(
+                    "cannot verify the existing Vultr account identity"
+                )
+            if existing_identity != resolved_account_id:
+                raise ValueError(
+                    "new Vultr token belongs to a different account"
+                )
+            account_id = resolved_account_id
+            provider_config["account_identity"] = resolved_account_id
+        elif asset.asset_type == "kamatera":
+            access_key = credential("client_id", asset.aws_access_key)
+            secret_key = credential("secret", asset.aws_secret_key)
+            self._build_kamatera_client(access_key, secret_key).validate_account()
+            resolved_account_id = self._kamatera_provider_account_id(access_key)
+            if account_id and account_id != resolved_account_id:
+                raise ValueError("new Kamatera credentials belong to a different account")
+            account_id = resolved_account_id
+        elif asset.asset_type == "azure":
+            tenant_id = credential("tenant_id", provider_config.get("tenant_id"))
+            access_key = credential("client_id", asset.aws_access_key)
+            secret_key = credential("client_secret", asset.aws_secret_key)
+            subscription_id = credential(
+                "subscription_id",
+                provider_config.get("subscription_id"),
+            )
+            self._build_azure_client(
+                AzureCredentials(
+                    tenant_id=tenant_id,
+                    client_id=access_key,
+                    client_secret=secret_key,
+                    subscription_id=subscription_id,
+                )
+            ).validate_subscription()
+            resolved_account_id = f"azure:{subscription_id.casefold()}"
+            if account_id and resolved_account_id != account_id.casefold():
+                raise ValueError("new Azure credentials belong to a different subscription")
+            account_id = resolved_account_id
+            provider_config["tenant_id"] = tenant_id
+            provider_config["subscription_id"] = subscription_id
+        elif asset.asset_type == "gcp":
+            service_account_json = credential("service_account_json")
+            project_id = credential("project_id", provider_config.get("project_id"))
+            gcp_credentials = GCPCredentials.from_service_account_json(
+                service_account_json,
+                project_id=project_id,
+            )
+            self._build_gcp_client(gcp_credentials).validate_project()
+            resolved_account_id = f"gcp:{gcp_credentials.project_id}"
+            if account_id and resolved_account_id.casefold() != account_id.casefold():
+                raise ValueError("new GCP credentials belong to a different project")
+            account_id = resolved_account_id
+            access_key = gcp_credentials.client_email
+            secret_key = gcp_credentials.private_key
+            provider_config.update(
+                {
+                    "project_id": gcp_credentials.project_id,
+                    "private_key_id": gcp_credentials.private_key_id or "",
+                    "client_id": gcp_credentials.client_id or "",
+                    "token_uri": gcp_credentials.token_uri,
+                }
+            )
+        elif asset.asset_type == "oci":
+            tenancy_ocid = credential("tenancy_ocid", provider_config.get("tenancy_ocid"))
+            access_key = credential("user_ocid", asset.aws_access_key)
+            secret_key = credential("private_key", asset.aws_secret_key)
+            fingerprint = credential("fingerprint", provider_config.get("fingerprint"))
+            passphrase = normalized.get("private_key_passphrase")
+            if passphrase is None:
+                current_passphrase = provider_config.get("private_key_passphrase")
+                passphrase = str(current_passphrase) if current_passphrase else None
+            self._build_oci_client(
+                OCICredentials(
+                    tenancy_ocid=tenancy_ocid,
+                    user_ocid=access_key,
+                    fingerprint=fingerprint,
+                    private_key=secret_key,
+                    private_key_passphrase=passphrase,
+                ),
+                credential("region", asset.region),
+            ).validate_identity()
+            resolved_account_id = f"oci:{tenancy_ocid}"
+            if account_id and resolved_account_id.casefold() != account_id.casefold():
+                raise ValueError("new OCI credentials belong to a different tenancy")
+            account_id = resolved_account_id
+            provider_config["tenancy_ocid"] = tenancy_ocid
+            provider_config["fingerprint"] = fingerprint
+            if passphrase:
+                provider_config["private_key_passphrase"] = passphrase
+            else:
+                provider_config.pop("private_key_passphrase", None)
+        elif asset.asset_type == "self_hosted":
+            ssh_password = normalized.get("ssh_password")
+            ssh_private_key = normalized.get("ssh_private_key")
+            if ssh_password is None and ssh_private_key is None:
+                raise ValueError("ssh_password or ssh_private_key is required")
+            ssh_client = SelfHostedSshClient(
+                runtime_context=self._runtime_context,
+                ssh_config=SelfHostedSshConfig(
+                    host=credential("ssh_host", asset.ssh_host),
+                    port=asset.ssh_port or 22,
+                    username=credential("ssh_username", asset.ssh_username),
+                    password=ssh_password,
+                    private_key=ssh_private_key,
+                ),
+            )
+            ssh_client.validate_connection()
+        else:
+            raise ValueError(f"credential rotation is not supported for {asset.asset_type}")
+
+        updated_asset = self._asset_repo.update_asset_credentials(
+            asset_id,
+            aws_access_key=access_key,
+            aws_secret_key=secret_key,
+            ssh_password=ssh_password,
+            ssh_private_key=ssh_private_key,
+            provider_config=(
+                provider_config if asset.asset_type != "self_hosted" else None
+            ),
+            aws_account_id=account_id,
+            reactivate=reactivate,
+            event=AssetEventCreateRequest(
+                asset_id=asset_id,
+                event_type="asset_credentials_rotated",
+                correlation_id=self._runtime_context.correlation_id,
+                message=f"{asset.asset_type} credentials validated and rotated.",
+                payload={
+                    "asset_type": asset.asset_type,
+                    "reactivated": reactivate,
+                },
+            ),
+        )
+        self._logger.info(
+            "Rotated credentials asset_id=%s type=%s reactivate=%s",
+            asset_id,
+            asset.asset_type,
+            reactivate,
+        )
+        return updated_asset
+
     @staticmethod
-    def _vultr_provider_account_id(api_token: str) -> str:
-        fingerprint = hashlib.sha256(api_token.strip().encode("utf-8")).hexdigest()[:24]
-        return f"vultr:{fingerprint}"
+    def _vultr_provider_account_id(account: dict[str, object]) -> str:
+        for identity_key in ("id", "uuid", "customer_id", "email"):
+            identity_value = str(account.get(identity_key) or "").strip()
+            if not identity_value:
+                continue
+            fingerprint = hashlib.sha256(
+                f"{identity_key}:{identity_value.casefold()}".encode("utf-8")
+            ).hexdigest()[:24]
+            return f"vultr:{fingerprint}"
+        raise ValueError(
+            "Vultr account response does not contain a stable account identity"
+        )
 
     @staticmethod
     def _kamatera_provider_account_id(client_id: str) -> str:
@@ -1329,8 +1557,12 @@ class AssetApplicationService:
                         max_count=request.max_count,
                         priority=request.priority,
                         allow_cdn_proxy=False,
-                        requires_domain=("anytls" in proto.lower()),
-                        requires_dns_record=("anytls" in proto.lower()),
+                        requires_domain=proto.casefold() in {
+                            protocol.casefold() for protocol in DNS_REQUIRED_PROTOCOLS
+                        },
+                        requires_dns_record=proto.casefold() in {
+                            protocol.casefold() for protocol in DNS_REQUIRED_PROTOCOLS
+                        },
                         supports_cdn_proxy=True,
                     )
                 )

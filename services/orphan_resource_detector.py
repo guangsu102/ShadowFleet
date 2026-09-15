@@ -24,6 +24,7 @@ from infrastructure.digitalocean import DigitalOceanClient
 from infrastructure.gcp import (
     GCPClient,
     GCPCredentials,
+    firewall_is_shadowfleet_managed,
     instance_created_at as gcp_instance_created_at,
     instance_labels as gcp_instance_labels,
 )
@@ -105,6 +106,15 @@ class OrphanGCPInstance:
     created_at: str
     status: str
     labels: dict[str, str]
+
+
+@dataclass(frozen=True)
+class OrphanGCPFirewallRule:
+    rule_name: str
+    asset_id: int
+    project_id: str
+    network: str
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -200,6 +210,7 @@ class OrphanResourceReport:
     )
     vultr_instances: list[OrphanVultrInstance] = field(default_factory=list)
     gcp_instances: list[OrphanGCPInstance] = field(default_factory=list)
+    gcp_firewall_rules: list[OrphanGCPFirewallRule] = field(default_factory=list)
     kamatera_servers: list[OrphanKamateraServer] = field(default_factory=list)
     azure_vms: list[OrphanAzureVm] = field(default_factory=list)
     oci_instances: list[OrphanOCIInstance] = field(default_factory=list)
@@ -210,6 +221,79 @@ class OrphanResourceReport:
 
 class OrphanResourceDetectorError(RuntimeError):
     pass
+
+
+def _known_gcp_instance_names(
+    nodes: list[object],
+    *,
+    project_id: str,
+    zone: str,
+) -> set[str]:
+    expected_account = f"gcp:{project_id}".casefold()
+    expected_zone = zone.casefold()
+    names: set[str] = set()
+    for node in nodes:
+        instance_id = str(getattr(node, "aws_instance_id", "") or "").strip()
+        if not instance_id:
+            continue
+        account = str(getattr(node, "aws_account_id", "") or "").strip().casefold()
+        node_zone = str(getattr(node, "aws_region", "") or "").strip().casefold()
+        if not account and not node_zone:
+            names.add(instance_id.casefold())
+        elif account == expected_account and node_zone == expected_zone:
+            names.add(instance_id.casefold())
+    return names
+
+
+def _gcp_firewall_is_referenced(
+    *,
+    project_id: str,
+    rule_name: str,
+    network: str,
+    assets: list[object],
+    nodes: list[object],
+) -> bool:
+    expected_project = project_id.casefold()
+    expected_account = f"gcp:{project_id}".casefold()
+    expected_rule = rule_name.casefold()
+    expected_network = network.rstrip("/").rsplit("/", 1)[-1].casefold()
+
+    for asset in assets:
+        if (
+            str(getattr(asset, "asset_type", "") or "") != "gcp"
+            or str(getattr(asset, "status", "") or "")
+            not in {"active", "full", "deploying"}
+        ):
+            continue
+        config = getattr(asset, "provider_config", None)
+        if not isinstance(config, dict):
+            continue
+        asset_project = str(config.get("project_id") or "").strip().casefold()
+        if asset_project != expected_project:
+            continue
+        asset_rule = str(config.get("firewall_rule_name") or "").strip()
+        asset_network = str(config.get("network") or "").strip()
+        if not asset_rule or not asset_network:
+            return True
+        if (
+            asset_rule.casefold() == expected_rule
+            and asset_network.rstrip("/").rsplit("/", 1)[-1].casefold()
+            == expected_network
+        ):
+            return True
+
+    for node in nodes:
+        account = str(
+            getattr(node, "aws_account_id", "") or ""
+        ).strip().casefold()
+        if account != expected_account:
+            continue
+        node_rule = str(
+            getattr(node, "aws_security_group_id", "") or ""
+        ).strip()
+        if not node_rule or node_rule.casefold() == expected_rule:
+            return True
+    return False
 
 
 class OrphanResourceDetector:
@@ -255,6 +339,7 @@ class OrphanResourceDetector:
         orphan_digitalocean_snapshots: list[OrphanDigitalOceanSnapshot] = []
         orphan_vultr_instances: list[OrphanVultrInstance] = []
         orphan_gcp_instances: list[OrphanGCPInstance] = []
+        orphan_gcp_firewall_rules: list[OrphanGCPFirewallRule] = []
         orphan_kamatera_servers: list[OrphanKamateraServer] = []
         orphan_azure_vms: list[OrphanAzureVm] = []
         orphan_azure_network_resources: list[OrphanAzureNetworkResource] = []
@@ -292,6 +377,13 @@ class OrphanResourceDetector:
                 self._logger.info(
                     "Found %d orphan GCP instances",
                     len(orphan_gcp_instances),
+                )
+                orphan_gcp_firewall_rules = (
+                    self._scan_orphan_gcp_firewall_rules()
+                )
+                self._logger.info(
+                    "Found %d orphan GCP firewall rules",
+                    len(orphan_gcp_firewall_rules),
                 )
             if scan_kamatera:
                 orphan_kamatera_servers = self._scan_orphan_kamatera_servers()
@@ -334,6 +426,7 @@ class OrphanResourceDetector:
                 + len(orphan_digitalocean_snapshots)
                 + len(orphan_vultr_instances)
                 + len(orphan_gcp_instances)
+                + len(orphan_gcp_firewall_rules)
                 + len(orphan_kamatera_servers)
                 + len(orphan_azure_vms)
                 + len(orphan_azure_network_resources)
@@ -350,6 +443,7 @@ class OrphanResourceDetector:
                 digitalocean_snapshots=orphan_digitalocean_snapshots,
                 vultr_instances=orphan_vultr_instances,
                 gcp_instances=orphan_gcp_instances,
+                gcp_firewall_rules=orphan_gcp_firewall_rules,
                 kamatera_servers=orphan_kamatera_servers,
                 azure_vms=orphan_azure_vms,
                 azure_network_resources=orphan_azure_network_resources,
@@ -604,11 +698,7 @@ class OrphanResourceDetector:
     def _scan_orphan_gcp_instances(self) -> list[OrphanGCPInstance]:
         orphans: list[OrphanGCPInstance] = []
         active_assets = self._asset_repo.list_assets_by_status("active")
-        known_ids = {
-            str(node.aws_instance_id).casefold()
-            for node in self._state_repo.list_active_nodes()
-            if node.aws_instance_id
-        }
+        active_nodes = self._state_repo.list_active_nodes()
         scanned_scopes: set[tuple[str, str]] = set()
         for asset in active_assets:
             config = asset.provider_config
@@ -641,6 +731,11 @@ class OrphanResourceDetector:
                 )
                 instances = client.list_instances(asset.region)
                 scanned_scopes.add(scope)
+                known_ids = _known_gcp_instance_names(
+                    active_nodes,
+                    project_id=project_id,
+                    zone=asset.region,
+                )
                 for instance in instances:
                     name = str(instance.get("name") or "").strip()
                     labels = gcp_instance_labels(instance)
@@ -650,7 +745,7 @@ class OrphanResourceDetector:
                         not name
                         or labels.get("managed-by", "").casefold() != "shadowfleet"
                         or name.casefold() in known_ids
-                        or status.upper() in {"TERMINATED", "SUSPENDING"}
+
                         or not _is_older_than(created_at, timedelta(hours=1))
                     ):
                         continue
@@ -672,6 +767,85 @@ class OrphanResourceDetector:
                     exc,
                 )
         return orphans
+
+    def _scan_orphan_gcp_firewall_rules(
+        self,
+    ) -> list[OrphanGCPFirewallRule]:
+        orphan_rules: list[OrphanGCPFirewallRule] = []
+        assets = self._asset_repo.list_assets()
+        active_nodes = self._state_repo.list_active_nodes()
+        scanned_projects: set[str] = set()
+        for asset in assets:
+            config = asset.provider_config
+            if (
+                asset.asset_type != "gcp"
+                or not asset.aws_access_key
+                or not asset.aws_secret_key
+                or not isinstance(config, dict)
+            ):
+                continue
+            project_id = str(config.get("project_id") or "").strip()
+            project_key = project_id.casefold()
+            if not project_id or project_key in scanned_projects:
+                continue
+            try:
+                client = GCPClient(
+                    self._runtime,
+                    credentials=GCPCredentials(
+                        project_id=project_id,
+                        client_email=asset.aws_access_key,
+                        private_key=asset.aws_secret_key,
+                        private_key_id=(
+                            str(config.get("private_key_id") or "").strip()
+                            or None
+                        ),
+                        client_id=(
+                            str(config.get("client_id") or "").strip() or None
+                        ),
+                        token_uri=(
+                            str(config.get("token_uri") or "").strip()
+                            or "https://oauth2.googleapis.com/token"
+                        ),
+                    ),
+                )
+                firewall_rules = client.list_firewall_rules()
+                scanned_projects.add(project_key)
+                for firewall in firewall_rules:
+                    name = str(firewall.get("name") or "").strip()
+                    network = str(firewall.get("network") or "").strip()
+                    created_at = str(
+                        firewall.get("creationTimestamp") or ""
+                    ).strip()
+                    if (
+                        not name
+                        or not network
+                        or not firewall_is_shadowfleet_managed(firewall)
+                        or _gcp_firewall_is_referenced(
+                            project_id=project_id,
+                            rule_name=name,
+                            network=network,
+                            assets=assets,
+                            nodes=active_nodes,
+                        )
+                        or not _is_older_than(created_at, timedelta(hours=1))
+                    ):
+                        continue
+                    orphan_rules.append(
+                        OrphanGCPFirewallRule(
+                            rule_name=name,
+                            asset_id=asset.id,
+                            project_id=project_id,
+                            network=network,
+                            created_at=created_at,
+                        )
+                    )
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to scan GCP firewall rules for asset_id=%s: %s",
+                    asset.id,
+                    exc,
+                )
+        return orphan_rules
 
     def _scan_orphan_kamatera_servers(self) -> list[OrphanKamateraServer]:
         orphan_servers: list[OrphanKamateraServer] = []

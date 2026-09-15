@@ -208,11 +208,11 @@ class DatabaseSyncMonitor:
     def auto_repair_inconsistencies(
         self,
         report: SyncHealthReport,
-        repair_missing_in_sqlite: bool = True,
+        repair_missing_in_sqlite: bool = False,
         repair_missing_in_xboard: bool = False,
-        repair_status_mismatch: bool = True,
-        repair_host_mismatch: bool = True,
-        dry_run: bool = False,
+        repair_status_mismatch: bool = False,
+        repair_host_mismatch: bool = False,
+        dry_run: bool = True,
     ) -> dict[str, int]:
         """
         自动修复不一致问题

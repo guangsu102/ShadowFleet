@@ -12,6 +12,9 @@ from infrastructure.kamatera import (
 from services.provisioning_dns_service import rollback_dns_records, sync_dns_records
 from services.provisioning_models import DnsSyncResult, ProvisionRequest, ProvisionResult
 from services.provisioning_notifier import notify_failure, notify_success
+from services.provider_account_health_service import (
+    quarantine_terminal_provider_error,
+)
 from services.provisioning_support import (
     ProvisionerServiceError,
     ProvisioningDependencies,
@@ -272,6 +275,19 @@ def _handle_kamatera_provision_failure(
         selection_result.asset_id,
         skip_rollback,
     )
+    try:
+        quarantine_terminal_provider_error(
+            runtime_context=runtime_context,
+            asset_repo=asset_repo,
+            provider="kamatera",
+            account_id=selection_result.aws_account_id,
+            source_asset_id=selection_result.asset_id,
+            error=error,
+        )
+    except Exception:
+        dependencies.logger.exception(
+            "Failed to quarantine Kamatera account after terminal provider error"
+        )
     asset_repo.create_asset_event(
         AssetEventCreateRequest(
             asset_id=selection_result.asset_id,

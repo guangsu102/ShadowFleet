@@ -52,6 +52,31 @@ class AppRuntimeConfig(BaseModel):
     key_pair_local_dir: str = "key_pairs"
     skip_rollback_on_failure: bool = False
     jwt_secret: str | None = None
+    asset_credential_encryption_key: str | None = None
+
+    @field_validator("jwt_secret", "asset_credential_encryption_key")
+    @classmethod
+    def validate_optional_app_secrets(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("app secret settings must not be empty")
+        return value.strip()
+
+    @field_validator("asset_credential_encryption_key")
+    @classmethod
+    def validate_asset_credential_encryption_key(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        from cryptography.fernet import Fernet
+        try:
+            Fernet(value.encode("ascii"))
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ValueError("asset credential encryption key must be a valid Fernet key") from exc
+        return value
 
     @field_validator("request_timeout_seconds")
     @classmethod
@@ -179,6 +204,16 @@ class AppRuntimeConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_sentinel_and_probe_server(self) -> "AppRuntimeConfig":
+        if self.environment == "production":
+            if self.jwt_secret is None:
+                raise ValueError("app.jwt_secret is required in production")
+            if len(self.jwt_secret) < 32:
+                raise ValueError(
+                    "app.jwt_secret must contain at least 32 characters in production"
+                )
+            if self.asset_credential_encryption_key is None:
+                raise ValueError("app.asset_credential_encryption_key is required in production")
+
         if self.sentinel_probe_min_cn_probe_count < 2:
             raise ValueError("sentinel_probe_min_cn_probe_count must be at least 2")
         if self.probe_server_enabled and not self.probe_bootstrap_tokens:
@@ -453,6 +488,54 @@ class FleetProtocolConfig(BaseModel):
         return self
 
 
+def _default_provider_region_mappings() -> dict[str, dict[str, str]]:
+    return {
+        "ap-northeast-1": {
+            "aws": "ap-northeast-1",
+            "vultr": "nrt",
+            "azure": "japaneast",
+            "gcp": "asia-northeast1-a",
+            "oci": "ap-tokyo-1",
+        },
+        "ap-southeast-1": {
+            "aws": "ap-southeast-1",
+            "digitalocean": "sgp1",
+            "vultr": "sgp",
+            "azure": "southeastasia",
+            "gcp": "asia-southeast1-a",
+            "oci": "ap-singapore-1",
+            "kamatera": "AS",
+        },
+        "us-east-1": {
+            "aws": "us-east-1",
+            "digitalocean": "nyc3",
+            "vultr": "ewr",
+            "azure": "eastus",
+            "gcp": "us-east1-b",
+            "oci": "us-ashburn-1",
+            "kamatera": "NY",
+        },
+        "us-west-2": {
+            "aws": "us-west-2",
+            "digitalocean": "sfo3",
+            "vultr": "sea",
+            "azure": "westus2",
+            "gcp": "us-west1-a",
+            "oci": "us-sanjose-1",
+            "kamatera": "LA",
+        },
+        "eu-west-1": {
+            "aws": "eu-west-1",
+            "digitalocean": "lon1",
+            "vultr": "lhr",
+            "azure": "northeurope",
+            "gcp": "europe-west1-b",
+            "oci": "uk-london-1",
+            "kamatera": "EU",
+        },
+    }
+
+
 class FleetSchedulerConfig(BaseModel):
     """Fleet Auto-Scheduler configuration for automatic node replenishment."""
     model_config = ConfigDict(extra="forbid")
@@ -467,6 +550,9 @@ class FleetSchedulerConfig(BaseModel):
         default_factory=lambda: ["digitalocean", "vultr", "azure", "gcp", "oci", "kamatera", "aws"]
     )
     default_group_ids: list[int] = Field(default_factory=list)
+    provider_region_mappings: dict[str, dict[str, str]] = Field(
+        default_factory=_default_provider_region_mappings
+    )
 
     @field_validator("poll_interval_seconds", "cooldown_seconds")
     @classmethod
@@ -481,6 +567,58 @@ class FleetSchedulerConfig(BaseModel):
         if v <= 0:
             raise ValueError("max_tasks_per_cycle must be at least 1")
         return v
+
+    @field_validator("provider_region_mappings")
+    @classmethod
+    def validate_provider_region_mappings(
+        cls,
+        value: dict[str, dict[str, str]],
+    ) -> dict[str, dict[str, str]]:
+        supported = {
+            "aws",
+            "azure",
+            "digitalocean",
+            "gcp",
+            "kamatera",
+            "oci",
+            "vultr",
+        }
+        normalized: dict[str, dict[str, str]] = {}
+        seen_provider_regions: dict[tuple[str, str], str] = {}
+        for logical_region, provider_map in value.items():
+            region = logical_region.strip()
+            if not region:
+                raise ValueError("provider region mapping keys must not be empty")
+            if region in normalized:
+                raise ValueError(f"duplicate logical region mapping: {region}")
+            mapped: dict[str, str] = {}
+            for provider, provider_region in provider_map.items():
+                normalized_provider = provider.strip().casefold()
+                normalized_region = provider_region.strip()
+                if normalized_provider not in supported:
+                    raise ValueError(
+                        f"unsupported provider in region mapping: {normalized_provider}"
+                    )
+                if not normalized_region:
+                    raise ValueError("mapped provider regions must not be empty")
+                if normalized_provider in mapped:
+                    raise ValueError(
+                        f"duplicate provider mapping for {normalized_provider} in {region}"
+                    )
+                provider_region_key = (
+                    normalized_provider,
+                    normalized_region.casefold(),
+                )
+                previous_region = seen_provider_regions.get(provider_region_key)
+                if previous_region is not None:
+                    raise ValueError(
+                        f"{normalized_provider} region {normalized_region} is mapped "
+                        f"to both {previous_region} and {region}"
+                    )
+                seen_provider_regions[provider_region_key] = region
+                mapped[normalized_provider] = normalized_region
+            normalized[region] = mapped
+        return normalized
 
     @field_validator("enabled_asset_types")
     @classmethod

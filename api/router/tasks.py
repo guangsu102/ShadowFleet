@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from api.auth.dependencies import get_current_user, require_operator
 from api.deps import get_runtime_context
+from database.asset_models import AssetType, ProtocolType
 from services.manual_operation_models import (
     ManualForceStrategy,
     ManualOperationRequest,
@@ -20,12 +21,12 @@ router = APIRouter(prefix="/api/v1")
 
 
 class ProvisionTaskCreateRequest(BaseModel):
-    protocol_type: str = Field(..., min_length=1)
+    protocol_type: ProtocolType
     node_name: str = Field(..., min_length=1, max_length=64)
     port: str = Field(..., min_length=1)
     server_port: int = Field(..., ge=1, le=65535)
     rate: float = Field(default=1.0, ge=0)
-    asset_type: str = "aws"
+    asset_type: AssetType = "aws"
     region: str | None = None
     domain_name: str | None = None
     require_cdn_proxy: bool = False

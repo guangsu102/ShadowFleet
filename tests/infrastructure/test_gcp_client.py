@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from infrastructure.gcp import (
     GCPClient,
@@ -134,7 +135,16 @@ def test_ensure_firewall_ports_expands_existing_managed_rule() -> None:
         client,
         "_request",
         side_effect=[
-            {"allowed": [{"IPProtocol": "tcp", "ports": ["22"]}]},
+            {
+                "description": "ShadowFleet managed inbound TCP",
+                "direction": "INGRESS",
+                "targetTags": ["shadowfleet"],
+                "fingerprint": "firewall-fingerprint",
+                "allowed": [
+                    {"IPProtocol": "udp", "ports": ["53"]},
+                    {"IPProtocol": "tcp", "ports": ["22"]},
+                ],
+            },
             {"name": "operation-2"},
         ],
     ) as request, patch.object(client, "wait_for_global_operation") as wait:
@@ -145,10 +155,14 @@ def test_ensure_firewall_ports_expands_existing_managed_rule() -> None:
 
     assert result == "shadowfleet-ingress"
     update_call = request.call_args_list[1]
-    assert update_call.args[0] == "PUT"
-    assert update_call.kwargs["payload"]["allowed"] == [
-        {"IPProtocol": "tcp", "ports": ["22", "443"]}
-    ]
+    assert update_call.args[0] == "PATCH"
+    assert update_call.kwargs["payload"] == {
+        "allowed": [
+            {"IPProtocol": "udp", "ports": ["53"]},
+            {"IPProtocol": "tcp", "ports": ["22", "443"]},
+        ],
+        "fingerprint": "firewall-fingerprint",
+    }
     wait.assert_called_once_with("operation-2")
 
 
@@ -190,3 +204,150 @@ def test_rotate_external_ipv4_replaces_access_config_and_reads_new_address() -> 
     assert request.call_args_list[0].args[1].endswith("/deleteAccessConfig")
     assert request.call_args_list[1].args[1].endswith("/addAccessConfig")
     assert wait.call_count == 2
+
+def test_ensure_firewall_ports_rejects_unmanaged_same_name_rule() -> None:
+    client = GCPClient(_runtime(), _credentials(), session=MagicMock())
+    with patch.object(
+        client,
+        "_request",
+        return_value={
+            "network": "projects/shadowfleet-test/global/networks/default",
+            "description": "operator managed rule",
+            "allowed": [{"IPProtocol": "tcp", "ports": ["22"]}],
+        },
+    ):
+        with pytest.raises(GCPClientError, match="not managed by ShadowFleet"):
+            client.ensure_firewall_ports(
+                network="projects/shadowfleet-test/global/networks/default",
+                inbound_ports=(22, 443),
+            )
+
+
+def test_request_retries_connection_errors() -> None:
+    runtime = _runtime()
+    runtime.config.app.max_retries = 1
+    session = MagicMock()
+    session.request.side_effect = [
+        requests.ConnectionError("connection reset"),
+        _Response(200, {"name": "shadowfleet-test"}),
+    ]
+    client = GCPClient(runtime, _credentials(), session=session)
+
+    with patch("utils.resilience.time.sleep"):
+        project = client.validate_project()
+
+    assert project["name"] == "shadowfleet-test"
+    assert session.request.call_count == 2
+
+
+def test_rotate_external_ipv4_restores_access_config_after_add_failure() -> None:
+    client = GCPClient(_runtime(), _credentials(), session=MagicMock())
+    old_instance = {
+        "networkInterfaces": [
+            {
+                "name": "nic0",
+                "accessConfigs": [
+                    {
+                        "name": "External NAT",
+                        "natIP": "192.0.2.80",
+                        "networkTier": "PREMIUM",
+                    }
+                ],
+            }
+        ]
+    }
+    no_external_ip = {"networkInterfaces": [{"name": "nic0", "accessConfigs": []}]}
+    with patch.object(
+        client,
+        "_request",
+        side_effect=[
+            {"name": "delete-op"},
+            GCPClientError("replacement failed", 503),
+            {"name": "restore-op"},
+        ],
+    ) as request, patch.object(
+        client,
+        "wait_for_zone_operation",
+    ), patch.object(
+        client,
+        "get_instance",
+        side_effect=[old_instance, no_external_ip, old_instance],
+    ):
+        with pytest.raises(GCPClientError, match="connectivity was restored"):
+            client.rotate_external_ipv4("asia-east1-a", "sf-node-21")
+
+    restore_call = request.call_args_list[2]
+    assert restore_call.args[1].endswith("/addAccessConfig")
+    assert restore_call.kwargs["payload"]["natIP"] == "192.0.2.80"
+
+def test_delete_managed_firewall_rule_revalidates_ownership_and_network() -> None:
+    client = GCPClient(_runtime(), _credentials(), session=MagicMock())
+    managed = {
+        "name": "shadowfleet-ingress-unused",
+        "description": "ShadowFleet managed inbound TCP (managed-by=shadowfleet)",
+        "network": "projects/shadowfleet-test/global/networks/unused",
+    }
+    with patch.object(
+        client,
+        "get_firewall_rule",
+        return_value=managed,
+    ), patch.object(
+        client,
+        "_request",
+        return_value={"name": "delete-firewall-op"},
+    ) as request, patch.object(
+        client,
+        "wait_for_global_operation",
+    ) as wait:
+        deleted = client.delete_managed_firewall_rule(
+            "shadowfleet-ingress-unused",
+            expected_network="unused",
+        )
+
+    assert deleted is True
+    request.assert_called_once_with(
+        "DELETE",
+        (
+            "/projects/shadowfleet-test/global/firewalls/"
+            "shadowfleet-ingress-unused"
+        ),
+    )
+    wait.assert_called_once_with("delete-firewall-op")
+
+
+@pytest.mark.parametrize(
+    "firewall, expected_network",
+    [
+        (
+            {
+                "description": "operator managed rule",
+                "network": "projects/p/global/networks/unused",
+            },
+            "unused",
+        ),
+        (
+            {
+                "description": "managed-by=shadowfleet",
+                "network": "projects/p/global/networks/production",
+            },
+            "unused",
+        ),
+    ],
+)
+def test_delete_managed_firewall_rule_refuses_unsafe_rule(
+    firewall: dict[str, object],
+    expected_network: str,
+) -> None:
+    client = GCPClient(_runtime(), _credentials(), session=MagicMock())
+    with patch.object(
+        client,
+        "get_firewall_rule",
+        return_value=firewall,
+    ), patch.object(client, "_request") as request:
+        deleted = client.delete_managed_firewall_rule(
+            "shadowfleet-ingress-unused",
+            expected_network=expected_network,
+        )
+
+    assert deleted is False
+    request.assert_not_called()

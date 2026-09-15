@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.fernet import Fernet
 import yaml
 
 from utils.config_parser import (
@@ -34,15 +35,15 @@ class TestMaskSecret:
         result = _mask_secret("abc")
         assert result == "***"
 
-    def test_mask_long_string_shows_partial(self) -> None:
-        """Long strings should show first 2 and last 2 characters."""
+    def test_mask_long_string_masks_completely(self) -> None:
+        """Long strings must not expose prefixes or suffixes."""
         result = _mask_secret("abcdefgh")
-        assert result == "ab***gh"
+        assert result == "***"
 
     def test_mask_exactly_four_chars(self) -> None:
         """Strings with exactly 4 chars should be fully masked."""
         result = _mask_secret("abcd")
-        assert result == "****"
+        assert result == "***"
 
 
 class TestSetNestedValue:
@@ -131,8 +132,27 @@ class TestApplyEnvironmentOverrides:
         del os.environ["SHADOWFLEET_TELEGRAM_BOT_TOKEN"]
         del os.environ["SHADOWFLEET_CLOUDFLARE_API_TOKEN"]
 
+    def test_app_secret_environment_overrides(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("SHADOWFLEET_JWT_SECRET", "jwt-secret-value")
+        monkeypatch.setenv(
+            "SHADOWFLEET_ASSET_CREDENTIAL_ENCRYPTION_KEY",
+            "fernet-key-value",
+        )
+
+        result = _apply_environment_overrides({"app": {}})
+
+        assert result["app"]["jwt_secret"] == "jwt-secret-value"
+        assert (
+            result["app"]["asset_credential_encryption_key"]
+            == "fernet-key-value"
+        )
+
     def test_probe_bootstrap_tokens_split(self) -> None:
         """Probe bootstrap tokens should be split by comma."""
+
         os.environ["SHADOWFLEET_PROBE_BOOTSTRAP_TOKENS"] = "token1, token2 , token3"
         raw: dict[str, Any] = {"app": {"probe_bootstrap_tokens": []}}
         result = _apply_environment_overrides(raw)
@@ -140,6 +160,17 @@ class TestApplyEnvironmentOverrides:
         del os.environ["SHADOWFLEET_PROBE_BOOTSTRAP_TOKENS"]
 
 
+    def test_empty_optional_xboard_api_environment_values_are_ignored(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("SHADOWFLEET_XBOARD_V2BX_API_HOST", "")
+        monkeypatch.setenv("SHADOWFLEET_XBOARD_V2BX_API_KEY", "")
+        raw = {"xboard": {"v2bx_api_host": None, "v2bx_api_key": None}}
+
+        result = _apply_environment_overrides(raw)
+
+        assert result == raw
 class TestLoadConfig:
     """Tests for load_config function."""
 
@@ -185,15 +216,37 @@ class TestSanitizeConfigForLogging:
         """Sensitive credentials should be masked in output."""
         from models.config_models import AppConfig
 
+        encryption_key = Fernet.generate_key().decode("ascii")
         config = AppConfig(
-            app={"environment": "development"},
+            app={
+                "environment": "development",
+                "jwt_secret": "jwt-secret-value",
+                "asset_credential_encryption_key": encryption_key,
+            },
             logging={"level": "DEBUG"},
             telegram={"enabled": True, "bot_token": "secret_bot_token", "chat_id": "123456"},
             cloudflare={"enabled": True, "api_token": "cf_secret", "zone_id": "zone123"},
             aws_proxy={"enabled": False},
+            xboard={
+                "host": "db.example.test",
+                "database": "xboard",
+                "user": "xboard",
+                "v2bx_api_host": "https://xboard.example.test",
+                "v2bx_api_key": "unredacted-v2bx-key",
+            },
         )
         sanitized = sanitize_config_for_logging(config)
 
         assert sanitized["telegram"]["bot_token"] != "secret_bot_token"
         assert "***" in sanitized["telegram"]["bot_token"]
         assert sanitized["cloudflare"]["api_token"] != "cf_secret"
+
+        assert sanitized["app"]["jwt_secret"] != "jwt-secret-value"
+        assert "***" in sanitized["app"]["jwt_secret"]
+        assert (
+            sanitized["app"]["asset_credential_encryption_key"]
+            != encryption_key
+        )
+        assert "***" in sanitized["app"]["asset_credential_encryption_key"]
+        assert sanitized["xboard"]["v2bx_api_key"] == "***"
+        assert "unredacted-v2bx-key" not in str(sanitized)

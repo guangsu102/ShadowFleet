@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -26,13 +27,30 @@ async def health_check() -> dict[str, str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    get_runtime_context()
-    AuthUserRepo().ensure_default_admin()
+    runtime_context = get_runtime_context()
+    AuthUserRepo.from_runtime_context(runtime_context).ensure_bootstrap_admin(
+        os.environ.get("SHADOWFLEET_BOOTSTRAP_ADMIN_PASSWORD")
+    )
     yield
     await lifespan_shutdown()
 
+def _cors_allowed_origins() -> list[str]:
+    raw_origins = os.environ.get("SHADOWFLEET_CORS_ALLOWED_ORIGINS", "")
+    origins = list(
+        dict.fromkeys(
+            origin.strip() for origin in raw_origins.split(",") if origin.strip()
+        )
+    )
+    if "*" in origins:
+        raise RuntimeError(
+            "SHADOWFLEET_CORS_ALLOWED_ORIGINS must list explicit origins"
+        )
+    return origins
+
+
 
 def create_app() -> FastAPI:
+    cors_allowed_origins = _cors_allowed_origins()
     app = FastAPI(
         title="ShadowFleet API",
         version="0.1.0",
@@ -42,8 +60,8 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_allowed_origins,
+        allow_credentials=bool(cors_allowed_origins),
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["X-Correlation-ID"],

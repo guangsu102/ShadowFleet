@@ -58,4 +58,8 @@ class ProvisionerService:
             return provision_kamatera_node(dependencies, self._asset_repo, request)
         if request.asset_type == "oci":
             return provision_oci_node(dependencies, self._asset_repo, request)
-        return provision_aws_node(dependencies, self._asset_repo, request)
+        if request.asset_type == "aws":
+            return provision_aws_node(dependencies, self._asset_repo, request)
+        raise ProvisionerServiceError(
+            f"Unsupported asset_type for provisioning: {request.asset_type}"
+        )

@@ -9,6 +9,7 @@ from database.asset_repo import AssetRepo
 from database.provisioning_task_repo import ProvisioningTaskCreateRequest, ProvisioningTaskRepo
 from database.state_repo import StateRepo
 from services.asset_selector_service import AssetSelectorService, AssetSelectionError, AssetSelectionRequest
+from services.monitor_support import infer_node_asset_type
 from services.fleet_scheduler_models import (
     RegionProtocolGap,
     SchedulerCooldownTracker,
@@ -277,7 +278,10 @@ class FleetSchedulerService:
         for node in self._state_repo.list_active_nodes():
             if node.status not in ("online", "healing"):
                 continue
-            region = node.aws_region or "unknown"
+            region = self._logical_region_for_provider(
+                infer_node_asset_type(node),
+                node.aws_region or "unknown",
+            )
             protocol = node.node_type
             counts[(region, protocol)] += 1
         return counts
@@ -300,7 +304,10 @@ class FleetSchedulerService:
             if task.status not in ("queued", "running"):
                 continue
             payload = task.request_payload
-            region = payload.get("region", "unknown")
+            region = self._logical_region_for_provider(
+                str(payload.get("asset_type") or "aws"),
+                str(payload.get("region") or "unknown"),
+            )
             protocol = payload.get("protocol_type", "unknown")
             counts[(region, protocol)] += 1
 
@@ -308,7 +315,10 @@ class FleetSchedulerService:
         for node in self._state_repo.list_active_nodes():
             if node.status != "provisioning":
                 continue
-            region = node.aws_region or "unknown"
+            region = self._logical_region_for_provider(
+                infer_node_asset_type(node),
+                node.aws_region or "unknown",
+            )
             protocol = node.node_type
             counts[(region, protocol)] += 1
 
@@ -338,7 +348,10 @@ class FleetSchedulerService:
                 server_port=443,
                 rate=Decimal("100"),
                 asset_type=asset_result.asset_type,
-                region=gap.region,
+                region=(
+                    asset_result.region
+                    or self._provider_region(gap.region, asset_result.asset_type)
+                ),
                 require_cdn_proxy=False,
                 cert_mode="dns",
                 status_reason=f"Auto-scheduled: {reason}",
@@ -387,11 +400,12 @@ class FleetSchedulerService:
         last_error: AssetSelectionError | None = None
         for asset_type in self._enabled_cloud_asset_types():
             try:
+                provider_region = self._provider_region(gap.region, asset_type)
                 return self._asset_selector.select_asset(
                     AssetSelectionRequest(
                         protocol_type=gap.protocol_type,
                         asset_type=asset_type,
-                        region=gap.region,
+                        region=provider_region,
                         require_cdn_proxy=False,
                     )
                 )
@@ -400,6 +414,39 @@ class FleetSchedulerService:
         if last_error is not None:
             raise last_error
         raise FleetSchedulerServiceError("No cloud asset types configured for scheduling")
+
+    def _provider_region(self, logical_region: str, asset_type: str) -> str:
+        mappings = getattr(self._config, "provider_region_mappings", None)
+        if not isinstance(mappings, dict):
+            return logical_region
+        provider_map = mappings.get(logical_region)
+        if not isinstance(provider_map, dict):
+            return logical_region
+        mapped_region = provider_map.get(asset_type)
+        return (
+            mapped_region.strip()
+            if isinstance(mapped_region, str) and mapped_region.strip()
+            else logical_region
+        )
+
+    def _logical_region_for_provider(
+        self,
+        asset_type: str,
+        provider_region: str,
+    ) -> str:
+        mappings = getattr(self._config, "provider_region_mappings", None)
+        if not isinstance(mappings, dict):
+            return provider_region
+        for logical_region, provider_map in mappings.items():
+            if not isinstance(provider_map, dict):
+                continue
+            mapped_region = provider_map.get(asset_type)
+            if (
+                isinstance(mapped_region, str)
+                and mapped_region.casefold() == provider_region.casefold()
+            ):
+                return str(logical_region)
+        return provider_region
 
     def _enabled_cloud_asset_types(self) -> tuple[str, ...]:
         configured = getattr(self._config, "enabled_asset_types", None)

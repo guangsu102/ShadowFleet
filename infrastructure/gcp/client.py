@@ -20,12 +20,20 @@ RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
 MANAGED_LABEL_KEY = "managed-by"
 MANAGED_LABEL_VALUE = "shadowfleet"
 CREATED_AT_LABEL = "shadowfleet-created-at"
+MANAGED_FIREWALL_DESCRIPTION_MARKER = "managed-by=shadowfleet"
 
 
 class GCPClientError(RuntimeError):
-    def __init__(self, message: str, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        retryable: bool = False,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.retryable = retryable
 
 
 @dataclass(frozen=True)
@@ -186,6 +194,52 @@ class GCPClient:
     def list_networks(self) -> list[dict[str, Any]]:
         return self._list_collection(f"/projects/{self._project_id}/global/networks")
 
+    def list_firewall_rules(self) -> list[dict[str, Any]]:
+        return self._list_collection(
+            f"/projects/{self._project_id}/global/firewalls"
+        )
+
+    def get_firewall_rule(self, rule_name: str) -> dict[str, Any]:
+        name = _required_text(rule_name, "firewall rule name")
+        return self._require_object(
+            self._request(
+                "GET",
+                f"/projects/{self._project_id}/global/firewalls/{name}",
+            ),
+            "firewall",
+        )
+
+    def delete_managed_firewall_rule(
+        self,
+        rule_name: str,
+        *,
+        expected_network: str | None = None,
+    ) -> bool:
+        name = _required_text(rule_name, "firewall rule name")
+        try:
+            firewall = self.get_firewall_rule(name)
+        except GCPClientError as exc:
+            if exc.status_code == 404:
+                return False
+            raise
+        if not firewall_is_shadowfleet_managed(firewall):
+            return False
+        if expected_network:
+            actual_network = _resource_name(
+                str(firewall.get("network") or "")
+            ).casefold()
+            if actual_network != _resource_name(expected_network).casefold():
+                return False
+        operation = self._request(
+            "DELETE",
+            f"/projects/{self._project_id}/global/firewalls/{name}",
+        )
+        self.wait_for_global_operation(
+            _required_text(operation.get("name"), "operation.name")
+        )
+        set_event_type("gcp_firewall_deleted")
+        return True
+
     def list_subnetworks(self, region: str) -> list[dict[str, Any]]:
         return self._list_collection(
             f"/projects/{self._project_id}/regions/{_required_text(region, 'region')}/subnetworks"
@@ -283,7 +337,7 @@ class GCPClient:
         path = f"/projects/{self._project_id}/global/firewalls/{rule_name}"
         payload: dict[str, object] = {
             "name": rule_name,
-            "description": "ShadowFleet managed inbound TCP",
+            "description": "ShadowFleet managed inbound TCP (managed-by=shadowfleet)",
             "network": network,
             "direction": "INGRESS",
             "priority": 1000,
@@ -311,14 +365,43 @@ class GCPClient:
                 f"GCP firewall rule {rule_name} belongs to network "
                 f"{existing_network}, not {requested_network}"
             )
+        description = str(existing.get("description") or "")
+        if "shadowfleet" not in description.casefold():
+            raise GCPClientError(
+                f"GCP firewall rule {rule_name} already exists but is not managed by ShadowFleet"
+            )
+        if str(existing.get("direction") or "INGRESS").upper() != "INGRESS":
+            raise GCPClientError(
+                f"GCP firewall rule {rule_name} is not an ingress rule"
+            )
+        existing_tags = {
+            str(tag)
+            for tag in existing.get("targetTags", [])
+            if isinstance(tag, str) and tag
+        }
+        if existing_tags and target_tag not in existing_tags:
+            raise GCPClientError(
+                f"GCP firewall rule {rule_name} does not target tag {target_tag}"
+            )
         existing_ports = _firewall_tcp_ports(existing)
         if set(ports).issubset(existing_ports):
             return rule_name
-        payload["allowed"] = [{
+        existing_allowed = existing.get("allowed")
+        preserved_allowed = [
+            dict(item)
+            for item in existing_allowed
+            if isinstance(item, dict)
+            and str(item.get("IPProtocol") or "").casefold() != "tcp"
+        ] if isinstance(existing_allowed, list) else []
+        preserved_allowed.append({
             "IPProtocol": "tcp",
             "ports": [str(port) for port in sorted(existing_ports | set(ports))],
-        }]
-        operation = self._request("PUT", path, payload=payload)
+        })
+        patch_payload: dict[str, object] = {"allowed": preserved_allowed}
+        fingerprint = _optional_text(existing.get("fingerprint"))
+        if fingerprint:
+            patch_payload["fingerprint"] = fingerprint
+        operation = self._request("PATCH", path, payload=patch_payload)
         self.wait_for_global_operation(_required_text(operation.get("name"), "operation.name"))
         set_event_type("gcp_firewall_updated")
         return rule_name
@@ -451,6 +534,17 @@ class GCPClient:
         access_config_name: str = "External NAT",
     ) -> str:
         base = f"/projects/{self._project_id}/zones/{zone}/instances/{instance_name}"
+        instance = self.get_instance(zone, instance_name)
+        previous_access_config = _find_access_config(
+            instance,
+            interface_name=interface_name,
+            access_config_name=access_config_name,
+        )
+        if previous_access_config is None:
+            raise GCPClientError(
+                f"GCP access config not found for {instance_name}: {access_config_name}"
+            )
+
         operation = self._request(
             "POST",
             f"{base}/deleteAccessConfig",
@@ -463,20 +557,63 @@ class GCPClient:
             zone,
             _required_text(operation.get("name"), "operation.name"),
         )
-        operation = self._request(
-            "POST",
-            f"{base}/addAccessConfig",
-            params={"networkInterface": interface_name},
-            payload={
-                "name": access_config_name,
-                "type": "ONE_TO_ONE_NAT",
-                "networkTier": "PREMIUM",
-            },
-        )
-        self.wait_for_zone_operation(
-            zone,
-            _required_text(operation.get("name"), "operation.name"),
-        )
+
+        replacement_payload = {
+            "name": access_config_name,
+            "type": "ONE_TO_ONE_NAT",
+            "networkTier": str(previous_access_config.get("networkTier") or "PREMIUM"),
+        }
+        try:
+            self._add_access_config(
+                base=base,
+                zone=zone,
+                interface_name=interface_name,
+                payload=replacement_payload,
+            )
+        except GCPClientError as rotation_error:
+            current_ipv4 = self._current_external_ipv4(zone, instance_name)
+            if current_ipv4 is not None:
+                set_event_type("gcp_ipv4_rotated")
+                return current_ipv4
+
+            restore_payload = dict(replacement_payload)
+            previous_nat_ip = _optional_text(previous_access_config.get("natIP"))
+            if previous_nat_ip:
+                restore_payload["natIP"] = previous_nat_ip
+            try:
+                self._add_access_config(
+                    base=base,
+                    zone=zone,
+                    interface_name=interface_name,
+                    payload=restore_payload,
+                )
+            except GCPClientError as restore_error:
+                if "natIP" not in restore_payload:
+                    raise GCPClientError(
+                        "GCP IPv4 rotation failed and the access config could not be restored: "
+                        f"{restore_error}",
+                        restore_error.status_code,
+                    ) from rotation_error
+                try:
+                    self._add_access_config(
+                        base=base,
+                        zone=zone,
+                        interface_name=interface_name,
+                        payload=replacement_payload,
+                    )
+                except GCPClientError as fallback_error:
+                    raise GCPClientError(
+                        "GCP IPv4 rotation failed and the access config could not be restored: "
+                        f"{fallback_error}",
+                        fallback_error.status_code,
+                    ) from rotation_error
+            restored_ipv4 = self._current_external_ipv4(zone, instance_name)
+            raise GCPClientError(
+                "GCP IPv4 rotation failed; external connectivity was restored"
+                + (f" at {restored_ipv4}" if restored_ipv4 else ""),
+                rotation_error.status_code,
+            ) from rotation_error
+
         instance = self.get_instance(zone, instance_name)
         ipv4, _ = _instance_public_addresses(instance)
         if ipv4 is None:
@@ -484,6 +621,33 @@ class GCPClient:
                 f"GCP instance has no external IPv4 after rotation: {instance_name}"
             )
         set_event_type("gcp_ipv4_rotated")
+        return ipv4
+
+    def _add_access_config(
+        self,
+        *,
+        base: str,
+        zone: str,
+        interface_name: str,
+        payload: dict[str, object],
+    ) -> None:
+        operation = self._request(
+            "POST",
+            f"{base}/addAccessConfig",
+            params={"networkInterface": interface_name},
+            payload=payload,
+        )
+        self.wait_for_zone_operation(
+            zone,
+            _required_text(operation.get("name"), "operation.name"),
+        )
+
+    def _current_external_ipv4(self, zone: str, instance_name: str) -> str | None:
+        try:
+            instance = self.get_instance(zone, instance_name)
+        except GCPClientError:
+            return None
+        ipv4, _ = _instance_public_addresses(instance)
         return ipv4
 
     def wait_for_zone_operation(
@@ -577,7 +741,10 @@ class GCPClient:
                     timeout=self._request_timeout_seconds,
                 )
             except requests.RequestException as exc:
-                raise GCPClientError(f"GCP request failed: {exc}") from exc
+                raise GCPClientError(
+                    f"GCP request failed: {exc}",
+                    retryable=True,
+                ) from exc
             try:
                 body = response.json() if response.content else {}
             except ValueError as exc:
@@ -601,7 +768,7 @@ class GCPClient:
                 event_type_prefix="gcp",
                 func=perform_request,
                 should_retry=lambda exc: isinstance(exc, GCPClientError)
-                and exc.status_code in RETRYABLE_STATUS_CODES,
+                and (exc.retryable or exc.status_code in RETRYABLE_STATUS_CODES),
             )
         except GCPClientError:
             set_event_type("gcp_request_failed")
@@ -645,6 +812,31 @@ def instance_labels(instance: dict[str, Any]) -> dict[str, str]:
     if not isinstance(labels, dict):
         return {}
     return {str(key): str(value) for key, value in labels.items()}
+
+
+def _find_access_config(
+    instance: dict[str, Any],
+    *,
+    interface_name: str,
+    access_config_name: str,
+) -> dict[str, Any] | None:
+    interfaces = instance.get("networkInterfaces")
+    if not isinstance(interfaces, list):
+        return None
+    for interface in interfaces:
+        if not isinstance(interface, dict):
+            continue
+        if str(interface.get("name") or "nic0") != interface_name:
+            continue
+        access_configs = interface.get("accessConfigs")
+        if not isinstance(access_configs, list):
+            return None
+        for access_config in access_configs:
+            if not isinstance(access_config, dict):
+                continue
+            if str(access_config.get("name") or "External NAT") == access_config_name:
+                return access_config
+    return None
 
 
 def _build_authorized_session(credentials: GCPCredentials) -> Any:
@@ -793,6 +985,11 @@ def _firewall_tcp_ports(firewall: dict[str, Any]) -> set[int]:
                 except ValueError:
                     continue
     return ports
+
+
+def firewall_is_shadowfleet_managed(firewall: dict[str, Any]) -> bool:
+    description = str(firewall.get("description") or "").casefold()
+    return MANAGED_FIREWALL_DESCRIPTION_MARKER in description
 
 
 def _error_detail(payload: Any) -> str:

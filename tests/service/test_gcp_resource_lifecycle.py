@@ -15,6 +15,7 @@ from services.monitor_support import infer_node_asset_type
 from services.node_registry_service import NodeRegistryService
 from services.orphan_resource_cleaner import OrphanResourceCleaner
 from services.orphan_resource_detector import (
+    OrphanGCPFirewallRule,
     OrphanGCPInstance,
     OrphanResourceDetector,
 )
@@ -216,6 +217,12 @@ def _instances() -> list[dict[str, object]]:
             "labels": {"managed-by": "shadowfleet"},
         },
         {
+            "name": "terminated-instance",
+            "status": "TERMINATED",
+            "creationTimestamp": "2020-01-01T00:00:00Z",
+            "labels": {"managed-by": "shadowfleet"},
+        },
+        {
             "name": "unmanaged-instance",
             "status": "RUNNING",
             "creationTimestamp": "2020-01-01T00:00:00Z",
@@ -227,7 +234,16 @@ def _instances() -> list[dict[str, object]]:
 def test_both_orphan_scanners_find_only_old_managed_gcp_instance() -> None:
     client = MagicMock()
     client.list_instances.return_value = _instances()
-    active_node = SimpleNamespace(aws_instance_id="known-instance")
+    active_node = SimpleNamespace(
+        aws_instance_id="known-instance",
+        aws_account_id="gcp:shadowfleet-test",
+        aws_region="asia-east1-a",
+    )
+    same_name_in_other_project = SimpleNamespace(
+        aws_instance_id="orphan-instance",
+        aws_account_id="gcp:another-project",
+        aws_region="asia-east1-a",
+    )
 
     detector = object.__new__(OrphanResourceDetector)
     detector._runtime = MagicMock()
@@ -235,7 +251,10 @@ def test_both_orphan_scanners_find_only_old_managed_gcp_instance() -> None:
     detector._asset_repo = MagicMock()
     detector._asset_repo.list_assets_by_status.return_value = [_asset()]
     detector._state_repo = MagicMock()
-    detector._state_repo.list_active_nodes.return_value = [active_node]
+    detector._state_repo.list_active_nodes.return_value = [
+        active_node,
+        same_name_in_other_project,
+    ]
 
     scan_service = object.__new__(OrphanResourceScanService)
     scan_service._runtime_context = MagicMock()
@@ -243,7 +262,10 @@ def test_both_orphan_scanners_find_only_old_managed_gcp_instance() -> None:
     scan_service._asset_repo = MagicMock()
     scan_service._asset_repo.list_assets_by_status.return_value = [_asset()]
     scan_service._state_repo = MagicMock()
-    scan_service._state_repo.list_active_nodes.return_value = [active_node]
+    scan_service._state_repo.list_active_nodes.return_value = [
+        active_node,
+        same_name_in_other_project,
+    ]
     scan_service._resource_age_exceeded = MagicMock(return_value=True)
     scan_service._build_gcp_client = MagicMock(return_value=client)
 
@@ -251,9 +273,15 @@ def test_both_orphan_scanners_find_only_old_managed_gcp_instance() -> None:
         detector_result = detector._scan_orphan_gcp_instances()
     scan_result = scan_service._scan_gcp_orphans()
 
-    assert [item.instance_name for item in detector_result] == ["orphan-instance"]
+    assert [item.instance_name for item in detector_result] == [
+        "orphan-instance",
+        "terminated-instance",
+    ]
     assert detector_result[0].asset_id == 29
-    assert [item.resource_id for item in scan_result] == ["orphan-instance"]
+    assert [item.resource_id for item in scan_result] == [
+        "orphan-instance",
+        "terminated-instance",
+    ]
     assert scan_result[0].resource_type == "gcp_instance"
 
 
@@ -338,4 +366,90 @@ def test_sqlite_asset_constraint_accepts_gcp(full_schema_sqlite_db) -> None:
             asset_type, asset_name, status, created_at, updated_at
         ) VALUES ('gcp', 'gcp-test', 'active', 'now', 'now')
         """
+    )
+
+def test_gcp_firewall_scan_preserves_referenced_and_unmanaged_rules() -> None:
+    client = MagicMock()
+    client.list_firewall_rules.return_value = [
+        {
+            "name": "shadowfleet-ingress",
+            "description": "managed-by=shadowfleet",
+            "network": (
+                "projects/shadowfleet-test/global/networks/default"
+            ),
+            "creationTimestamp": "2020-01-01T00:00:00Z",
+        },
+        {
+            "name": "shadowfleet-ingress-unused",
+            "description": "managed-by=shadowfleet",
+            "network": (
+                "projects/shadowfleet-test/global/networks/unused"
+            ),
+            "creationTimestamp": "2020-01-01T00:00:00Z",
+        },
+        {
+            "name": "operator-rule",
+            "description": "operator managed",
+            "network": (
+                "projects/shadowfleet-test/global/networks/unused"
+            ),
+            "creationTimestamp": "2020-01-01T00:00:00Z",
+        },
+    ]
+    detector = object.__new__(OrphanResourceDetector)
+    detector._runtime = MagicMock()
+    detector._logger = MagicMock()
+    detector._asset_repo = MagicMock()
+    asset = _asset()
+    assert asset.provider_config is not None
+    asset.provider_config.update(
+        {
+            "network": (
+                "projects/shadowfleet-test/global/networks/default"
+            ),
+            "firewall_rule_name": "shadowfleet-ingress",
+        }
+    )
+    detector._asset_repo.list_assets.return_value = [asset]
+    detector._state_repo = MagicMock()
+    detector._state_repo.list_active_nodes.return_value = []
+
+    with patch("services.orphan_resource_detector.GCPClient", return_value=client):
+        result = detector._scan_orphan_gcp_firewall_rules()
+
+    assert result == [
+        OrphanGCPFirewallRule(
+            rule_name="shadowfleet-ingress-unused",
+            asset_id=29,
+            project_id="shadowfleet-test",
+            network=(
+                "projects/shadowfleet-test/global/networks/unused"
+            ),
+            created_at="2020-01-01T00:00:00Z",
+        )
+    ]
+
+
+def test_gcp_firewall_cleanup_requires_client_revalidation() -> None:
+    client = MagicMock()
+    client.delete_managed_firewall_rule.return_value = True
+    cleaner = object.__new__(OrphanResourceCleaner)
+    cleaner._runtime = MagicMock()
+    cleaner._logger = MagicMock()
+    cleaner._asset_repo = MagicMock()
+    cleaner._build_gcp_client = MagicMock(return_value=client)
+    orphan = OrphanGCPFirewallRule(
+        rule_name="shadowfleet-ingress-unused",
+        asset_id=29,
+        project_id="shadowfleet-test",
+        network="projects/shadowfleet-test/global/networks/unused",
+        created_at="2020-01-01T00:00:00Z",
+    )
+
+    result = cleaner._cleanup_gcp_firewall_rules([orphan], dry_run=False)
+
+    assert result[0].success is True
+    client.delete_managed_firewall_rule.assert_called_once_with(
+        "shadowfleet-ingress-unused",
+        expected_network="projects/shadowfleet-test/global/networks/unused",
     )

@@ -18,9 +18,16 @@ RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
 class KamateraClientError(RuntimeError):
-    def __init__(self, message: str, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        retryable: bool = False,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.retryable = retryable
 
 
 @dataclass(frozen=True)
@@ -439,7 +446,10 @@ class KamateraClient:
                     timeout=self._request_timeout_seconds,
                 )
             except requests.RequestException as exc:
-                raise KamateraClientError(f"Kamatera request failed: {exc}") from exc
+                raise KamateraClientError(
+                    f"Kamatera request failed: {exc}",
+                    retryable=True,
+                ) from exc
 
             try:
                 body = response.json()
@@ -471,7 +481,7 @@ class KamateraClient:
                 event_type_prefix="kamatera",
                 func=perform_request,
                 should_retry=lambda exc: isinstance(exc, KamateraClientError)
-                and exc.status_code in RETRYABLE_STATUS_CODES,
+                and (exc.retryable or exc.status_code in RETRYABLE_STATUS_CODES),
             )
         except KamateraClientError:
             set_event_type("kamatera_request_failed")

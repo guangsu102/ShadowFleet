@@ -274,7 +274,12 @@ class TestOrphanResourceCleaner:
             mock_xboard.return_value = [CleanupResult("xboard", "200", True)]
 
             report = cleaner.cleanup_orphan_resources(
-                sample_report, dry_run=True
+                sample_report,
+                cleanup_ec2=True,
+                cleanup_dns=True,
+                cleanup_allocations=True,
+                cleanup_xboard=True,
+                dry_run=True,
             )
 
             mock_ec2.assert_called_once()
@@ -301,7 +306,13 @@ class TestOrphanResourceCleaner:
             mock_alloc.return_value = [CleanupResult("allocation", "1", True)]
             mock_xboard.return_value = [CleanupResult("xboard", "200", True)]
 
-            report = cleaner.cleanup_orphan_resources(sample_report)
+            report = cleaner.cleanup_orphan_resources(
+                sample_report,
+                cleanup_ec2=True,
+                cleanup_dns=True,
+                cleanup_allocations=True,
+                cleanup_xboard=True,
+            )
 
             assert report.total_attempted == 4
             assert report.total_succeeded == 4
@@ -329,7 +340,13 @@ class TestOrphanResourceCleaner:
                 "xboard", "200", False, "Not found"
             )]
 
-            report = cleaner.cleanup_orphan_resources(sample_report)
+            report = cleaner.cleanup_orphan_resources(
+                sample_report,
+                cleanup_ec2=True,
+                cleanup_dns=True,
+                cleanup_allocations=True,
+                cleanup_xboard=True,
+            )
 
             assert report.total_attempted == 4
             assert report.total_succeeded == 2

@@ -7,6 +7,7 @@ from jose import JWTError, jwt
 from api.auth.jwt import ALGORITHM as _ALGORITHM
 from api.auth.jwt import _get_secret as _jwt_secret_loader
 from api.auth.schemas import CurrentUser, UserRole
+from api.deps import get_runtime_context
 
 _security = HTTPBearer(auto_error=False)
 
@@ -36,7 +37,22 @@ async def get_current_user(request: Request) -> CurrentUser:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing subject")
 
     from api.auth.db import AuthUserRepo
-    user = AuthUserRepo().get_by_id(int(user_id))
+    try:
+        parsed_user_id = int(str(user_id))
+    except (TypeError, ValueError):
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject",
+        ) from None
+    if parsed_user_id < 1:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject",
+        )
+
+    user = AuthUserRepo.from_runtime_context(get_runtime_context()).get_by_id(parsed_user_id)
     if user is None:
         from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")

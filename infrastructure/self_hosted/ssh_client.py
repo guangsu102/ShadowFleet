@@ -63,6 +63,11 @@ class SelfHostedSshClient:
         self._logger = runtime_context.logger.getChild("infrastructure.self_hosted.ssh")
         self._request_timeout_seconds = runtime_context.config.app.request_timeout_seconds
 
+    def validate_connection(self) -> None:
+        """Authenticate and immediately close without executing remote commands."""
+        client = self._connect()
+        client.close()
+
     def execute_script(
         self,
         script_content: str,
@@ -244,16 +249,18 @@ class SelfHostedSshClient:
             return None
 
         key_buffer = StringIO(private_key_text)
-        key_loaders = (
-            paramiko.RSAKey.from_private_key,
-            paramiko.Ed25519Key.from_private_key,
-            paramiko.ECDSAKey.from_private_key,
-            paramiko.DSSKey.from_private_key,
+        key_classes = (
+            getattr(paramiko, "RSAKey", None),
+            getattr(paramiko, "Ed25519Key", None),
+            getattr(paramiko, "ECDSAKey", None),
+            getattr(paramiko, "DSSKey", None),
         )
-        for key_loader in key_loaders:
+        for key_class in key_classes:
+            if key_class is None:
+                continue
             key_buffer.seek(0)
             try:
-                return key_loader(key_buffer)
+                return key_class.from_private_key(key_buffer)
             except Exception:
                 continue
 

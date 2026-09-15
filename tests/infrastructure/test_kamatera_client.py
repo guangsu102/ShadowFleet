@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from infrastructure.kamatera import (
     KamateraClient,
@@ -169,3 +170,19 @@ def test_validate_provisioning_target_rejects_unavailable_capability() -> None:
                 image="ubuntu",
                 cpu="4B",
             )
+
+def test_request_retries_connection_errors() -> None:
+    runtime = _runtime()
+    runtime.config.app.max_retries = 1
+    client = KamateraClient(runtime, client_id="client", secret="secret")
+    response = MagicMock(status_code=200)
+    response.json.return_value = [{"id": "AS"}]
+    with patch.object(
+        client._session,
+        "request",
+        side_effect=[requests.ConnectionError("connection reset"), response],
+    ) as request, patch("utils.resilience.time.sleep"):
+        datacenters = client.list_datacenters()
+
+    assert datacenters == [{"id": "AS"}]
+    assert request.call_count == 2

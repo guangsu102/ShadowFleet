@@ -163,7 +163,18 @@ class TestSystemHealthMonitor:
 
         service._orphan_cleaner.cleanup_orphan_resources.assert_called_once_with(
             mock_orphan_report,
-            dry_run=False
+            cleanup_ec2=True,
+            cleanup_digitalocean=True,
+            cleanup_vultr=True,
+            cleanup_gcp=True,
+            cleanup_gcp_firewalls=False,
+            cleanup_kamatera=True,
+            cleanup_oci=True,
+            cleanup_azure=True,
+            cleanup_dns=True,
+            cleanup_allocations=True,
+            cleanup_xboard=True,
+            dry_run=False,
         )
         assert any("自动清理完成" in alert for alert in report.alerts)
 
@@ -184,7 +195,11 @@ class TestSystemHealthMonitor:
 
         service._sync_monitor.auto_repair_inconsistencies.assert_called_once_with(
             mock_sync_report,
-            dry_run=False
+            repair_missing_in_sqlite=True,
+            repair_missing_in_xboard=False,
+            repair_status_mismatch=True,
+            repair_host_mismatch=True,
+            dry_run=False,
         )
         assert any("自动修复完成" in alert for alert in report.alerts)
 

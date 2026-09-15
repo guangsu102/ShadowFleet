@@ -249,6 +249,64 @@ class TestCloudAssetSelection:
             "aws",
         ]
 
+    def test_provider_region_mapping_is_used_for_asset_selection(self, mock_runtime):
+        mock_runtime.config.fleet_scheduler.enabled_asset_types = ["gcp"]
+        mock_runtime.config.fleet_scheduler.provider_region_mappings = {
+            "ap-northeast-1": {"gcp": "asia-northeast1-a"}
+        }
+        with patch("services.fleet_scheduler_service.StateRepo"),              patch("services.fleet_scheduler_service.ProvisioningTaskRepo"),              patch("services.fleet_scheduler_service.AssetRepo"),              patch("services.fleet_scheduler_service.AssetSelectorService") as selector_type:
+            selector = MagicMock()
+            selector.select_asset.return_value = "gcp-selection"
+            selector_type.return_value = selector
+            service = FleetSchedulerService(mock_runtime)
+            gap = RegionProtocolGap(
+                region="ap-northeast-1",
+                protocol_type="AnyTLS",
+                desired_count=1,
+                min_alert_threshold=1,
+                current_online_count=0,
+                pending_provisioning_tasks=0,
+                deficit=1,
+                alert_level="critical",
+            )
+
+            assert service._select_cloud_asset_for_gap(gap) == "gcp-selection"
+
+        selection_request = selector.select_asset.call_args.args[0]
+        assert selection_request.region == "asia-northeast1-a"
+
+    def test_provider_regions_are_counted_in_logical_fleet_region(self, mock_runtime):
+        mock_runtime.config.fleet_scheduler.provider_region_mappings = {
+            "ap-northeast-1": {
+                "gcp": "asia-northeast1-a",
+                "kamatera": "AS",
+            }
+        }
+        service = FleetSchedulerService(mock_runtime)
+        service._state_repo = MagicMock()
+        gcp_node = MagicMock(
+            status="online",
+            asset_type="gcp",
+            aws_account_id="gcp:project",
+            aws_region="asia-northeast1-a",
+            node_type="AnyTLS",
+        )
+        kamatera_node = MagicMock(
+            status="healing",
+            asset_type="kamatera",
+            aws_account_id="kamatera:account",
+            aws_region="AS",
+            node_type="AnyTLS",
+        )
+        service._state_repo.list_active_nodes.return_value = [
+            gcp_node,
+            kamatera_node,
+        ]
+
+        counts = service._get_online_node_counts()
+
+        assert counts[("ap-northeast-1", "AnyTLS")] == 2
+
     def test_config_can_limit_scheduler_to_aws(self, mock_runtime):
         mock_runtime.config.fleet_scheduler.enabled_asset_types = ["aws"]
         with patch("services.fleet_scheduler_service.StateRepo"), \

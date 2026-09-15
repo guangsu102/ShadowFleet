@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from database.credential_cipher import CredentialCipher
 from database.asset_models import (
     AllocationStatus,
     AssetAllocationCreateRequest,
@@ -43,6 +44,59 @@ class AssetRepo:
 
         self._sqlite_manager = sqlite_manager
         self._logger = runtime_context.logger.getChild("database.asset_repo")
+        configured_key = getattr(
+            runtime_context.config.app,
+            "asset_credential_encryption_key",
+            None,
+        )
+        self._credential_cipher = CredentialCipher(
+            configured_key if isinstance(configured_key, str) else None
+        )
+        self._migrate_plaintext_credentials()
+
+    def _map_asset_record(self, row) -> AssetRecord:
+        return map_asset_record(
+            row,
+            decrypt_secret=self._credential_cipher.decrypt,
+        )
+
+    def _migrate_plaintext_credentials(self) -> None:
+        if not self._credential_cipher.enabled:
+            return
+
+        columns = (
+            "aws_access_key",
+            "aws_secret_key",
+            "ssh_password",
+            "ssh_private_key",
+            "provider_config_json",
+        )
+        migrated_count = 0
+        with self._sqlite_manager.connection() as connection:
+            rows = connection.execute(
+                f"SELECT id, {', '.join(columns)} FROM fleet_assets"
+            ).fetchall()
+            for row in rows:
+                original_values = tuple(row[column] for column in columns)
+                encrypted_values = tuple(
+                    self._credential_cipher.encrypt(value)
+                    for value in original_values
+                )
+                if encrypted_values == original_values:
+                    continue
+                assignments = ", ".join(f"{column} = ?" for column in columns)
+                connection.execute(
+                    f"UPDATE fleet_assets SET {assignments} WHERE id = ?",
+                    (*encrypted_values, int(row["id"])),
+                )
+                migrated_count += 1
+
+        if migrated_count:
+            set_event_type("sqlite_asset_credentials_migrated")
+            self._logger.info(
+                "Encrypted plaintext credentials for %s asset(s)",
+                migrated_count,
+            )
 
     def create_asset(self, request: AssetCreateRequest) -> int:
         validate_asset_request(request)
@@ -80,20 +134,24 @@ class AssetRepo:
             request.status,
             request.region.strip() if request.region else None,
             request.aws_account_id.strip() if request.aws_account_id else None,
-            request.aws_access_key.strip() if request.aws_access_key else None,
-            request.aws_secret_key.strip() if request.aws_secret_key else None,
+            self._credential_cipher.encrypt(
+                request.aws_access_key.strip() if request.aws_access_key else None
+            ),
+            self._credential_cipher.encrypt(
+                request.aws_secret_key.strip() if request.aws_secret_key else None
+            ),
             request.ssh_host.strip() if request.ssh_host else None,
             request.ssh_port,
             request.ssh_username.strip() if request.ssh_username else None,
-            request.ssh_password,
-            request.ssh_private_key,
+            self._credential_cipher.encrypt(request.ssh_password),
+            self._credential_cipher.encrypt(request.ssh_private_key),
             request.default_instance_type.strip() if request.default_instance_type else None,
             request.default_vcpu,
             request.account_total_vcpu,
             request.default_architecture.strip() if request.default_architecture else None,
             request.cpu_cores,
             request.memory_gb,
-            to_json_text(request.provider_config),
+            self._credential_cipher.encrypt(to_json_text(request.provider_config)),
             request.remarks,
             timestamp,
             timestamp,
@@ -211,7 +269,7 @@ class AssetRepo:
             ).fetchone()
         if row is None:
             raise AssetNotFoundError(f"Asset not found: asset_id={asset_id}")
-        return map_asset_record(row)
+        return self._map_asset_record(row)
 
     def get_asset_by_xboard_node_id(self, xboard_node_id: int) -> AssetRecord | None:
         """Return the most recent asset allocated to a node."""
@@ -229,7 +287,7 @@ class AssetRepo:
                 """,
                 (xboard_node_id,),
             ).fetchone()
-        return map_asset_record(row) if row is not None else None
+        return self._map_asset_record(row) if row is not None else None
 
     def list_assets_by_aws_account_id(self, aws_account_id: str) -> list[AssetRecord]:
         if not aws_account_id or not aws_account_id.strip():
@@ -244,7 +302,7 @@ class AssetRepo:
                 """,
                 (aws_account_id.strip(),),
             ).fetchall()
-        return [map_asset_record(row) for row in rows]
+        return [self._map_asset_record(row) for row in rows]
 
     def list_assets_by_status(self, status: str) -> list[AssetRecord]:
         """List all assets with the given status."""
@@ -258,7 +316,19 @@ class AssetRepo:
                 """,
                 (status,),
             ).fetchall()
-        return [map_asset_record(row) for row in rows]
+        return [self._map_asset_record(row) for row in rows]
+
+    def list_assets(self) -> list[AssetRecord]:
+        """List all assets, including inactive assets retained for cleanup."""
+        with self._sqlite_manager.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM fleet_assets
+                ORDER BY updated_at DESC, id DESC
+                """
+            ).fetchall()
+        return [self._map_asset_record(row) for row in rows]
 
     def get_asset_protocol_config(
         self,
@@ -354,7 +424,7 @@ class AssetRepo:
                 continue
             candidates.append(
                 AssetSelectionCandidate(
-                    asset=map_asset_record(row),
+                    asset=self._map_asset_record(row),
                     protocol_config=map_asset_protocol_config_record_from_join(row),
                     current_allocated_count=current_allocated_count,
                     current_allocated_vcpu=current_allocated_vcpu,
@@ -538,6 +608,92 @@ class AssetRepo:
 
         set_event_type("sqlite_asset_status_updated")
         self._logger.info("Updated asset status asset_id=%s status=%s", asset_id, status.strip())
+
+    def update_asset_credentials(
+        self,
+        asset_id: int,
+        *,
+        aws_access_key: str | None = None,
+        aws_secret_key: str | None = None,
+        ssh_password: str | None = None,
+        ssh_private_key: str | None = None,
+        provider_config: dict[str, object] | None = None,
+        aws_account_id: str | None = None,
+        reactivate: bool = False,
+        event: AssetEventCreateRequest | None = None,
+    ) -> AssetRecord:
+        self.get_asset_by_id(asset_id)
+        updates: dict[str, object] = {}
+
+        secret_values = {
+            "aws_access_key": aws_access_key,
+            "aws_secret_key": aws_secret_key,
+            "ssh_password": ssh_password,
+            "ssh_private_key": ssh_private_key,
+        }
+        for column, value in secret_values.items():
+            if value is None:
+                continue
+            if not value.strip():
+                raise ValueError(f"{column} must not be empty")
+            normalized = value if column.startswith("ssh_") else value.strip()
+            updates[column] = self._credential_cipher.encrypt(normalized)
+
+        if provider_config is not None:
+            updates["provider_config_json"] = self._credential_cipher.encrypt(
+                to_json_text(provider_config)
+            )
+        if aws_account_id is not None:
+            if not aws_account_id.strip():
+                raise ValueError("aws_account_id must not be empty")
+            updates["aws_account_id"] = aws_account_id.strip()
+        if reactivate:
+            updates["status"] = "active"
+        if not updates:
+            raise ValueError("at least one credential field must be updated")
+        if event is not None:
+            if event.asset_id != asset_id:
+                raise ValueError("credential event asset_id must match updated asset")
+            if not event.event_type or not event.event_type.strip():
+                raise ValueError("event_type must not be empty")
+            if not event.correlation_id or not event.correlation_id.strip():
+                raise ValueError("correlation_id must not be empty")
+
+        updates["updated_at"] = utcnow_iso()
+        assignments = ", ".join(f"{column} = ?" for column in updates)
+        with self._sqlite_manager.connection() as connection:
+            cursor = connection.execute(
+                f"UPDATE fleet_assets SET {assignments} WHERE id = ?",
+                (*updates.values(), asset_id),
+            )
+            if cursor.rowcount == 0:
+                raise AssetNotFoundError(f"Asset not found: asset_id={asset_id}")
+            if event is not None:
+                connection.execute(
+                    """
+                    INSERT INTO fleet_asset_events (
+                        asset_id,
+                        event_type,
+                        correlation_id,
+                        message,
+                        payload_json,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.asset_id,
+                        event.event_type.strip(),
+                        event.correlation_id.strip(),
+                        event.message,
+                        to_json_text(event.payload),
+                        utcnow_iso(),
+                    ),
+                )
+
+        set_event_type("sqlite_asset_credentials_updated")
+        self._logger.info("Updated asset credentials asset_id=%s", asset_id)
+        return self.get_asset_by_id(asset_id)
 
     def update_asset_hardware(self, asset_id: int, cpu_cores: int, memory_gb: float) -> None:
         """Update CPU cores and memory for an asset (self-hosted only)."""

@@ -7,7 +7,11 @@ from fastapi.testclient import TestClient
 
 from api.router import health as health_router
 from services.orphan_resource_cleaner import CleanupReport
-from services.orphan_resource_detector import OrphanGCPInstance, OrphanResourceReport
+from services.orphan_resource_detector import (
+    OrphanGCPFirewallRule,
+    OrphanGCPInstance,
+    OrphanResourceReport,
+)
 
 
 def _client() -> TestClient:
@@ -15,7 +19,7 @@ def _client() -> TestClient:
     app.include_router(health_router.router)
     app.dependency_overrides[health_router.get_runtime_context] = lambda: MagicMock()
     app.dependency_overrides[health_router.get_current_user] = lambda: None
-    app.dependency_overrides[health_router.require_operator] = lambda: None
+    app.dependency_overrides[health_router.require_admin] = lambda: None
     return TestClient(app)
 
 
@@ -26,7 +30,7 @@ def _report() -> OrphanResourceReport:
         dns_records=[],
         asset_allocations=[],
         xboard_nodes=[],
-        total_count=1,
+        total_count=2,
         gcp_instances=[
             OrphanGCPInstance(
                 instance_name="sf-orphan",
@@ -36,6 +40,17 @@ def _report() -> OrphanResourceReport:
                 created_at="2000-01-01T00:00:00Z",
                 status="RUNNING",
                 labels={"managed-by": "shadowfleet"},
+            )
+        ],
+        gcp_firewall_rules=[
+            OrphanGCPFirewallRule(
+                rule_name="shadowfleet-ingress-unused",
+                asset_id=29,
+                project_id="shadowfleet-test",
+                network=(
+                    "projects/shadowfleet-test/global/networks/unused"
+                ),
+                created_at="2000-01-01T00:00:00Z",
             )
         ],
     )
@@ -56,6 +71,17 @@ def test_orphan_health_response_includes_gcp_instances() -> None:
             "created_at": "2000-01-01T00:00:00Z",
             "status": "RUNNING",
             "labels": {"managed-by": "shadowfleet"},
+        }
+    ]
+    assert response.json()["gcp_firewall_rules"] == [
+        {
+            "rule_name": "shadowfleet-ingress-unused",
+            "asset_id": 29,
+            "project_id": "shadowfleet-test",
+            "network": (
+                "projects/shadowfleet-test/global/networks/unused"
+            ),
+            "created_at": "2000-01-01T00:00:00Z",
         }
     ]
 
@@ -80,4 +106,5 @@ def test_orphan_cleanup_route_forwards_gcp_toggle() -> None:
     assert response.status_code == 200
     kwargs = cleaner_type.return_value.cleanup_orphan_resources.call_args.kwargs
     assert kwargs["cleanup_gcp"] is False
+    assert kwargs["cleanup_gcp_firewalls"] is False
     assert kwargs["dry_run"] is True

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 import json
 import sqlite3
@@ -142,7 +143,14 @@ def build_protocol_defaults(protocol_type: str) -> dict[str, bool]:
     }
 
 
-def map_asset_record(row: sqlite3.Row) -> AssetRecord:
+def map_asset_record(
+    row: sqlite3.Row,
+    decrypt_secret: Callable[[str | None], str | None] | None = None,
+) -> AssetRecord:
+    decrypt = decrypt_secret or (lambda value: value)
+    provider_config_json = (
+        row["provider_config_json"] if "provider_config_json" in row.keys() else None
+    )
     return AssetRecord(
         id=int(row["id"]),
         asset_type=row["asset_type"],
@@ -150,22 +158,20 @@ def map_asset_record(row: sqlite3.Row) -> AssetRecord:
         status=row["status"],
         region=row["region"],
         aws_account_id=row["aws_account_id"],
-        aws_access_key=row["aws_access_key"],
-        aws_secret_key=row["aws_secret_key"],
+        aws_access_key=decrypt(row["aws_access_key"]),
+        aws_secret_key=decrypt(row["aws_secret_key"]),
         ssh_host=row["ssh_host"],
         ssh_port=row["ssh_port"],
         ssh_username=row["ssh_username"],
-        ssh_password=row["ssh_password"],
-        ssh_private_key=row["ssh_private_key"],
+        ssh_password=decrypt(row["ssh_password"]),
+        ssh_private_key=decrypt(row["ssh_private_key"]),
         default_instance_type=row["default_instance_type"],
         default_vcpu=row["default_vcpu"],
         account_total_vcpu=row["account_total_vcpu"],
         default_architecture=row["default_architecture"],
         cpu_cores=row["cpu_cores"],
         memory_gb=row["memory_gb"],
-        provider_config=from_json_text(
-            row["provider_config_json"] if "provider_config_json" in row.keys() else None
-        ),
+        provider_config=from_json_text(decrypt(provider_config_json)),
         remarks=row["remarks"],
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),

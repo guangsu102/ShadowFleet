@@ -2,16 +2,30 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any
 
 from api.auth.jwt import hash_password, verify_password
 from api.exceptions.handlers import APIError
 
+if TYPE_CHECKING:
+    from services.runtime_service import RuntimeContext
+
 
 class AuthUserRepo:
-    def __init__(self, db_path: str = "shadowfleet.db") -> None:
-        self._db_path = db_path
+    def __init__(self, db_path: str | Path) -> None:
+        self._db_path = str(db_path)
         self._ensure_schema()
+
+    @classmethod
+    def from_runtime_context(cls, runtime_context: "RuntimeContext") -> "AuthUserRepo":
+        sqlite_manager = runtime_context.sqlite_manager
+        if sqlite_manager is None:
+            raise RuntimeError(
+                "RuntimeContext.sqlite_manager is required for authentication"
+            )
+        return cls(sqlite_manager.database_path)
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path, timeout=30.0)
@@ -77,6 +91,8 @@ class AuthUserRepo:
         existing = self.get_by_username(username)
         if existing:
             raise APIError("Username already exists", code="USER_EXISTS", status_code=409)
+        if role not in {"admin", "operator", "viewer"}:
+            raise APIError("Invalid user role", code="INVALID_ROLE", status_code=422)
 
         conn = self._get_connection()
         try:
@@ -108,6 +124,10 @@ class AuthUserRepo:
             updates: list[str] = []
             params: list[Any] = []
             if role is not None:
+                if role not in {"admin", "operator", "viewer"}:
+                    raise APIError(
+                        "Invalid user role", code="INVALID_ROLE", status_code=422
+                    )
                 updates.append("role = ?")
                 params.append(role)
             if password is not None:
@@ -149,9 +169,35 @@ class AuthUserRepo:
         finally:
             conn.close()
 
-    def ensure_default_admin(self) -> None:
-        if self.get_by_username("admin") is None:
-            try:
-                self.create_user("admin", "admin123", "admin")
-            except APIError:
-                pass
+    def ensure_bootstrap_admin(self, password: str | None) -> bool:
+        """Create the first administrator only from an explicit bootstrap secret."""
+        connection = self._get_connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT 1 FROM auth_users LIMIT 1"
+            ).fetchone()
+            if existing is not None:
+                connection.commit()
+                return False
+
+            normalized_password = str(password or "")
+            if len(normalized_password) < 12:
+                raise RuntimeError(
+                    "SHADOWFLEET_BOOTSTRAP_ADMIN_PASSWORD must contain at "
+                    "least 12 characters when the auth database is empty"
+                )
+            connection.execute(
+                """
+                INSERT INTO auth_users (username, hashed_password, role)
+                VALUES (?, ?, ?)
+                """,
+                ("admin", hash_password(normalized_password), "admin"),
+            )
+            connection.commit()
+            return True
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()

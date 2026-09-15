@@ -31,6 +31,7 @@ import type { SelectOption, DataTableColumns } from 'naive-ui'
 import apiClient from '@/api/client'
 import type {
   AssetResponse,
+  AssetCredentialRotationRequest,
   AWSAssetCreateRequest,
   SelfHostedAssetCreateRequest,
   DigitalOceanAssetCreateRequest,
@@ -150,6 +151,109 @@ function closeModal() {
   showModal.value = false
 }
 
+type CredentialInputType = "text" | "password" | "textarea"
+interface CredentialField {
+  key: string
+  label: string
+  inputType: CredentialInputType
+}
+
+const credentialFieldsByType: Record<string, CredentialField[]> = {
+  aws: [
+    { key: "aws_access_key", label: "Access Key", inputType: "text" },
+    { key: "aws_secret_key", label: "Secret Key", inputType: "password" },
+  ],
+  digitalocean: [
+    { key: "api_token", label: "API Token", inputType: "password" },
+  ],
+  vultr: [
+    { key: "api_token", label: "API Token", inputType: "password" },
+  ],
+  gcp: [
+    { key: "service_account_json", label: "Service Account JSON", inputType: "textarea" },
+  ],
+  kamatera: [
+    { key: "client_id", label: "Client ID", inputType: "text" },
+    { key: "secret", label: "Secret", inputType: "password" },
+  ],
+  azure: [
+    { key: "tenant_id", label: "Tenant ID", inputType: "text" },
+    { key: "client_id", label: "Client ID", inputType: "text" },
+    { key: "client_secret", label: "Client Secret", inputType: "password" },
+    { key: "subscription_id", label: "Subscription ID", inputType: "text" },
+  ],
+  oci: [
+    { key: "tenancy_ocid", label: "Tenancy OCID", inputType: "text" },
+    { key: "user_ocid", label: "User OCID", inputType: "text" },
+    { key: "fingerprint", label: "Fingerprint", inputType: "text" },
+    { key: "private_key", label: "Private Key", inputType: "textarea" },
+    { key: "private_key_passphrase", label: "Private Key Passphrase", inputType: "password" },
+  ],
+  self_hosted: [
+    { key: "ssh_password", label: "SSH Password", inputType: "password" },
+    { key: "ssh_private_key", label: "SSH Private Key", inputType: "textarea" },
+  ],
+}
+
+const showCredentialModal = ref(false)
+const credentialAsset = ref<AssetResponse | null>(null)
+const credentialForm = ref<Record<string, string>>({})
+const credentialReactivate = ref(true)
+const rotatingCredentials = ref(false)
+const activeCredentialFields = computed(
+  () => credentialFieldsByType[credentialAsset.value?.asset_type ?? ""] ?? [],
+)
+
+function openCredentialModal(asset: AssetResponse) {
+  credentialAsset.value = asset
+  credentialForm.value = Object.fromEntries(
+    (credentialFieldsByType[asset.asset_type] ?? []).map(field => [field.key, ""]),
+  )
+  credentialReactivate.value = asset.status !== "active"
+  showCredentialModal.value = true
+}
+
+async function submitCredentialRotation() {
+  const asset = credentialAsset.value
+  if (!asset) return
+  const credentials = Object.fromEntries(
+    Object.entries(credentialForm.value)
+      .map(([key, value]) => [key, value.trim()])
+      .filter(([, value]) => value.length > 0),
+  )
+  if (Object.keys(credentials).length === 0) {
+    message.warning("请填写至少一个凭据字段")
+    return
+  }
+
+  rotatingCredentials.value = true
+  try {
+    const body: AssetCredentialRotationRequest = {
+      credentials,
+      reactivate: credentialReactivate.value,
+    }
+    await apiClient.patch<AssetResponse>(
+      "/assets/" + asset.asset_id + "/credentials",
+      body,
+    )
+    message.success('资产 "' + asset.asset_name + '" 的凭据已轮换')
+    showCredentialModal.value = false
+    await fetchAssets()
+  } catch (err: unknown) {
+    const e = err as {
+      response?: { data?: { detail?: string; error?: string; message?: string } }
+    }
+    message.error(
+      e.response?.data?.detail
+      || e.response?.data?.error
+      || e.response?.data?.message
+      || "凭据轮换失败",
+    )
+  } finally {
+    rotatingCredentials.value = false
+  }
+}
+
 // ── Delete ─────────────────────────────────────────────────────────────────────
 function confirmDelete(asset: AssetResponse) {
   dialog.warning({
@@ -222,7 +326,10 @@ const filteredAssets = computed(() => {
 })
 
 // ── Table columns ──────────────────────────────────────────────────────────────
-function buildColumns(onDelete: (asset: AssetResponse) => void): DataTableColumns<AssetResponse> {
+function buildColumns(
+  onRotateCredentials: (asset: AssetResponse) => void,
+  onDelete: (asset: AssetResponse) => void,
+): DataTableColumns<AssetResponse> {
   return [
     {
       type: 'selection' as const,
@@ -268,15 +375,36 @@ function buildColumns(onDelete: (asset: AssetResponse) => void): DataTableColumn
     },
     { title: 'Updated', key: 'updated_at', width: 160, render: (r) => fmtTs(r.updated_at) },
     {
-      title: 'Actions', key: 'actions', width: 80, align: 'center',
+      title: 'Actions', key: 'actions', width: 150, align: 'center',
       render: (row) =>
-        h(NButton, { size: 'small', type: 'error', quaternary: true, onClick: () => onDelete(row) },
-          { default: () => '删除' }),
+        h(NSpace, { size: 4, justify: 'center', wrap: false }, {
+          default: () => [
+            h(
+              NButton,
+              {
+                size: 'small',
+                quaternary: true,
+                onClick: () => onRotateCredentials(row),
+              },
+              { default: () => '轮换' },
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                type: 'error',
+                quaternary: true,
+                onClick: () => onDelete(row),
+              },
+              { default: () => '删除' },
+            ),
+          ],
+        }),
     },
   ]
 }
 
-const allColumns = buildColumns(a => confirmDelete(a))
+const allColumns = buildColumns(openCredentialModal, confirmDelete)
 
 // ── Data fetching ─────────────────────────────────────────────────────────────
 async function fetchAssets() {
@@ -2058,6 +2186,44 @@ onMounted(fetchAssets)
         />
       </NSpin>
     </div>
+
+    <NModal
+      v-model:show="showCredentialModal"
+      preset="card"
+      :style="{ width: '620px', maxWidth: '94vw' }"
+      :title="credentialAsset ? '轮换凭据 · ' + credentialAsset.asset_name : '轮换凭据'"
+      :mask-closable="false"
+    >
+      <NForm label-placement="left" label-width="160">
+        <NFormItem
+          v-for="field in activeCredentialFields"
+          :key="field.key"
+          :label="field.label"
+        >
+          <NInput
+            v-model:value="credentialForm[field.key]"
+            :type="field.inputType"
+            :show-password-on="field.inputType === 'password' ? 'click' : undefined"
+            :autosize="field.inputType === 'textarea' ? { minRows: 4, maxRows: 12 } : undefined"
+          />
+        </NFormItem>
+        <NFormItem label="恢复调度">
+          <NSwitch v-model:value="credentialReactivate" />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showCredentialModal = false">取消</NButton>
+          <NButton
+            type="primary"
+            :loading="rotatingCredentials"
+            @click="submitCredentialRotation"
+          >
+            验证并轮换
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
 
     <!-- ── Add Asset Modal ─────────────────────────────────────────────────── -->
     <NModal
